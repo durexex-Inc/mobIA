@@ -1,6 +1,6 @@
 # TEC-344 — Instalar o chat no site da imobiliária com uma linha de script
 
-**Status:** desenho aprovado, implementação pendente
+**Status:** implementado
 **Card:** [TEC-344](https://eduardodurieuxlopes.atlassian.net/browse/TEC-344) — épico TEC-307
 **Branch:** `feat/tec-344-embed-do-chat`
 **Depende de:** TEC-124 (`WS /widget/chat`), TEC-198 (configuração versionada do agente), TEC-356 (CSP), TEC-309 (`/embed/*` já é rota pública)
@@ -77,6 +77,14 @@ Server component. Lê a aparência pela mesma função com cache da D4 e respond
 - Renderiza um cabeçalho com o nome do assistente, ou **"Assistente virtual"** quando o nome é nulo, e a cor primária como variável CSS.
 - Um componente cliente pequeno manda `postMessage({tipo: 'mobia:pronto'})` ao pai quando a página monta (D7).
 - **A conversa não entra.** É da TEC-346 (L3).
+
+> **Nota (27/09/2026).** A página ganhou `metadata.description` explícita
+> ("Chat de atendimento da imobiliária."), que o desenho não previa: sem ela o
+> Next herdaria a descrição do layout raiz do painel ("Funil de leads..."),
+> que não tem nada a ver com uma página pública embutida em outro site. A cor
+> primária entra por `<style nonce>`, e não pelo atributo `style` — a CSP do
+> proxy não tem `'unsafe-inline'` em `style-src` fora de desenvolvimento, e o
+> atributo `style` é estilo inline.
 
 ## D7 — Nenhuma falha vira erro de JS no site hospedeiro
 

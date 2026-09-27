@@ -235,6 +235,16 @@ A tela distingue três ausências, e a distinção é deliberada:
 | `sem dados no período` | a coorte estava vazia (fato do negócio) |
 | `—` | não há conversão calculável entre estas duas etapas |
 
+## O chat no site da imobiliária (TEC-344)
+
+A imobiliária cola uma linha no site:
+
+    <script src="https://<painel>/widget.js" data-tenant="<slug>" async></script>
+
+O `<slug>` tem de ser igual ao `TENANT_SLUG` do backend. Sem `TENANT_SLUG`, nenhum site mostra o botão — é o padrão, de propósito. Cor, lado e nome do assistente vêm da configuração do agente (`PATCH /api/v1/configuracao/agente`), e uma mudança leva até um minuto para chegar ao site, por causa do cache de `/embed/aparencia`.
+
+`public/widget.js` não passa por build: o que está no arquivo é o que o visitante baixa, e `npm run verificar:widget` reprova acima de 5 KB gzip. Até a TEC-346, quem abre o chat vê só o cabeçalho; até a TEC-345, qualquer site pode embutir o chat.
+
 ## Comandos
 
 ```bash
