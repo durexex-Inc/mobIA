@@ -3,7 +3,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 
 import { destinoSeguro, type MotivoDoLogin, urlDoLogin } from '@/lib/destino'
-import { COOKIE_DA_SESSAO, lerSessao } from '@/lib/servidor/sessao'
+import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
 
 export const metadata: Metadata = {
   title: 'Entrar — mobIA',
@@ -36,6 +36,9 @@ const MENSAGENS: Record<MotivoDoLogin, string> = {
   muitas_tentativas: 'Muitas tentativas em pouco tempo. Espere um minuto e tente de novo.',
   indisponivel: 'Não foi possível entrar agora. Tente de novo em instantes.',
   sessao_expirada: 'Sua sessão expirou. Entre de novo para continuar.',
+  // TEC-311, D5: distinto de `sessao_expirada` porque quem estava lendo e foi
+  // derrubado precisa saber que foi o tempo, e nao um erro.
+  inatividade: 'Sua sessão foi encerrada depois de 30 minutos sem uso. Entre de novo para continuar.',
 }
 
 function mensagemDe(bruto: string | undefined): string | null {
@@ -57,8 +60,15 @@ export default async function PaginaDeLogin({ searchParams }: { searchParams: Pr
   const busca = await searchParams
   const destino = destinoSeguro(um(busca.returnTo))
 
-  // Quem ja tem sessao valida nao tem o que fazer aqui.
-  if (await lerSessao((await cookies()).get(COOKIE_DA_SESSAO)?.value)) {
+  // Quem ja tem sessao valida nao tem o que fazer aqui. `obterSessaoValida`, e
+  // nao so ler o Redis: uma sessao ociosa (TEC-311) ou de refresh revogado
+  // (TEC-310) ainda esta la, e mandar a pessoa ao painel so a faria voltar.
+  // Falha ao renovar conta como "sem sessao" -- a tela de login e o lugar de
+  // tentar de novo.
+  const sessao = await obterSessaoValida((await cookies()).get(COOKIE_DA_SESSAO)?.value).catch(
+    () => null,
+  )
+  if (sessao) {
     redirect(destino)
   }
 

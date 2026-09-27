@@ -108,6 +108,7 @@ O access token e o refresh token não entram nessa varredura porque não existem
 - **L3 — sem renovação e sem logout.** São a TEC-310. Até lá, 60 minutos depois do login o painel manda de volta ao login, e não há botão de sair. O registro da sessão antiga fica no Redis até completar 7 dias, com um refresh válido dentro — e é por isso que a TEC-310 precisa revogá-lo no logout.
   - **Nota (TEC-310, 26/09/2026):** fechada. A sessão renova o access 5 minutos antes de ele vencer, e "Sair" revoga o refresh e apaga a sessão. A D7 acima tinha um laço: o `401` mandava ao login, e o login, vendo a sessão no Redis, devolvia à página. A TEC-310 passou a apagar a sessão num `401`. Ver `docs/superpowers/specs/2026-09-26-tec-310-renovar-e-sair-design.md`.
 - **L4 — o cenário 2 pede inspecionar o "armazenamento local e os cookies legíveis por script".** Não há teste de navegador neste projeto. O que se mecaniza: nenhuma resposta de login põe token em `Set-Cookie`, e o único cookie tem `HttpOnly`; o código de cliente não escreve em `localStorage` porque não há código de cliente no fluxo; e a varredura do bundle cobre os segredos de ambiente (D9). A verificação no navegador de verdade é manual, e fica registrada no PR.
+  - **Nota (TEC-311, 26/09/2026):** o painel passou a ter um componente de cliente, o aviso de inatividade, e ele escreve no `localStorage` — só o horário da última interação (`mobia:ultima-interacao`), nenhum token. O teste dele afirma que essa é a única chave gravada.
 
 ## Critérios de aceite
 

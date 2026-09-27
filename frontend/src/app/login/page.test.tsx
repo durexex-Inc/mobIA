@@ -89,6 +89,12 @@ describe('PaginaDeLogin', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('E-mail ou senha incorretos.')
   })
 
+  it('`erro=inatividade` diz que foi o tempo, e nao um erro (TEC-311)', async () => {
+    await renderizar({ erro: 'inatividade' })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('depois de 30 minutos sem uso')
+  })
+
   it('motivo desconhecido nao mostra alerta nenhum', async () => {
     await renderizar({ erro: '<script>alert(1)</script>' })
 

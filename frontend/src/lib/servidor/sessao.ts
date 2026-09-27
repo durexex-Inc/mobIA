@@ -7,6 +7,7 @@ import { redirect } from 'next/navigation'
 import { cache } from 'react'
 
 import { urlDoLogin } from '@/lib/destino'
+import { MINUTOS_OCIOSO_NO_SERVIDOR } from '@/lib/inatividade'
 import { chamarApi } from '@/lib/servidor/api'
 import { armazem } from '@/lib/servidor/armazem'
 import { tokensDe } from '@/lib/servidor/login'
@@ -66,7 +67,7 @@ function novoId(): string {
  * de `SessaoDeRefresh.digest` no backend. SHA-256 simples, e nao um hash lento:
  * o id ja tem 256 bits de entropia, e nao ha dicionario que o ataque.
  */
-function chave(tipo: 'sessao' | 'desafio' | 'renovando', id: string): string {
+function chave(tipo: 'sessao' | 'desafio' | 'renovando' | 'atividade', id: string): string {
   return `mobia:painel:${tipo}:${createHash('sha256').update(id).digest('hex')}`
 }
 
@@ -84,8 +85,25 @@ function idValido(id: string | null | undefined): id is string {
 export async function criarSessao(tokens: { acesso: string; refresh: string }): Promise<string> {
   const id = novoId()
   const sessao: Sessao = { ...tokens, criadaEm: new Date().toISOString() }
-  await (await armazem()).gravar(chave('sessao', id), JSON.stringify(sessao), SEGUNDOS_DA_SESSAO)
+  const loja = await armazem()
+  await loja.gravar(chave('sessao', id), JSON.stringify(sessao), SEGUNDOS_DA_SESSAO)
+  await marcarAtividade(id)
   return id
+}
+
+/**
+ * A sessao esteve em uso agora (TEC-311, D3).
+ *
+ * **Chave propria, com validade de 32 minutos, e nao um campo no registro da
+ * sessao.** Regravar o registro seria ler, mudar e gravar -- e uma renovacao
+ * concorrente (TEC-310) gravando o par novo no meio seria sobrescrita pelo par
+ * antigo, cujo refresh ja foi consumido. A proxima renovacao o apresentaria de
+ * novo, e a deteccao de reuso derrubaria a sessao. Aqui e um `SET` com
+ * validade, sem leitura: cada uso empurra o fim para 32 minutos a frente, e a
+ * chave sumir quer dizer "ociosa".
+ */
+async function marcarAtividade(id: string): Promise<void> {
+  await (await armazem()).gravar(chave('atividade', id), '1', MINUTOS_OCIOSO_NO_SERVIDOR * 60)
 }
 
 /**
@@ -116,7 +134,9 @@ export async function lerSessao(id: string | null | undefined): Promise<Sessao |
 
 export async function apagarSessao(id: string | null | undefined): Promise<void> {
   if (idValido(id)) {
-    await (await armazem()).apagar(chave('sessao', id))
+    const loja = await armazem()
+    await loja.apagar(chave('sessao', id))
+    await loja.apagar(chave('atividade', id))
   }
 }
 
@@ -277,9 +297,12 @@ async function renovar(id: string, sessao: Sessao): Promise<Sessao | null> {
 /**
  * A sessao deste id, ja renovada se faltarem 5 minutos ou menos -- ou `null`.
  *
- * E o que toda leitura de sessao do painel usa, fora o login (TEC-310, D1). O
- * `cache` do React faz o layout e a pagina, que rodam na mesma requisicao,
+ * E o que toda leitura de sessao do painel usa (TEC-310, D1). O `cache` do
+ * React faz o layout e a pagina, que rodam na mesma requisicao,
  * compartilharem uma leitura e no maximo uma renovacao.
+ *
+ * **Toda leitura conta como atividade** (TEC-311, D3), e a sessao ociosa ha
+ * mais de 32 minutos e apagada aqui.
  *
  * Pode lancar `RenovacaoIndisponivel` (D3): o backend nao respondeu e o access
  * ja venceu. Nao e "sem sessao", e quem chama nao deve mandar ao login.
@@ -290,6 +313,14 @@ export const obterSessaoValida = cache(
     if (!sessao || !idValido(id)) {
       return null
     }
+    // Ociosa ha mais de 32 minutos: acabou, mesmo que o cookie e o refresh
+    // ainda valham (TEC-311, D3). E o que protege o celular esquecido, que nao
+    // roda o aviso de cliente.
+    if ((await (await armazem()).obter(chave('atividade', id))) === null) {
+      await apagarSessao(id)
+      return null
+    }
+    await marcarAtividade(id)
     return precisaRenovar(sessao, Date.now()) ? renovar(id, sessao) : sessao
   },
 )

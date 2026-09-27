@@ -75,6 +75,7 @@ export type MotivoDoLogin =
   | 'muitas_tentativas'
   | 'indisponivel'
   | 'sessao_expirada'
+  | 'inatividade'
 
 /**
  * A URL da tela de login, com o destino preservado.

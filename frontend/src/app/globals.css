@@ -306,3 +306,29 @@ a {
   font: inherit;
   cursor: pointer;
 }
+
+/* --- Aviso de inatividade (TEC-311) ------------------------------------- */
+
+.aviso-inatividade {
+  position: fixed;
+  inset: auto 1rem 1rem auto;
+  z-index: 10;
+  max-width: 24rem;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 30%, transparent);
+  border-radius: 6px;
+  background: var(--background);
+  box-shadow: 0 4px 24px color-mix(in srgb, var(--foreground) 20%, transparent);
+}
+
+.aviso-inatividade h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+
+.aviso-inatividade button {
+  padding: 0.5rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
