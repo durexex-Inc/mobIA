@@ -128,6 +128,7 @@ O conserto é excluir `widget.js` do matcher, ao lado de `favicon.ico`, e não a
 - **Tamanho:** `verificar:widget` no CI.
 - **CSP:** `/embed/chat` com `frame-ancestors *`, o painel com `'none'`.
 - **Matcher:** `/widget.js` fora do proxy (D9).
+  - **Emenda (TEC-344, 27/09/2026):** só o nome exato — `widget\.js$` no matcher, e o teste afirma que `/widget.json` passa pelo proxy. Sem a âncora e com o ponto sem escape, qualquer caminho que começasse por `/widget` seguido de um caractere e `js` pularia a guarda.
 - **`/embed/aparencia` e `/embed/chat`:** cabeçalhos CORS e de cache, e o `404` repassado.
   - **Emenda (TEC-344, 27/09/2026):** o `404` não é mais repassado do FastAPI, é decidido no Next (emenda da D3). Os testes afirmam que o URL pedido à API é sempre `/widget/aparencia`, qualquer que seja o tenant; que slug diferente do configurado, ou `tenant: null`, dá 404 sem outro pedido; e que qualquer status diferente de 200 da API vira 503, com o erro em log.
 - **Backend:**

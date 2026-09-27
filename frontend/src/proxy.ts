@@ -169,8 +169,11 @@ export const config = {
        *   `307` para `/login` em vez do script, e o botao nunca apareceria --
        *   com os testes do loader verdes, porque eles leem o arquivo do disco.
        *   E asset: o `nosniff` vem do `next.config.ts`.
+       *   **So o nome exato**: ponto escapado e `$` no fim, senao `/widget.json`
+       *   ou `/widgetXjs` tambem pulariam a guarda. As outras alternativas
+       *   ficaram como estavam.
        */
-      source: '/((?!_next/static|_next/image|favicon.ico|widget.js|bff).*)',
+      source: '/((?!_next/static|_next/image|favicon.ico|widget\\.js$|bff).*)',
       /*
        * Prefetch do `next/link` nao pinta tela nenhuma: gastar um nonce nele e
        * desperdicio, e a recomendacao e da propria referencia do Next.

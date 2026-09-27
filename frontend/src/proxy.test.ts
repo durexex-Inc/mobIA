@@ -146,6 +146,10 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
     const casa = (caminho: string) => new RegExp(`^${fonte}$`).test(caminho)
 
     expect(casa('/widget.js')).toBe(false)
+    // So o nome exato: `widget.json` ou `widgetXjs` sao rota do painel, e
+    // passam pela guarda como qualquer outra.
+    expect(casa('/widget.json')).toBe(true)
+    expect(casa('/widgetXjs')).toBe(true)
     expect(casa('/embed/chat')).toBe(true)
     expect(casa('/leads')).toBe(true)
   })
