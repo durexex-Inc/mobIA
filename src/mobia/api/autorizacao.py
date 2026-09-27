@@ -52,6 +52,10 @@ ROTAS_PUBLICAS: dict[str, str] = {
     "/health": "probe de liveness; um 403 aqui derrubaria o processo",
     "/webhooks/whatsapp": "quem chama e a Meta, autenticada por assinatura HMAC (RNF-15)",
     "/widget/chat": "o chat do site; quem o abre e visitante anonima (TEC-124)",
+    "/widget/aparencia/{slug}": (
+        "cor, lado e nome do botao do chat do site; quem pede e o loader, antes "
+        "de qualquer visitante se identificar (TEC-344)"
+    ),
     "/api/v1/auth/login": "produz a credencial que esta guarda valida",
     "/api/v1/auth/mfa": "idem -- troca o desafio pelo par de tokens",
     "/api/v1/auth/refresh": "autentica-se pelo proprio refresh apresentado",

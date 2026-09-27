@@ -351,6 +351,13 @@ class Settings(BaseSettings):
     # disso o frame e recusado e a conexao CONTINUA aberta.
     tamanho_maximo_do_texto_do_widget: int = 4096
 
+    # TEC-344, D2. O slug que o `data-tenant` do snippet do site tem de trazer
+    # para `GET /widget/aparencia/{slug}` responder. **Nulo por padrao, e nulo
+    # quer dizer que nenhum slug casa**: um ambiente que esqueceu a variavel
+    # fica sem botao, e nao com um botao que aceita qualquer valor. Tenant unico
+    # na POC (PR-03); o multi-tenant troca a comparacao por uma busca.
+    tenant_slug: str | None = None
+
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
     # composto sobre uma base vazia continua sendo um caminho valido -- ver a

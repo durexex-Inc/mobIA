@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from mobia.api.middleware import CorrelacaoDeRequisicao, RateLimitPorIP
+from mobia.api.routes.aparencia_do_widget import router as aparencia_do_widget_router
 from mobia.api.routes.auth import router as auth_router
 from mobia.api.routes.whatsapp import router as whatsapp_router
 from mobia.api.routes.widget import router as widget_router
@@ -75,6 +76,9 @@ def create_app() -> FastAPI:
     app.include_router(whatsapp_router)
     # Publico por natureza: e o chat do site, e quem o abre e visitante anonima.
     app.include_router(widget_router)
+    # TEC-344. Publica pelo mesmo motivo: e o que o loader do site le antes de
+    # desenhar o botao.
+    app.include_router(aparencia_do_widget_router)
 
     # **A condicional da TEC-156 caiu na TEC-201, porque a premissa dela caiu.**
     #
