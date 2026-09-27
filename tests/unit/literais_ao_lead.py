@@ -95,6 +95,7 @@ from mobia.domain.optout.deteccao import TEXTO_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.titular.deteccao import (
     TEXTO_DA_CONFIRMACAO_DE_ACESSO,
     TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO,
+    TEXTO_DA_PERGUNTA_DE_ELIMINACAO,
 )
 from mobia.workers.jobs.process_message import TEXTO_DO_AVISO_DE_ERRO
 
@@ -151,7 +152,9 @@ LITERAIS_AO_LEAD = (
     TEXTO_DA_LISTA_DE_ESPERA,
     TEXTO_DA_ESPERA_ACEITA,
     TEXTO_DO_SLOT_LIBERADO,
-    # TEC-207. Os dois da confirmacao de pedido de titular.
+    # TEC-207. Os dois da confirmacao de pedido de titular, e a pergunta que
+    # abre o segundo passo da eliminacao (revisao final, C2).
     TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO,
     TEXTO_DA_CONFIRMACAO_DE_ACESSO,
+    TEXTO_DA_PERGUNTA_DE_ELIMINACAO,
 )

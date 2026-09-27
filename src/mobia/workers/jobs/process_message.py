@@ -30,7 +30,7 @@ from mobia.domain.optout.deteccao import pediu_optout
 from mobia.domain.outbound.port import OutboundPort
 from mobia.domain.outbound.presenca import indicador_de_digitacao
 from mobia.domain.outbound.repositorio import kinds_reservados
-from mobia.domain.titular.deteccao import pedido_de_titular
+from mobia.domain.titular.deteccao import e_palavra_de_confirmacao, pedido_de_titular
 from mobia.infra.crypto import aad_de, decrypt
 
 log = structlog.get_logger(__name__)
@@ -495,12 +495,22 @@ async def process_message(ctx: dict[str, Any], message_id: str) -> ResultadoDoPr
                 # robo, em silencio.
                 pedido_de_humano = bool(corpo and pediu_humano(corpo))
                 # Mesmo furo, mesma razao, aplicada ao pedido de titular
-                # (TEC-207, D3): sem ele, "quero apagar meus dados" seguido
-                # de "ok, obrigado" dentro da janela fecha como "agrupado",
+                # (TEC-207, D3): sem ele, "quero meus dados" seguido de "ok,
+                # obrigado" dentro da janela fecha como "agrupado",
                 # `pedido_de_titular` nunca roda sobre ele, e a solicitacao
-                # nunca nasce -- sem prazo de 15 dias correndo e sem log de
-                # erro, o pedido legal perdido em silencio.
-                pedido_do_titular = bool(corpo and pedido_de_titular(corpo) is not None)
+                # (ou, na eliminacao, a pergunta que a confirma) nunca nasce
+                # -- sem prazo de 15 dias correndo e sem log de
+                # erro, o pedido legal perdido em silencio. A palavra que
+                # confirma a eliminacao ("apagar", o segundo passo da revisao
+                # final) entra pela mesma razao: "apagar" seguido de "ok"
+                # fecharia como agrupado e a confirmacao nunca seria lida. Ela
+                # fura sempre que a forma bate, com ou sem pergunta pendente --
+                # quem decide se e confirmacao e o turno, e furar sem ser so
+                # roda o turno normal sobre a superada.
+                pedido_do_titular = bool(
+                    corpo
+                    and (pedido_de_titular(corpo) is not None or e_palavra_de_confirmacao(corpo))
+                )
                 if pedido_de_optout or pedido_de_humano or pedido_do_titular:
                     log.info(
                         "message.optout_fura_a_janela"

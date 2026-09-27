@@ -55,6 +55,7 @@ distinto do recheio generico do lado do objeto (paragrafo acima), que aceita
 """
 
 import re
+from datetime import timedelta
 
 from mobia.domain.optout.deteccao import normalizar
 from mobia.domain.titular.vocabulario import TipoDeSolicitacao
@@ -147,16 +148,17 @@ def _fala_de_dados_do_lead(normalizado: str) -> bool:
 # "apaga", "exclui" e "remove" sao tambem o presente do indicativo de terceira
 # pessoa, e "o sistema apaga meus dados depois?" vira ELIMINACAO. Aceita
 # porque o imperativo singular e a forma mais comum de pedir no Brasil
-# ("apaga meus dados"), e perde-lo seria perder pedido legal; o ADMIN ainda
-# pode recusar na fila.
+# ("apaga meus dados"), e perde-lo seria perder pedido legal; o lead que
+# so perguntava recebe a pergunta de confirmacao e nao responde "apagar".
 #
 # A primeira versao casava o RADICAL solto (`apag|exclu|...`) em qualquer
 # ponto do texto, e isso transformava em ELIMINACAO frases que so continham o
 # radical dentro de outra palavra: "uma copia dos meus dados, EXCLUsivamente
 # por e-mail", "ESQUECi de mandar meus dados pessoais", "o anuncio foi
-# REMOVido?". Um falso positivo aqui nao e inofensivo: grava opt-out, encerra
-# a conversa e, se o ADMIN nao recusar no prazo, a retencao anonimiza o lead
-# sem volta. O participio ("apagado", "removido") fica de fora de proposito:
+# REMOVido?". Um falso positivo aqui nao e inofensivo, mesmo com a
+# confirmacao em dois passos (ver `_CONFIRMACOES_DE_ELIMINACAO`): ele troca a
+# resposta do modelo pela pergunta de confirmacao, e o lead que queria outra
+# coisa fica sem ela naquele turno. O participio ("apagado", "removido") fica de fora de proposito:
 # e pergunta ou constatacao ("meus dados foram apagados?"), nao pedido.
 _TERMINACOES_DE_PEDIDO: dict[str, tuple[str, ...]] = {
     "apag": ("ar", "arem", "a", "ue", "uem"),
@@ -249,11 +251,63 @@ def pedido_de_titular(texto: str) -> TipoDeSolicitacao | None:
     return None
 
 
+# **A eliminacao pelo WhatsApp e em dois passos** -- decisao do Eduardo na
+# revisao final da TEC-207 (C2). `pedido_de_titular` devolver ELIMINACAO nao
+# registra nada: o turno responde com `TEXTO_DA_PERGUNTA_DE_ELIMINACAO` e so
+# registra quando a mensagem SEGUINTE do lead e a palavra de confirmacao e a
+# ultima coisa que o agente mandou a ele foi essa pergunta, ha menos de
+# `JANELA_DA_CONFIRMACAO_DE_ELIMINACAO`. A razao sao as frases de CORRECAO de
+# cadastro -- "apaga meus dados antigos e usa esse telefone novo", "pode excluir
+# meus dados do cadastro antigo e manter o novo?" -- que o detector nao tem
+# como separar de um pedido legal: em um passo so, cada uma delas gravava
+# opt-out, encerrava a conversa e, sem recusa do ADMIN, anonimizava o lead uns
+# 14 dias depois. O acesso continua em um passo: nao destroi nada.
+#
+# Normalizadas por `normalizar` (minusculas, sem acento, sem pontuacao), entao
+# "APAGAR", "Apagar!" e "sim, apagar" casam. A mensagem INTEIRA tem de ser uma
+# destas -- "apagar o que?" nao e confirmacao.
+_CONFIRMACOES_DE_ELIMINACAO: frozenset[str] = frozenset({"apagar", "sim apagar", "confirmo apagar"})
+
+# A pergunta vale por 24 horas. Depois disso um "apagar" solto e so uma
+# palavra, e o lead que ainda quiser apagar pede de novo e recebe outra
+# pergunta.
+JANELA_DA_CONFIRMACAO_DE_ELIMINACAO = timedelta(hours=24)
+
+
+def e_palavra_de_confirmacao(texto: str) -> bool:
+    """O texto INTEIRO e a palavra que confirma a eliminacao ("apagar").
+
+    Puro, sem consulta: diz so se a forma bate. Se e confirmacao de fato
+    depende de a ultima mensagem do agente ter sido a pergunta -- quem decide
+    e `titular/repositorio.py::pergunta_de_eliminacao_pendente`, chamada pelo
+    turno. `IngestionService` e `process_message` usam so esta checagem para
+    deixar a palavra furar o debounce e o fecho "agrupado": a palavra solta
+    furar sem ser confirmacao e inofensivo (o turno roda normalmente), e
+    segurar uma confirmacao de verdade atrasaria o registro do pedido.
+    """
+    return normalizar(texto) in _CONFIRMACOES_DE_ELIMINACAO
+
+
 # Kind proprio, no mesmo molde de `KIND_DA_CONFIRMACAO_DE_OPTOUT`: fura as
 # guardas de opt-out e de atendimento humano de `GuardedOutbound.send` (D3 do
 # desenho) -- e reconhecimento legal de um pedido do proprio lead, entao ele
 # sai mesmo que o mesmo pedido de eliminacao acabe de registrar opt-out.
 KIND_DA_CONFIRMACAO_DE_TITULAR = "titular_confirmacao"
+
+# Kind da pergunta que abre o segundo passo da eliminacao. Fura as mesmas
+# duas guardas que a confirmacao, pela mesma razao: quem ja optou, ou cuja
+# conversa um corretor assumiu, continua podendo exercer o direito -- e sem a
+# pergunta nao ha como confirmar. E tambem a marca que o segundo passo procura
+# em `outbound_dispatches`: a pergunta esta pendente se a reserva mais recente
+# da conversa e deste kind (ver `pergunta_de_eliminacao_pendente`).
+KIND_DA_PERGUNTA_DE_ELIMINACAO = "titular_pergunta_eliminacao"
+
+# COM acento: e texto que chega ao lead (TEC-267). A pergunta nao promete
+# nada: so diz como confirmar e que continuar a conversa basta para desistir.
+TEXTO_DA_PERGUNTA_DE_ELIMINACAO = (
+    "Para confirmar que você quer apagar seus dados, responda APAGAR. Se não era "
+    "isso, é só continuar a conversa."
+)
 
 # COM acento: e texto que chega ao lead (TEC-267). Um por tipo, verbatim da D3
 # do desenho.

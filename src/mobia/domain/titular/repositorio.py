@@ -8,7 +8,7 @@ resto keyword-only, sem commit -- convencao dos repositorios deste repo (ver
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,12 @@ from mobia.app.config import get_settings
 from mobia.domain.auditoria.referencia import lead_ref as calcular_lead_ref
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import Acao, Ator, Entidade
+from mobia.domain.messages.models import Message
+from mobia.domain.outbound.models import OutboundDispatch
+from mobia.domain.titular.deteccao import (
+    JANELA_DA_CONFIRMACAO_DE_ELIMINACAO,
+    KIND_DA_PERGUNTA_DE_ELIMINACAO,
+)
 from mobia.domain.titular.models import SolicitacaoDeTitular
 from mobia.domain.titular.vocabulario import (
     PRAZO_DO_TITULAR,
@@ -27,6 +33,59 @@ from mobia.domain.titular.vocabulario import (
 
 class SolicitacaoNaoAberta(ValueError):
     """Recusar uma solicitacao que nao esta ABERTA. Vira 409 na rota."""
+
+
+async def pergunta_de_eliminacao_pendente(
+    session: AsyncSession,
+    *,
+    channel: str,
+    conversation_key: str,
+    antes_da_mensagem: uuid.UUID,
+) -> bool:
+    """A ultima coisa que o agente mandou a este lead foi a pergunta de
+    eliminacao, ha menos de `JANELA_DA_CONFIRMACAO_DE_ELIMINACAO` -- o segundo
+    passo da eliminacao pelo WhatsApp (C2 da revisao final da TEC-207).
+
+    **A fonte e `outbound_dispatches`, e nao `messages`.** Todo envio ao lead
+    passa por `GuardedOutbound.send`, que reserva `(message_id, kind)` antes do
+    efeito externo -- a resposta do modelo, os textos fixos, o follow-up, os
+    avisos de agendamento e a fala do corretor (`atendimento/fala.py`) --, e so
+    a reserva guarda o KIND. A linha OUTBOUND de `messages` nao diz qual texto
+    fixo foi, e o follow-up nem grava linha la. A reserva e chaveada pela
+    mensagem INBOUND que ancorou o envio, entao o par sai do JOIN com
+    `messages`.
+
+    **A reserva da propria mensagem que confirma fica de fora**
+    (`antes_da_mensagem`): numa retentativa do turno do "apagar", a
+    confirmacao que a passada anterior reservou seria a mais recente, e o
+    segundo passo deixaria de se reconhecer -- o turno cairia no fluxo normal
+    em vez de chegar na supressao de reentrega.
+
+    Presenca de reserva significa "encerrado", nao "entregue" (ver
+    `outbound/repositorio.py::kinds_reservados`): uma pergunta recusada de
+    vez pela Meta ainda conta como a ultima fala. O custo e so um "apagar"
+    solto, dentro de 24 horas, ser lido como confirmacao de uma pergunta que
+    o lead nao viu -- e o lead teria acabado de pedir a eliminacao.
+
+    O relogio e o do Postgres (`now()`), o mesmo que carimbou a reserva.
+    """
+    ultima = (
+        await session.execute(
+            select(OutboundDispatch.kind, OutboundDispatch.created_at)
+            .join(Message, Message.id == OutboundDispatch.message_id)
+            .where(
+                Message.channel == channel,
+                Message.conversation_key == conversation_key,
+                OutboundDispatch.message_id != antes_da_mensagem,
+            )
+            .order_by(OutboundDispatch.created_at.desc(), OutboundDispatch.id.desc())
+            .limit(1)
+        )
+    ).one_or_none()
+    if ultima is None or ultima.kind != KIND_DA_PERGUNTA_DE_ELIMINACAO:
+        return False
+    agora_no_banco = (await session.execute(select(func.now()))).scalar_one()
+    return bool(agora_no_banco - ultima.created_at < JANELA_DA_CONFIRMACAO_DE_ELIMINACAO)
 
 
 async def registrar_solicitacao(

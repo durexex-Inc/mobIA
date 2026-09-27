@@ -12,8 +12,10 @@ que fura as duas guardas de `GuardedOutbound.send`.
 """
 
 import uuid
+from datetime import timedelta
 
-from sqlalchemy import func, select
+import pytest
+from sqlalchemy import func, select, update
 
 from mobia.domain.agendamento.agendador import AgendadorDeAvisosNoop
 from mobia.domain.agente.turno import executar_turno
@@ -27,12 +29,19 @@ from mobia.domain.messages.status import MessageStatus
 from mobia.domain.moderacao.port import Direcao
 from mobia.domain.optout.models import OptoutEvent
 from mobia.domain.optout.repositorio import esta_em_optout, registrar_optout
+from mobia.domain.outbound.models import OutboundDispatch
 from mobia.domain.titular.deteccao import (
+    KIND_DA_PERGUNTA_DE_ELIMINACAO,
     TEXTO_DA_CONFIRMACAO_DE_ACESSO,
     TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO,
+    TEXTO_DA_PERGUNTA_DE_ELIMINACAO,
 )
 from mobia.domain.titular.models import SolicitacaoDeTitular
-from mobia.domain.titular.vocabulario import StatusDaSolicitacao, TipoDeSolicitacao
+from mobia.domain.titular.vocabulario import (
+    OrigemDaSolicitacao,
+    StatusDaSolicitacao,
+    TipoDeSolicitacao,
+)
 from mobia.infra.crypto import aad_de, encrypt
 from mobia.infra.db import get_sessionmaker
 
@@ -104,14 +113,14 @@ async def _eventos_de_optout(session) -> int:
     return (await session.execute(select(func.count()).select_from(OptoutEvent))).scalar_one()
 
 
-async def test_pedido_de_eliminacao_registra_optout_e_confirma_sem_o_modelo(
+async def test_pedido_de_eliminacao_so_pergunta_e_nao_registra_nada(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
 ) -> None:
-    """O caminho feliz da eliminacao: solicitacao ABERTA com o par, opt-out
-    registrado junto, confirmacao entregue, nenhuma chamada ao classificador.
+    """O primeiro passo da eliminacao (C2 da revisao final, decisao do
+    Eduardo): o pedido nao registra solicitacao, nao grava opt-out e nao
+    encerra a conversa -- so pergunta. Continua sem chamar o classificador.
 
-    A moderacao de entrada roda uma vez, no fecho de `executar_turno` (TEC-297)
-    -- depois do registro e da entrega, entao nenhum dos dois depende dela.
+    A moderacao de entrada roda uma vez, no fecho de `executar_turno` (TEC-297).
     """
     classificador = classificador_fake()
     outbound = outbound_fake()
@@ -127,21 +136,167 @@ async def test_pedido_de_eliminacao_registra_optout_e_confirma_sem_o_modelo(
         contador=contador_fake(),
     )
 
-    assert resultado == "pedido_de_titular"
+    assert resultado == "confirmacao_de_titular_pedida"
     assert classificador.chamadas == 0
     assert moderador.direcoes == [Direcao.ENTRADA]
+    assert await _solicitacoes(session) == []
+    assert not await esta_em_optout(session, channel=CANAL, conversation_key=CONVERSA)
+    assert (await _encerramento(session))[0] != Status.ENCERRADA
+    # `in` e nao `==`: primeira mensagem da conversa, entao a entrega carrega o
+    # prefixo de identificacao da TEC-139.
+    assert len(outbound.entregues) == 1
+    assert TEXTO_DA_PERGUNTA_DE_ELIMINACAO in outbound.entregues[0]
+
+
+async def test_apagar_depois_da_pergunta_registra_optout_encerra_e_confirma(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """O segundo passo: "APAGAR" logo depois da pergunta faz o que o pedido
+    fazia em um passo so -- solicitacao ABERTA de origem WHATSAPP, opt-out,
+    conversa encerrada com motivo OPTOUT e a confirmacao --, sem o modelo."""
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+    kwargs = dict(
+        classificador=classificador,
+        outbound=outbound,
+        moderador=moderador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+    )
+
+    primeiro = await _rodar(session, "quero apagar meus dados", **kwargs)
+    assert primeiro == "confirmacao_de_titular_pedida"
+    resultado = await _rodar(session, "APAGAR", **kwargs)
+
+    assert resultado == "pedido_de_titular"
+    assert classificador.chamadas == 0
     [linha] = await _solicitacoes(session)
     assert linha.tipo == TipoDeSolicitacao.ELIMINACAO
+    assert linha.origem == OrigemDaSolicitacao.WHATSAPP
     assert linha.status == StatusDaSolicitacao.ABERTA
     assert (linha.channel, linha.conversation_key) == (CANAL, CONVERSA)
     assert await esta_em_optout(session, channel=CANAL, conversation_key=CONVERSA)
     # Escrituracao do opt-out que o pedido gravou (TEC-130, D6), igual ao
     # bloco de opt-out: a conversa fecha com data e motivo.
     assert await _encerramento(session) == (Status.ENCERRADA, MotivoDoEncerramento.OPTOUT)
-    # `in` e nao `==`: primeira mensagem da conversa, entao a entrega carrega o
-    # prefixo de identificacao da TEC-139.
-    assert len(outbound.entregues) == 1
-    assert TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO in outbound.entregues[0]
+    assert len(outbound.entregues) == 2
+    assert TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO in outbound.entregues[1]
+
+
+@pytest.mark.parametrize("confirmacao", ["Sim, apagar!", "confirmo apagar"])
+async def test_sim_apagar_e_confirmo_apagar_tambem_confirmam(
+    confirmacao,
+    session,
+    classificador_fake,
+    outbound_fake,
+    resumidor_fake,
+    contador_fake,
+    moderador_fake,
+) -> None:
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+    kwargs = dict(
+        classificador=classificador,
+        outbound=outbound,
+        moderador=moderador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+    )
+
+    await _rodar(session, "apaga meus dados", **kwargs)
+
+    assert await _rodar(session, confirmacao, **kwargs) == "pedido_de_titular"
+    assert len(await _solicitacoes(session)) == 1
+
+
+async def test_apagar_depois_de_24_horas_nao_confirma(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """A pergunta vale por 24 horas: depois disso "apagar" e so uma palavra, e
+    o turno segue normal -- chama o modelo e nao registra nada."""
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+    kwargs = dict(
+        classificador=classificador,
+        outbound=outbound,
+        moderador=moderador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+    )
+
+    await _rodar(session, "quero apagar meus dados", **kwargs)
+    # Envelhece a reserva da pergunta, que e o carimbo que o segundo passo le.
+    await session.execute(
+        update(OutboundDispatch)
+        .where(OutboundDispatch.kind == KIND_DA_PERGUNTA_DE_ELIMINACAO)
+        .values(created_at=func.now() - timedelta(hours=24, minutes=1))
+    )
+    await session.commit()
+
+    resultado = await _rodar(session, "apagar", **kwargs)
+
+    assert resultado == "respondido"
+    assert classificador.chamadas == 1
+    assert await _solicitacoes(session) == []
+    assert not await esta_em_optout(session, channel=CANAL, conversation_key=CONVERSA)
+
+
+async def test_lead_que_continua_a_conversa_e_atendido_e_apagar_depois_nao_confirma(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    """Quem nao confirma e so continua a conversa recebe a resposta do modelo,
+    e nada e registrado. Um "apagar" depois disso nao confirma: a ultima fala
+    do agente ja nao e a pergunta.
+
+    A primeira frase e a correcao de cadastro que motivou os dois passos: o
+    detector a le como eliminacao, e antes ela gravava opt-out e encerrava a
+    conversa na hora."""
+    classificador = classificador_fake()
+    outbound = outbound_fake()
+    kwargs = dict(
+        classificador=classificador,
+        outbound=outbound,
+        moderador=moderador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+    )
+
+    pergunta = await _rodar(
+        session, "pode excluir meus dados do cadastro antigo e manter o novo?", **kwargs
+    )
+    assert pergunta == "confirmacao_de_titular_pedida"
+
+    seguiu = await _rodar(session, "tem apartamento de 2 quartos em Pinheiros?", **kwargs)
+    assert seguiu == "respondido"
+    assert classificador.chamadas == 1
+
+    resultado = await _rodar(session, "apagar", **kwargs)
+
+    assert resultado == "respondido"
+    assert classificador.chamadas == 2
+    assert await _solicitacoes(session) == []
+    assert not await esta_em_optout(session, channel=CANAL, conversation_key=CONVERSA)
+    assert (await _encerramento(session))[0] != Status.ENCERRADA
+
+
+async def test_apagar_sem_pergunta_pendente_segue_o_turno_normal(
+    session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
+) -> None:
+    classificador = classificador_fake()
+
+    resultado = await _rodar(
+        session,
+        "apagar",
+        classificador=classificador,
+        outbound=outbound_fake(),
+        moderador=moderador_fake(),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+    )
+
+    assert resultado == "respondido"
+    assert classificador.chamadas == 1
+    assert await _solicitacoes(session) == []
 
 
 async def test_pedido_de_acesso_nao_registra_optout(
@@ -204,22 +359,25 @@ async def test_lead_ja_em_optout_ainda_exerce_o_direito(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
 ) -> None:
     """Antes do portao de silencio por opt-out: quem ja pediu para sair nao
-    perde o direito de pedir que apaguem os dados -- e a confirmacao atravessa
-    a guarda de opt-out da porta de saida."""
+    perde o direito de pedir que apaguem os dados -- a pergunta e a
+    confirmacao atravessam a guarda de opt-out da porta de saida, e o
+    "apagar" de quem ja optou ainda confirma."""
     await registrar_optout(
         get_sessionmaker(), channel=CANAL, conversation_key=CONVERSA, message_id=uuid.uuid4()
     )
+    classificador = classificador_fake()
     outbound = outbound_fake()
-
-    resultado = await _rodar(
-        session,
-        "quero apagar meus dados",
-        classificador=classificador_fake(),
+    kwargs = dict(
+        classificador=classificador,
         outbound=outbound,
         moderador=moderador_fake(),
         resumidor=resumidor_fake(),
         contador=contador_fake(),
     )
+
+    primeiro = await _rodar(session, "quero apagar meus dados", **kwargs)
+    assert primeiro == "confirmacao_de_titular_pedida"
+    resultado = await _rodar(session, "apagar", **kwargs)
 
     assert resultado == "pedido_de_titular"
     [linha] = await _solicitacoes(session)
@@ -227,8 +385,9 @@ async def test_lead_ja_em_optout_ainda_exerce_o_direito(
     # O opt-out ja valia: o bloco nao acrescenta um segundo evento a tabela
     # append-only.
     assert await _eventos_de_optout(session) == 1
-    assert len(outbound.entregues) == 1
-    assert TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO in outbound.entregues[0]
+    assert len(outbound.entregues) == 2
+    assert TEXTO_DA_PERGUNTA_DE_ELIMINACAO in outbound.entregues[0]
+    assert TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO in outbound.entregues[1]
 
 
 async def test_conversa_em_atendimento_humano_ainda_confirma(
@@ -268,12 +427,13 @@ async def test_registro_nao_depende_da_moderacao_aprovar(
 ) -> None:
     """Mesmo CRITICAL que `test_turno_optout.py` prende para o opt-out: uma
     fala que e pedido de titular E reprovada pela moderacao tem o pedido
-    registrado e confirmado, e a recusa de entrada nao sai."""
+    registrado e confirmado, e a recusa de entrada nao sai. Vale para o
+    primeiro passo da eliminacao tambem: a pergunta sai no lugar da recusa."""
     outbound = outbound_fake()
 
     resultado = await _rodar(
         session,
-        "apaguem meus dados, seus golpistas",
+        "quero meus dados, seus golpistas",
         classificador=classificador_fake(),
         outbound=outbound,
         moderador=moderador_fake(bloqueia_entrada=True),
@@ -284,20 +444,34 @@ async def test_registro_nao_depende_da_moderacao_aprovar(
     assert resultado == "pedido_de_titular"
     assert len(await _solicitacoes(session)) == 1
     assert len(outbound.entregues) == 1
-    assert TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO in outbound.entregues[0]
+    assert TEXTO_DA_CONFIRMACAO_DE_ACESSO in outbound.entregues[0]
+
+    pergunta = await _rodar(
+        session,
+        "apaguem meus dados, seus golpistas",
+        classificador=classificador_fake(),
+        outbound=outbound,
+        moderador=moderador_fake(bloqueia_entrada=True),
+        resumidor=resumidor_fake(),
+        contador=contador_fake(),
+    )
+
+    assert pergunta == "confirmacao_de_titular_pedida"
+    assert len(outbound.entregues) == 2
+    assert TEXTO_DA_PERGUNTA_DE_ELIMINACAO in outbound.entregues[1]
 
 
 async def test_pedir_duas_vezes_cria_uma_solicitacao_e_confirma_as_duas(
     session, classificador_fake, outbound_fake, resumidor_fake, contador_fake, moderador_fake
 ) -> None:
-    """Idempotencia de `registrar_solicitacao` por (lead, tipo): o segundo
+    """Idempotencia de `registrar_solicitacao` por lead e tipo: o segundo
     pedido nao abre outra linha, mas o lead que repete recebe a confirmacao de
     novo -- mensagem nova, reserva nova em `outbound_dispatches`."""
     outbound = outbound_fake()
     for _ in range(2):
         resultado = await _rodar(
             session,
-            "quero apagar meus dados",
+            "quero meus dados",
             classificador=classificador_fake(),
             outbound=outbound,
             moderador=moderador_fake(),
@@ -308,4 +482,4 @@ async def test_pedir_duas_vezes_cria_uma_solicitacao_e_confirma_as_duas(
 
     assert len(await _solicitacoes(session)) == 1
     assert len(outbound.entregues) == 2
-    assert all(TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO in texto for texto in outbound.entregues)
+    assert all(TEXTO_DA_CONFIRMACAO_DE_ACESSO in texto for texto in outbound.entregues)

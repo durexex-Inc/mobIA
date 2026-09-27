@@ -12,24 +12,34 @@ from mobia.domain.optout.deteccao import KIND_DA_CONFIRMACAO_DE_OPTOUT
 from mobia.domain.optout.repositorio import esta_em_optout_por_mensagem
 from mobia.domain.outbound.kinds import e_fala_do_corretor, grupo_de
 from mobia.domain.outbound.models import OutboundDispatch
-from mobia.domain.titular.deteccao import KIND_DA_CONFIRMACAO_DE_TITULAR
+from mobia.domain.titular.deteccao import (
+    KIND_DA_CONFIRMACAO_DE_TITULAR,
+    KIND_DA_PERGUNTA_DE_ELIMINACAO,
+)
 
 log = structlog.get_logger(__name__)
 
 # Os kinds que atravessam as DUAS guardas de `GuardedOutbound.send` (opt-out e
-# atendimento humano). Os dois sao reconhecimento legal de um pedido que o
-# PROPRIO lead acabou de fazer, e nao mensagem de conversa: a confirmacao de
-# opt-out (TEC-182, D1) e a confirmacao do pedido de titular (TEC-207, D3). O
-# segundo precisa furar a guarda de opt-out por construcao -- o pedido de
-# eliminacao registra opt-out ANTES de confirmar, e sem a excecao o proprio
-# registro barraria a confirmacao dele; e precisa furar a de atendimento
-# humano porque um corretor ter assumido a conversa nao suspende direito do
-# titular. Conjunto, e nao `!=` repetidos, porque ha quatro sitios que
-# decidem sobre ele (as duas guardas aqui e os dois recheques de
-# `turno.py::_entregar_texto_fixo`), e um terceiro kind que entrasse so em
-# parte deles faria o desfecho do turno mentir sobre quem barrou o envio.
+# atendimento humano). Os tres respondem a um pedido que o PROPRIO lead
+# acabou de fazer, e nao sao mensagem de conversa: a confirmacao de opt-out
+# (TEC-182, D1), a confirmacao do pedido de titular (TEC-207, D3) e a
+# pergunta que abre o segundo passo da eliminacao (TEC-207, C2 da revisao
+# final). A confirmacao de titular precisa furar a guarda de opt-out por
+# construcao -- a eliminacao confirmada registra opt-out ANTES de confirmar, e
+# sem a excecao o proprio registro barraria a confirmacao dela; a pergunta
+# precisa furar porque quem ja optou continua podendo pedir a eliminacao, e
+# sem a pergunta nao ha como confirmar. As duas furam a de atendimento humano
+# porque um corretor ter assumido a conversa nao suspende direito do titular.
+# Conjunto, e nao `!=` repetidos, porque ha quatro sitios que decidem sobre
+# ele (as duas guardas aqui e os dois recheques de
+# `turno.py::_entregar_texto_fixo`), e um kind que entrasse so em parte deles
+# faria o desfecho do turno mentir sobre quem barrou o envio.
 KINDS_QUE_FURAM_AS_GUARDAS = frozenset(
-    {KIND_DA_CONFIRMACAO_DE_OPTOUT, KIND_DA_CONFIRMACAO_DE_TITULAR}
+    {
+        KIND_DA_CONFIRMACAO_DE_OPTOUT,
+        KIND_DA_CONFIRMACAO_DE_TITULAR,
+        KIND_DA_PERGUNTA_DE_ELIMINACAO,
+    }
 )
 
 # A UNIQUE (message_id, kind) de `outbound_dispatches` -- ver
@@ -150,7 +160,7 @@ class OutboundPort(Protocol):
     - Envio barrado pela guarda de opt-out: o lead deste `message_id` pediu
       para parar de receber mensagem, e `kind` nao esta em
       `KINDS_QUE_FURAM_AS_GUARDAS` (a confirmacao de opt-out e, desde a
-      TEC-207, a do pedido de titular) -- ver `GuardedOutbound.send` e
+      TEC-207, a do pedido de titular e a pergunta de eliminacao) -- ver `GuardedOutbound.send` e
       `esta_em_optout_por_mensagem`.
     - Envio barrado pela guarda de atendimento humano: um corretor assumiu
       esta conversa e ainda nao a devolveu (TEC-179, RN-16.4) -- ver
@@ -217,8 +227,8 @@ class GuardedOutbound:
     esta classe como a rota segura: herdar daqui e o que garante que um
     caminho de envio novo nao fale com quem pediu silencio nem por cima de
     quem assumiu a conversa. Os kinds de `KINDS_QUE_FURAM_AS_GUARDAS` -- a
-    confirmacao de opt-out e, desde a TEC-207, a do pedido de titular --
-    atravessam as duas, ver `send`; desde a TEC-194 a fala do corretor
+    confirmacao de opt-out e, desde a TEC-207, a do pedido de titular e a
+    pergunta de eliminacao -- atravessam as duas, ver `send`; desde a TEC-194 a fala do corretor
     atravessa so a de atendimento humano.
 
     A guarda de atendimento humano nao nasceu com essa excecao: a D5 original
@@ -266,10 +276,11 @@ class GuardedOutbound:
         #
         # Os kinds de `KINDS_QUE_FURAM_AS_GUARDAS` passam: a confirmacao do
         # opt-out (o unico envio que a D1 da TEC-182 autoriza depois do
-        # registro) e, desde a TEC-207, a do pedido de titular -- o pedido de
-        # eliminacao grava o opt-out antes de confirmar, entao sem a excecao
-        # esta guarda barraria a confirmacao do proprio pedido. O motivo por
-        # extenso esta no comentario da constante.
+        # registro) e, desde a TEC-207, a do pedido de titular -- a
+        # eliminacao confirmada grava o opt-out antes de confirmar, entao sem
+        # a excecao esta guarda barraria a confirmacao do proprio pedido -- e
+        # a pergunta de eliminacao, que quem ja optou tambem tem de receber.
+        # O motivo por extenso esta no comentario da constante.
         if kind not in KINDS_QUE_FURAM_AS_GUARDAS:
             async with self._session_factory() as session:
                 if await esta_em_optout_por_mensagem(session, message_id):
@@ -294,8 +305,8 @@ class GuardedOutbound:
         # que a guarda de opt-out tem, e nao a copia distraida do padrao dela
         # que parece a primeira vista.** (Ate a TEC-194 a confirmacao de
         # opt-out era a UNICA excecao desta guarda; a fala do corretor esta no
-        # fim deste comentario, e a confirmacao de titular, que a TEC-207
-        # somou ao conjunto, logo antes dela.) A D5
+        # fim deste comentario, e a confirmacao de titular e a pergunta de
+        # eliminacao, que a TEC-207 somou ao conjunto, logo antes dela.) A D5
         # original do desenho decidia "barra TODO kind, sem escotilha", e o
         # argumento era sobre o caminho HUMANO de envio -- a rota
         # `POST /conversas/{id}/mensagens` do SRS, que entao nao existia; nao
@@ -317,7 +328,10 @@ class GuardedOutbound:
         # pedido do proprio lead, e o turno ja registra o pedido antes da
         # guarda de atendimento humano do topo -- um corretor ter assumido a
         # conversa nao suspende direito do titular, e sem a excecao o pedido
-        # seria gravado e a confirmacao dele barrada aqui.
+        # seria gravado e a confirmacao dele barrada aqui. A pergunta de
+        # eliminacao (revisao final da TEC-207, C2) entrou pelo mesmo
+        # argumento: sem ela, o lead de uma conversa assumida pediria a
+        # eliminacao e nunca receberia a pergunta que a confirma.
         #
         # **A segunda excecao, em ordem de chegada, veio com a TEC-194, e e a
         # que a L3 do desenho da TEC-179 previa.** Este comentario dizia que

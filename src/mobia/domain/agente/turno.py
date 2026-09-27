@@ -155,11 +155,17 @@ from mobia.domain.outbound.port import (
 from mobia.domain.outbound.repositorio import kinds_reservados, reservado_em
 from mobia.domain.titular.deteccao import (
     KIND_DA_CONFIRMACAO_DE_TITULAR,
+    KIND_DA_PERGUNTA_DE_ELIMINACAO,
     TEXTO_DA_CONFIRMACAO_DE_ACESSO,
     TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO,
+    TEXTO_DA_PERGUNTA_DE_ELIMINACAO,
+    e_palavra_de_confirmacao,
     pedido_de_titular,
 )
-from mobia.domain.titular.repositorio import registrar_solicitacao
+from mobia.domain.titular.repositorio import (
+    pergunta_de_eliminacao_pendente,
+    registrar_solicitacao,
+)
 from mobia.domain.titular.vocabulario import OrigemDaSolicitacao, TipoDeSolicitacao
 from mobia.infra.crypto import aad_de, decrypt
 from mobia.infra.embeddings import embedar_do_turno
@@ -642,11 +648,18 @@ ResultadoDoTurno = Literal[
     # numero que diz quanto tempo o provedor esteve fora.
     "provedor_indisponivel",
     # A TEC-207 acrescentou este: o turno que registrou um pedido de titular
-    # (acesso ou eliminacao, D3) e confirmou. Nao reuse "opt_out", mesmo
-    # quando o pedido de eliminacao grava opt-out junto: quantos pedidos de
-    # titular chegam pelo WhatsApp e um numero que o produto quer ler no log
-    # separado de quantos leads so pediram para sair, e soma-los o apagaria.
+    # (acesso, ou eliminacao ja confirmada, D3) e confirmou. Nao reuse
+    # "opt_out", mesmo quando a eliminacao grava opt-out junto: quantos
+    # pedidos de titular chegam pelo WhatsApp e um numero que o produto quer
+    # ler no log separado de quantos leads so pediram para sair, e soma-los o
+    # apagaria.
     "pedido_de_titular",
+    # E este, da revisao final da mesma card (C2): o primeiro passo da
+    # eliminacao, em que o turno so perguntou se o lead quer mesmo apagar e
+    # nao registrou nada. Nao reuse "pedido_de_titular": a distancia entre os
+    # dois e quantas perguntas nao viraram pedido -- as correcoes de cadastro
+    # que os dois passos existem para nao transformar em eliminacao.
+    "confirmacao_de_titular_pedida",
 ]
 
 
@@ -1237,7 +1250,16 @@ async def _executar_turno(
     #
     # Sem LLM, como o opt-out: uma decisao de LGPD nao depende de provedor.
     #
-    # **O pedido de eliminacao grava opt-out junto** (D3): quem pede para
+    # **A eliminacao e em dois passos** (C2 da revisao final, decisao do
+    # Eduardo -- ver `_CONFIRMACOES_DE_ELIMINACAO` em `titular/deteccao.py`).
+    # O pedido (`tipo_de_titular is ELIMINACAO`) nao registra nada: so manda
+    # `TEXTO_DA_PERGUNTA_DE_ELIMINACAO`. Quem registra e a mensagem seguinte,
+    # se ela for a palavra de confirmacao E a ultima coisa que o agente mandou
+    # ao lead tiver sido a pergunta, ha menos de 24 horas
+    # (`pergunta_de_eliminacao_pendente`). Fora disso "apagar" e so uma
+    # palavra e o turno segue normal. O acesso continua em um passo.
+    #
+    # **A eliminacao confirmada grava opt-out junto** (D3): quem pede para
     # apagar os dados nao quer follow-up enquanto o pedido espera, e o texto
     # que confirma promete isso ("até lá não vou mais te enviar mensagens").
     # `or pedido_de_optout` porque este bloco devolve antes do bloco de
@@ -1245,7 +1267,11 @@ async def _executar_turno(
     # o acesso e PERDERIA o opt-out em silencio -- o defeito de LGPD que o
     # comentario da guarda de atendimento humano descreve, entrando por outra
     # porta. A confirmacao nesse caso e a do pedido de titular so; o opt-out
-    # fica registrado e o portao o aplica do proximo turno em diante.
+    # fica registrado e o portao o aplica do proximo turno em diante. O mesmo
+    # vale para a PERGUNTA de eliminacao: "pare de mandar mensagem e apaguem
+    # meus dados" grava o opt-out agora e pergunta -- a pergunta fura a guarda
+    # de opt-out, e o "apagar" seguinte tambem, porque este bloco vem antes do
+    # portao.
     #
     # A ordem das escritas segue o bloco de opt-out: tudo gravado ANTES da
     # entrega, porque entrega que falha deixa o lead sem confirmacao (ruim e
@@ -1254,28 +1280,53 @@ async def _executar_turno(
     # propria transacao. Numa retentativa sobre a mesma mensagem as duas sao
     # seguras: `registrar_solicitacao` e idempotente por (lead, tipo), e o
     # opt-out so e gravado se o lead ainda nao esta nele (a tabela e
-    # append-only, e o segundo evento seria ruido na trilha).
+    # append-only, e o segundo evento seria ruido na trilha). A retentativa do
+    # "apagar" continua se reconhecendo como confirmacao porque
+    # `pergunta_de_eliminacao_pendente` ignora as reservas da propria mensagem.
     #
-    # A confirmacao sai com `KIND_DA_CONFIRMACAO_DE_TITULAR`, que esta em
-    # `KINDS_QUE_FURAM_AS_GUARDAS` (`outbound/port.py`): sem isso, o opt-out
-    # que o proprio pedido acabou de gravar barraria a confirmacao dele.
-    if tipo_de_titular is not None:
-        async with session_factory() as sessao_do_titular:
-            await registrar_solicitacao(
-                sessao_do_titular,
+    # A confirmacao sai com `KIND_DA_CONFIRMACAO_DE_TITULAR` e a pergunta com
+    # `KIND_DA_PERGUNTA_DE_ELIMINACAO`, os dois em `KINDS_QUE_FURAM_AS_GUARDAS`
+    # (`outbound/port.py`): sem isso, o opt-out que a propria eliminacao
+    # acabou de gravar barraria a confirmacao dela, e o de quem ja optou
+    # barraria a pergunta.
+    confirmou_eliminacao = False
+    if corpo and e_palavra_de_confirmacao(corpo):
+        async with session_factory() as sessao_da_confirmacao:
+            confirmou_eliminacao = await pergunta_de_eliminacao_pendente(
+                sessao_da_confirmacao,
                 channel=message.channel,
                 conversation_key=message.conversation_key,
-                tipo=tipo_de_titular,
-                origem=OrigemDaSolicitacao.WHATSAPP,
-                ator=ATOR_SISTEMA,
+                antes_da_mensagem=message.id,
             )
-            await sessao_do_titular.commit()
+    # O que o bloco registra: o acesso, na hora; a eliminacao, so confirmada.
+    # `pedido_de_titular` nunca devolve nada para a palavra solta ("apagar"
+    # nao fala de dados), entao os dois ramos nao colidem.
+    tipo_a_registrar: TipoDeSolicitacao | None = (
+        TipoDeSolicitacao.ELIMINACAO
+        if confirmou_eliminacao
+        else TipoDeSolicitacao.ACESSO
+        if tipo_de_titular is TipoDeSolicitacao.ACESSO
+        else None
+    )
+    pergunta_de_eliminacao = tipo_de_titular is TipoDeSolicitacao.ELIMINACAO
+    if tipo_a_registrar is not None or pergunta_de_eliminacao:
+        async with session_factory() as sessao_do_titular:
+            if tipo_a_registrar is not None:
+                await registrar_solicitacao(
+                    sessao_do_titular,
+                    channel=message.channel,
+                    conversation_key=message.conversation_key,
+                    tipo=tipo_a_registrar,
+                    origem=OrigemDaSolicitacao.WHATSAPP,
+                    ator=ATOR_SISTEMA,
+                )
+                await sessao_do_titular.commit()
             ja_em_optout = await esta_em_optout(
                 sessao_do_titular,
                 channel=message.channel,
                 conversation_key=message.conversation_key,
             )
-        quer_silencio = tipo_de_titular is TipoDeSolicitacao.ELIMINACAO or pedido_de_optout
+        quer_silencio = tipo_a_registrar is TipoDeSolicitacao.ELIMINACAO or pedido_de_optout
         if quer_silencio and not ja_em_optout:
             await registrar_optout(
                 session_factory,
@@ -1286,27 +1337,41 @@ async def _executar_turno(
             # A mesma escrituracao do bloco de opt-out (TEC-130, D6), na mesma
             # ordem: opt-out primeiro, encerramento depois.
             await _encerrar_por_optout(session_factory, message)
-        log.info(
-            "turno.pedido_de_titular",
-            channel=message.channel,
-            message_id=str(message.id),
-            tipo=str(tipo_de_titular),
-        )
+        if tipo_a_registrar is None:
+            log.info(
+                "turno.confirmacao_de_titular_pedida",
+                channel=message.channel,
+                message_id=str(message.id),
+            )
+            texto_do_titular = TEXTO_DA_PERGUNTA_DE_ELIMINACAO
+            kind_do_titular = KIND_DA_PERGUNTA_DE_ELIMINACAO
+            desfecho_de_sucesso: ResultadoDoTurno = "confirmacao_de_titular_pedida"
+        else:
+            log.info(
+                "turno.pedido_de_titular",
+                channel=message.channel,
+                message_id=str(message.id),
+                tipo=str(tipo_a_registrar),
+            )
+            texto_do_titular = (
+                TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO
+                if tipo_a_registrar is TipoDeSolicitacao.ELIMINACAO
+                else TEXTO_DA_CONFIRMACAO_DE_ACESSO
+            )
+            kind_do_titular = KIND_DA_CONFIRMACAO_DE_TITULAR
+            desfecho_de_sucesso = "pedido_de_titular"
         desfecho_do_titular = await _entregar_texto_fixo(
             session_factory,
             message=message,
             outbound=outbound,
-            recorder_texto=(
-                TEXTO_DA_CONFIRMACAO_DE_ELIMINACAO
-                if tipo_de_titular is TipoDeSolicitacao.ELIMINACAO
-                else TEXTO_DA_CONFIRMACAO_DE_ACESSO
-            ),
-            kind=KIND_DA_CONFIRMACAO_DE_TITULAR,
+            recorder_texto=texto_do_titular,
+            kind=kind_do_titular,
             subagent=SUBAGENTE_TITULAR,
         )
         # Mesmo contrato do bloco de opt-out: os desfechos de nao-entrega sao
-        # sobre o ENVIO, e o pedido ja esta gravado -- passam como estao.
-        return "pedido_de_titular" if desfecho_do_titular == "respondido" else desfecho_do_titular
+        # sobre o ENVIO, e o pedido ja esta gravado (na pergunta, nao havia o
+        # que gravar) -- passam como estao.
+        return desfecho_de_sucesso if desfecho_do_titular == "respondido" else desfecho_do_titular
 
     # Antes de tudo, exceto o pedido de titular logo acima: quem ja pediu
     # silencio nao recebe resposta. **Paga a moderacao, desde a TEC-297** --
@@ -4515,9 +4580,10 @@ async def _entregar_texto_fixo(
     (`KIND_DA_RESPOSTA`) para preservar o chamador que nao precisa de kind
     proprio -- hoje so o texto da busca inconclusiva (`LacoDeBuscaExcedido`,
     mais abaixo) usa o default. Os outros seis chamadores passam kind
-    proprio: a confirmacao de opt-out (TEC-182), a confirmacao do pedido de
-    titular (TEC-207: `KIND_DA_CONFIRMACAO_DE_TITULAR`, com
-    `SUBAGENTE_TITULAR`), o aviso de pedido de humano,
+    proprio: a confirmacao de opt-out (TEC-182), o bloco do pedido de
+    titular (TEC-207: `KIND_DA_CONFIRMACAO_DE_TITULAR` na confirmacao e
+    `KIND_DA_PERGUNTA_DE_ELIMINACAO` na pergunta do primeiro passo da
+    eliminacao, as duas com `SUBAGENTE_TITULAR`), o aviso de pedido de humano,
     a confirmacao de midia sem texto (TEC-132, D4:
     `KIND_DA_CONFIRMACAO_DE_MIDIA`, com `SUBAGENTE_MIDIA`), a recusa de
     entrada -- desde a TEC-295, ruling R6 --, que usa
@@ -4525,7 +4591,7 @@ async def _entregar_texto_fixo(
     a continuacao da D4 pode entregar depois dela na mesma mensagem, e o
     agendamento pela conversa (TEC-371: `KIND_DO_AGENDAMENTO`, com
     `SUBAGENTE_AGENDAMENTO`). O da
-    opt-out e o do pedido de titular sao os unicos que atravessam as guardas
+    opt-out e os dois do pedido de titular sao os unicos que atravessam as guardas
     de opt-out e de atendimento humano da porta de saida -- ver
     `KINDS_QUE_FURAM_AS_GUARDAS` e `GuardedOutbound.send`. `subagent` anda junto
     de `kind` pelo mesmo motivo: sem o parametro, toda entrega deste caminho
@@ -4535,8 +4601,8 @@ async def _entregar_texto_fixo(
     """
     # A identificacao entra AQUI e nao em cada chamador: este e o funil das
     # trilhas que passam por `_entregar_texto_fixo` -- recusa da moderacao de
-    # entrada, confirmacao de opt-out, confirmacao do pedido de titular
-    # (TEC-207), aviso de pedido de humano, confirmacao
+    # entrada, confirmacao de opt-out, confirmacao do pedido de titular e
+    # pergunta de eliminacao (TEC-207), aviso de pedido de humano, confirmacao
     # de midia sem texto (TEC-132), agendamento pela conversa (TEC-371) e laco
     # de busca excedido.
     # (O texto neutro da moderacao de saida e a busca inconclusiva da citacao
@@ -4589,11 +4655,12 @@ async def _entregar_texto_fixo(
         # por opt-out desta vez, mas porque o opt-out que o PROPRIO turno
         # gravou ainda esta la. O mesmo vale para a confirmacao do pedido de
         # eliminacao (TEC-207), que tambem grava opt-out antes de confirmar;
-        # e mesmo no pedido de acesso, sem opt-out gravado, o argumento
-        # abaixo basta. A guarda pula a checagem de opt-out para os kinds
-        # desse conjunto (ver `GuardedOutbound.send`), entao um `False` aqui
-        # so pode vir de reserva duplicada de verdade. Chamar o helper mesmo
-        # assim relataria "bloqueado_por_optout" em `info` e engoliria o
+        # e mesmo no pedido de acesso e na pergunta de eliminacao, sem opt-out
+        # gravado pelo turno, o argumento abaixo basta. A guarda pula a
+        # checagem de opt-out para os kinds desse conjunto (ver
+        # `GuardedOutbound.send`), entao um `False` aqui so pode vir de
+        # reserva duplicada de verdade. Chamar o helper mesmo assim
+        # relataria "bloqueado_por_optout" em `info` e engoliria o
         # "reentrega_suprimida" em `error` -- o alarme de dado sumido que
         # importa exatamente aqui, na confirmacao que apaga o unico rastro
         # visivel do pedido do lead se ela nao chegar.
@@ -4624,7 +4691,8 @@ async def _entregar_texto_fixo(
         # -- fix de revisao (Major, rodada 2). A guarda de atendimento humano
         # deixou de barrar TODO kind na emenda que abriu a excecao de
         # `KIND_DA_CONFIRMACAO_DE_OPTOUT` (ver `GuardedOutbound.send`), e a
-        # TEC-207 somou a confirmacao do pedido de titular ao mesmo conjunto:
+        # TEC-207 somou a confirmacao do pedido de titular e a pergunta de
+        # eliminacao ao mesmo conjunto:
         # para esses kinds, ela nao pode mais ser a causa de um `False` aqui
         # -- ela deixa passar. Sem esta excecao, a confirmacao de
         # opt-out retentada com a reserva ja existente E a conversa ainda

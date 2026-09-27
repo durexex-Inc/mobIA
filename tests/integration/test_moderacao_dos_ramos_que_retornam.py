@@ -7,7 +7,8 @@ como fala legitima.
 
 O que este arquivo prova, parametrizado nos ramos que retornam (os cinco da
 TEC-297 -- silenciado, atendimento humano, fora de escopo, opt-out e pedido de
-humano -- e o pedido de titular, que a TEC-207 acrescentou): a marca, a
+humano -- e os dois desfechos do pedido de titular, que a TEC-207
+acrescentou: o registro do acesso e a pergunta que abre a eliminacao): a marca, a
 auditoria no mesmo commit (TEC-142), e a AUSENCIA em `literais_apos` -- a
 funcao de producao por onde todo contexto e todo resumo passam, e por isso a
 prova de que a fala nao chega ao prompt nem ao resumo permanente (TEC-236).
@@ -104,7 +105,15 @@ async def _preparar_pedido_de_humano(session, **_):
 
 
 async def _preparar_pedido_de_titular(session, **_):
-    """Ramo #6 (TEC-207): a propria fala pede para apagar os dados."""
+    """Ramo #6 (TEC-207): a propria fala pede acesso aos dados, e o turno
+    registra na hora."""
+    return "quero meus dados"
+
+
+async def _preparar_pergunta_de_eliminacao(session, **_):
+    """Mesmo ramo #6, pelo outro desfecho: a fala pede para apagar os dados,
+    e o turno so pergunta se o lead confirma (revisao final da TEC-207, C2).
+    Sai pelo mesmo `return` do bloco de titular."""
     return "quero apagar meus dados"
 
 
@@ -115,6 +124,7 @@ OS_RAMOS_QUE_RETORNAM = [
     ("opt_out", _preparar_opt_out),
     ("pedido_de_humano", _preparar_pedido_de_humano),
     ("pedido_de_titular", _preparar_pedido_de_titular),
+    ("confirmacao_de_titular_pedida", _preparar_pergunta_de_eliminacao),
 ]
 
 

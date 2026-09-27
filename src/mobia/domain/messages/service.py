@@ -22,7 +22,7 @@ from mobia.domain.messages.status import MessageStatus
 from mobia.domain.midia.models import MidiaRecebida
 from mobia.domain.midia.repositorio import linha_pendente
 from mobia.domain.optout.deteccao import pediu_optout
-from mobia.domain.titular.deteccao import pedido_de_titular
+from mobia.domain.titular.deteccao import e_palavra_de_confirmacao, pedido_de_titular
 from mobia.infra.crypto import aad_de, encrypt, encrypt_json
 from mobia.infra.db import motivo_do_erro_de_banco
 from mobia.infra.queue import enqueue_baixar_midia, enqueue_process_message
@@ -111,11 +111,19 @@ class IngestionService:
             # antes de qualquer handoff). Desde a TEC-207 (D3) o pedido de
             # titular tambem nao: e o terceiro pedido do lead que a rajada nao
             # pode segurar -- o prazo de 15 dias conta de quando o turno
-            # registra o pedido, e a janela so atrasaria o registro. As tres funcoes sao puras e
-            # deterministicas, sem chamada paga, e aqui o texto ainda esta em
-            # claro -- e o unico ponto do fluxo onde ele esta.
+            # registra o pedido, e a janela so atrasaria o registro. A palavra
+            # que confirma a eliminacao ("apagar", segundo passo da revisao
+            # final da TEC-207) fura pela mesma razao, e SEMPRE que a forma
+            # bate: saber se ha pergunta pendente exigiria consultar o banco
+            # aqui, e furar sem ser confirmacao so roda o turno sem esperar.
+            # As funcoes sao puras e deterministicas, sem chamada paga, e aqui
+            # o texto ainda esta em claro -- e o unico ponto do fluxo onde ele
+            # esta.
             pediu = (
-                pediu_optout(texto) or pediu_humano(texto) or pedido_de_titular(texto) is not None
+                pediu_optout(texto)
+                or pediu_humano(texto)
+                or pedido_de_titular(texto) is not None
+                or e_palavra_de_confirmacao(texto)
             )
 
             # A cota e consumida por TODA mensagem, inclusive a que pede

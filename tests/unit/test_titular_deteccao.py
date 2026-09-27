@@ -1,7 +1,12 @@
 import pytest
 
 from mobia.domain.optout.deteccao import pediu_optout
-from mobia.domain.titular.deteccao import pedido_de_titular
+from mobia.domain.outbound.port import KINDS_QUE_FURAM_AS_GUARDAS
+from mobia.domain.titular.deteccao import (
+    KIND_DA_PERGUNTA_DE_ELIMINACAO,
+    e_palavra_de_confirmacao,
+    pedido_de_titular,
+)
 from mobia.domain.titular.vocabulario import TipoDeSolicitacao
 
 
@@ -192,3 +197,31 @@ def test_ambiguidade_aceita_do_indicativo_singular() -> None:
     positivo, declarado no comentario de `_TERMINACOES_DE_PEDIDO` -- o teste
     prende a escolha, para que muda-la seja deliberado."""
     assert pedido_de_titular("o sistema apaga meus dados depois?") is (TipoDeSolicitacao.ELIMINACAO)
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [
+        ("APAGAR", True),
+        ("apagar", True),
+        ("Apagar!", True),
+        ("sim, apagar", True),
+        ("Confirmo apagar.", True),
+        ("apagar o que?", False),
+        ("quero apagar meus dados", False),
+        ("apaga", False),
+        ("", False),
+    ],
+)
+def test_palavra_de_confirmacao_e_a_mensagem_inteira(texto: str, esperado: bool) -> None:
+    """So a mensagem INTEIRA confirma: "apagar o que?" e pergunta, e o pedido
+    com o objeto ("quero apagar meus dados") e o primeiro passo, nao o segundo."""
+    assert e_palavra_de_confirmacao(texto) is esperado
+
+
+def test_a_pergunta_de_eliminacao_fura_as_guardas_e_cabe_na_coluna() -> None:
+    """Quem ja optou, ou cuja conversa um corretor assumiu, ainda recebe a
+    pergunta -- sem ela nao ha como confirmar. `outbound_dispatches.kind` e
+    String(32); estourar so apareceria no INSERT."""
+    assert KIND_DA_PERGUNTA_DE_ELIMINACAO in KINDS_QUE_FURAM_AS_GUARDAS
+    assert len(KIND_DA_PERGUNTA_DE_ELIMINACAO) <= 32
