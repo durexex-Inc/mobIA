@@ -523,3 +523,22 @@ a {
   font-style: italic;
   opacity: 0.8;
 }
+
+/* O chat embutido no site da imobiliaria (TEC-344). `--cor-primaria` vem da
+   configuracao do tenant, por `<style nonce>` na pagina. */
+.chat-embutido {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-embutido__cabecalho {
+  background: var(--cor-primaria, #1d4ed8);
+  color: #fff;
+  padding: 16px;
+}
+
+.chat-embutido__cabecalho h1 {
+  margin: 0;
+  font-size: 1.125rem;
+}
