@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { esquecerDominiosDoEmbed } from '@/lib/servidor/dominiosDoEmbed'
 import { COOKIE_DA_SESSAO as COOKIE_DA_SESSAO_DE_VERDADE } from '@/lib/servidor/sessao'
 
-import { config, COOKIE_DA_SESSAO, origemPublicaDaApi, politicaDeSeguranca, proxy } from './proxy'
+import { config, COOKIE_DA_SESSAO, politicaDeSeguranca, proxy } from './proxy'
 
 const PAINEL = 'https://painel.exemplo.com'
 
@@ -30,12 +30,12 @@ let api: ReturnType<typeof vi.fn>
 beforeEach(() => {
   esquecerDominiosDoEmbed()
   process.env.MOBIA_API_BASE = 'http://backend:8000'
-  process.env.MOBIA_ORIGEM_PUBLICA_DA_API = 'https://api.exemplo.com'
+  process.env.MOBIA_WIDGET_WS_URL = 'wss://api.exemplo.com/widget/chat'
   api = vi.fn(async () => new Response(JSON.stringify({ dominios: DOMINIOS }), { status: 200 }))
   vi.stubGlobal('fetch', api)
 })
 afterEach(() => {
-  delete process.env.MOBIA_ORIGEM_PUBLICA_DA_API
+  delete process.env.MOBIA_WIDGET_WS_URL
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -76,7 +76,7 @@ describe('politicaDeSeguranca', () => {
 
   it('o embed e enquadrado so pelos dominios cadastrados (TEC-345)', () => {
     const politica = politicaDeSeguranca('abc', false, {
-      embed: { ancestrais: DOMINIOS, origemDaApi: null },
+      embed: { ancestrais: DOMINIOS, conectarA: null },
     })
 
     expect(politica).toContain(
@@ -87,29 +87,22 @@ describe('politicaDeSeguranca', () => {
 
   it('embed sem dominio cadastrado nao e enquadrado por ninguem', () => {
     expect(
-      politicaDeSeguranca('abc', false, { embed: { ancestrais: [], origemDaApi: null } }),
+      politicaDeSeguranca('abc', false, { embed: { ancestrais: [], conectarA: null } }),
     ).toContain("frame-ancestors 'none'")
   })
 
-  it('o embed conecta so na propria origem e na API, com HTTP e WebSocket', () => {
+  it('o embed conecta so na propria origem e na do WebSocket do chat', () => {
     const politica = politicaDeSeguranca('abc', false, {
-      embed: { ancestrais: DOMINIOS, origemDaApi: 'https://api.exemplo.com' },
+      embed: { ancestrais: DOMINIOS, conectarA: 'wss://api.exemplo.com' },
     })
 
-    expect(politica).toContain(
-      "connect-src 'self' https://api.exemplo.com wss://api.exemplo.com",
-    )
-    expect(
-      politicaDeSeguranca('abc', false, {
-        embed: { ancestrais: DOMINIOS, origemDaApi: 'http://localhost:8000' },
-      }),
-    ).toContain("connect-src 'self' http://localhost:8000 ws://localhost:8000")
+    expect(politica).toContain("connect-src 'self' wss://api.exemplo.com;")
   })
 
-  it('sem a origem da API, o embed so conecta na propria origem', () => {
+  it('sem a origem do chat, o embed fica sem `connect-src` e herda `self`', () => {
     expect(
-      politicaDeSeguranca('abc', false, { embed: { ancestrais: DOMINIOS, origemDaApi: null } }),
-    ).toContain("connect-src 'self';")
+      politicaDeSeguranca('abc', false, { embed: { ancestrais: DOMINIOS, conectarA: null } }),
+    ).not.toContain('connect-src')
   })
 
   it('o painel nao ganha `connect-src` proprio: herda `default-src`', () => {
@@ -118,8 +111,7 @@ describe('politicaDeSeguranca', () => {
 
   it('o embed pode abrir o WebSocket do chat, e so ele (TEC-346, D2)', () => {
     const politica = politicaDeSeguranca('abc', false, {
-      embutivel: true,
-      conectarA: 'wss://api.exemplo.com',
+      embed: { ancestrais: DOMINIOS, conectarA: 'wss://api.exemplo.com' },
     })
     expect(politica).toContain("connect-src 'self' wss://api.exemplo.com")
   })
@@ -232,11 +224,11 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
     expect(COOKIE_DA_SESSAO).toBe(COOKIE_DA_SESSAO_DE_VERDADE)
   })
 
-  it('a resposta de /embed/chat autoriza a origem do WebSocket', () => {
+  it('a resposta de /embed/chat autoriza a origem do WebSocket', async () => {
     process.env.MOBIA_WIDGET_WS_URL = 'wss://api.exemplo.com/widget/chat'
     try {
-      expect(cspDe('/embed/chat')).toContain("connect-src 'self' wss://api.exemplo.com")
-      expect(cspDe('/leads')).not.toContain('connect-src')
+      expect(await cspDe('/embed/chat')).toContain("connect-src 'self' wss://api.exemplo.com")
+      expect(await cspDe('/leads')).not.toContain('connect-src')
     } finally {
       delete process.env.MOBIA_WIDGET_WS_URL
     }
@@ -248,15 +240,15 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
       vi.restoreAllMocks()
     })
 
-    it('o proxy nao derruba as outras rotas do embed: CSP sem connect-src, e loga o erro uma vez', () => {
+    it('o proxy nao derruba as outras rotas do embed: CSP sem connect-src, e loga o erro uma vez', async () => {
       process.env.MOBIA_WIDGET_WS_URL = 'nao e url'
       const erro = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       // `/embed/aparencia` nao usa o WebSocket e tem de continuar de pe; a
       // pagina `/embed/chat` falha sozinha, e isso nao e do proxy.
-      const politica = cspDe('/embed/aparencia')
+      const politica = await cspDe('/embed/aparencia')
 
-      expect(politica).toContain('frame-ancestors *')
+      expect(politica).toContain(`frame-ancestors ${DOMINIOS.join(' ')}`)
       expect(politica).not.toContain('connect-src')
       expect(erro).toHaveBeenCalledTimes(1)
     })
@@ -291,22 +283,24 @@ describe('proxy no embed (TEC-345, D4 e D5)', () => {
     expect(api).not.toHaveBeenCalled()
   })
 
-  it('o embed conecta na API publica, com HTTP e WebSocket', async () => {
-    expect(await cspDe('/embed/chat')).toContain(
-      "connect-src 'self' https://api.exemplo.com wss://api.exemplo.com",
-    )
+  it('TEC-384: o `connect-src` sai da mesma fonte do endereco do socket', async () => {
+    // `enderecoDoChat()` e o que a pagina passa ao `WebSocket`, e `origemDoChat()`
+    // e o que a CSP admite. Com duas variaveis, uma podia apontar para onde a
+    // outra nao deixa -- era o que a TEC-345 e a TEC-346 fariam juntas.
+    process.env.MOBIA_WIDGET_WS_URL = 'wss://chat.exemplo.com/widget/chat'
+
+    const politica = await cspDe('/embed/chat')
+
+    expect(politica).toContain("connect-src 'self' wss://chat.exemplo.com;")
+    expect(politica).toContain(`frame-ancestors ${DOMINIOS.join(' ')};`)
   })
 
-  it('cenario 3: a CSP do embed nao cita host nenhum alem dos dominios e da API', async () => {
+  it('cenario 3: a CSP do embed nao cita host nenhum alem dos dominios e do WebSocket', async () => {
     // Fontes, imagens, estilos e scripts so de `'self'`, nonce, `blob:` e
     // `data:`. As fontes Geist vem de `next/font/google`, que as baixa no
     // build e as serve de `_next/static`: nao ha Google em tempo de execucao.
     const politica = await cspDe('/embed/chat')
-    const permitidos = new Set([
-      ...DOMINIOS,
-      'https://api.exemplo.com',
-      'wss://api.exemplo.com',
-    ])
+    const permitidos = new Set([...DOMINIOS, 'wss://api.exemplo.com'])
     const hosts = politica
       .split(';')
       .flatMap((diretiva) => diretiva.trim().split(' ').slice(1))
@@ -315,18 +309,3 @@ describe('proxy no embed (TEC-345, D4 e D5)', () => {
     expect(hosts.filter((host) => !permitidos.has(host))).toEqual([])
   })
 })
-
-describe('origemPublicaDaApi', () => {
-  it('devolve a origem, sem caminho nem barra', () => {
-    expect(origemPublicaDaApi('https://api.exemplo.com/')).toBe('https://api.exemplo.com')
-    expect(origemPublicaDaApi('http://localhost:8000')).toBe('http://localhost:8000')
-  })
-
-  it.each([undefined, '', 'api.exemplo.com', 'ftp://api.exemplo.com', 'https://x.com; script-src *'])(
-    'recusa %s: o valor vai para dentro da CSP',
-    (bruta) => {
-      expect(origemPublicaDaApi(bruta)).toBeNull()
-    },
-  )
-})
-

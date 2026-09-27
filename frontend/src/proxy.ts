@@ -39,29 +39,34 @@ import { dominiosDoEmbed } from '@/lib/servidor/dominiosDoEmbed'
  * que isso nao vale para producao. O `'unsafe-inline'` de `style-src` segue o
  * mesmo guia. Quem trocar um `isDev` por `true` aqui esta afrouxando producao.
  *
- * **`embed` so vem nas rotas de `/embed/*` (TEC-345, D4)**, com os dominios
- * que podem enquadrar o chat e a origem publica da API. Ausente, a politica e
- * a do painel: ninguem enquadra, e `connect-src` herda `default-src 'self'`.
+ * **`embed` so vem nas rotas de `/embed/*`**, com os dominios que podem
+ * enquadrar o chat (TEC-345, D4) e a origem do WebSocket dele (TEC-346, D2).
+ * Ausente, a politica e a do painel: ninguem enquadra, e `connect-src` herda
+ * `default-src 'self'`.
  */
 export type PoliticaDoEmbed = {
   /** Os dominios cadastrados, ja conferidos por `lerDominios`. Vazio, ninguem. */
   ancestrais: readonly string[]
-  /** `MOBIA_ORIGEM_PUBLICA_DA_API`, ja conferida; `null` se ausente ou invalida. */
-  origemDaApi: string | null
+  /**
+   * `origemDoChat()` -- a MESMA fonte do endereco que a pagina passa ao
+   * socket, e por isso os dois nao divergem (TEC-384). `null` quando ela
+   * lanca por configuracao invalida.
+   */
+  conectarA: string | null
 }
 
 export function politicaDeSeguranca(
   nonce: string,
   isDev: boolean,
-  { embutivel = false, conectarA }: { embutivel?: boolean; conectarA?: string } = {},
   { embed }: { embed?: PoliticaDoEmbed } = {},
 ): string {
   return [
     "default-src 'self'",
     // So o embed abre WebSocket, e so para a origem do proprio chat (TEC-346,
     // D2): o painel nao tem `fetch` nem socket para fora da propria origem, e
-    // por isso continua sem esta diretiva.
-    ...(embutivel && conectarA ? [`connect-src 'self' ${conectarA}`] : []),
+    // por isso continua sem esta diretiva. Sem origem conferida, o embed
+    // tambem fica sem ela, e herda `'self'`.
+    ...(embed?.conectarA ? [`connect-src 'self' ${embed.conectarA}`] : []),
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
     `style-src 'self' ${isDev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
     "img-src 'self' blob: data:",
@@ -84,40 +89,16 @@ export function politicaDeSeguranca(
     embed && embed.ancestrais.length > 0
       ? `frame-ancestors ${embed.ancestrais.join(' ')}`
       : "frame-ancestors 'none'",
-    ...(embed ? [conexoesDoEmbed(embed.origemDaApi)] : []),
     'upgrade-insecure-requests',
   ].join('; ')
 }
 
-/**
- * O `connect-src` do embed (TEC-345, D4): a propria origem e a API, para o
- * WebSocket que o iframe abre direto (regra da TEC-346).
- *
- * A API entra duas vezes, com o esquema HTTP e com o de WebSocket: o
- * casamento de `https:` com `wss:` nao e uniforme entre navegadores, e listar
- * os dois custa uma palavra.
- */
-function conexoesDoEmbed(origemDaApi: string | null): string {
-  if (!origemDaApi) {
-    return "connect-src 'self'"
-  }
-  return `connect-src 'self' ${origemDaApi} ${origemDaApi.replace(/^http/, 'ws')}`
-}
-
-/**
- * `MOBIA_ORIGEM_PUBLICA_DA_API` como origem (`https://api.x`), ou `null`.
- *
- * O valor vai para dentro da CSP, entao so passa o que `URL` reconhece como
- * origem `http`/`https` -- e sai na forma dela, sem caminho nem barra.
- */
-export function origemPublicaDaApi(bruta: string | undefined): string | null {
-  if (!bruta) {
-    return null
-  }
+/** `origemDoChat()`, ou `null` com o erro no log -- ver o comentario em `proxy`. */
+function conectarDoEmbed(): string | null {
   try {
-    const url = new URL(bruta)
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin : null
+    return origemDoChat()
   } catch {
+    console.error('CSP do embed: MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE invalida')
     return null
   }
 }
@@ -190,7 +171,6 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   // nao e nonce. Precisa ser novo a cada requisicao, e ha teste afirmando que
   // duas requisicoes nao recebem o mesmo.
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
-  const embutivel = rotaDoEmbed(request.nextUrl.pathname)
   // `origemDoChat` lanca se MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE nao forem uma
   // URL valida. O proxy roda em TODA rota `/embed/*`, e um erro de
   // configuracao do WebSocket nao pode derrubar com 500 as que nao dependem
@@ -198,25 +178,11 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   // O lado seguro e a CSP sem connect-src, o mesmo padrao fechado de
   // frame-ancestors. A pagina `/embed/chat` nao fica meio de pe: ela chama
   // `enderecoDoChat()` e falha alto por conta propria, de proposito.
-  let conectarA: string | undefined
-  if (embutivel) {
-    try {
-      conectarA = origemDoChat()
-    } catch {
-      console.error('CSP do embed: MOBIA_WIDGET_WS_URL ou MOBIA_API_BASE invalida')
-    }
-  }
-  const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', {
-    embutivel,
-    conectarA,
-  })
+  //
   // So o embed espera pela API: o painel nao tem ancestral a conferir, e nao
   // paga a chamada.
   const embed = rotaDoEmbed(request.nextUrl.pathname)
-    ? {
-        ancestrais: await dominiosDoEmbed(),
-        origemDaApi: origemPublicaDaApi(process.env.MOBIA_ORIGEM_PUBLICA_DA_API),
-      }
+    ? { ancestrais: await dominiosDoEmbed(), conectarA: conectarDoEmbed() }
     : undefined
   const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', { embed })
 
