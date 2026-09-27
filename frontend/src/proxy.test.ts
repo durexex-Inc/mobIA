@@ -1,12 +1,20 @@
 import { NextRequest } from 'next/server'
 import { describe, expect, it } from 'vitest'
 
-import { politicaDeSeguranca, proxy } from './proxy'
+import { COOKIE_DA_SESSAO as COOKIE_DA_SESSAO_DE_VERDADE } from '@/lib/servidor/sessao'
+
+import { COOKIE_DA_SESSAO, politicaDeSeguranca, proxy } from './proxy'
 
 const PAINEL = 'https://painel.exemplo.com'
 
-function requisicao(caminho: string) {
-  return new NextRequest(new URL(caminho, PAINEL))
+/**
+ * Por padrao, a requisicao leva o cookie da sessao: os testes da CSP sao
+ * sobre quem ja passou pelo login. Os do redirecionamento pedem `false`.
+ */
+function requisicao(caminho: string, { comSessao = true }: { comSessao?: boolean } = {}) {
+  return new NextRequest(new URL(caminho, PAINEL), {
+    headers: comSessao ? { cookie: `${COOKIE_DA_SESSAO}=qualquer` } : {},
+  })
 }
 
 function cspDe(caminho: string): string {
@@ -77,5 +85,43 @@ describe('proxy', () => {
 
     expect(nonce).toBeTruthy()
     expect(resposta.headers.get('x-middleware-request-x-nonce')).toBe(nonce)
+  })
+})
+
+describe('proxy sem sessao (TEC-309, D5)', () => {
+  function destinoDe(caminho: string): string | null {
+    return proxy(requisicao(caminho, { comSessao: false })).headers.get('location')
+  }
+
+  it('cenario: quem acessa a lista de leads sem sessao vai ao login, com o destino', () => {
+    expect(destinoDe('/leads?q=ana')).toBe(`${PAINEL}/login?returnTo=%2Fleads%3Fq%3Dana`)
+  })
+
+  it('a raiz sem busca vai ao login sem `returnTo`, que seria a pagina inicial de todo jeito', () => {
+    expect(destinoDe('/')).toBe(`${PAINEL}/login`)
+  })
+
+  it('a raiz com filtro preserva o filtro', () => {
+    expect(destinoDe('/?de=2026-09-01')).toBe(`${PAINEL}/login?returnTo=%2F%3Fde%3D2026-09-01`)
+  })
+
+  it.each(['/login', '/login/entrar', '/login/mfa', '/embed/chat', '/sair', '/sessao/atividade'])(
+    '%s abre sem sessao, e continua recebendo a CSP',
+    (caminho) => {
+      const resposta = proxy(requisicao(caminho, { comSessao: false }))
+
+      expect(resposta.headers.get('location')).toBeNull()
+      expect(resposta.headers.get('content-security-policy')).toContain("frame-ancestors 'none'")
+    },
+  )
+
+  it('`/loginx` nao e o login: e prefixo de texto, nao de rota', () => {
+    expect(destinoDe('/loginx')).toBe(`${PAINEL}/login?returnTo=%2Floginx`)
+  })
+
+  it('o nome do cookie e o mesmo que a sessao grava', () => {
+    // O proxy repete o nome em vez de importar `lib/servidor/sessao`, para nao
+    // arrastar o Redis para ca. Este teste e o que impede os dois de divergirem.
+    expect(COOKIE_DA_SESSAO).toBe(COOKIE_DA_SESSAO_DE_VERDADE)
   })
 })

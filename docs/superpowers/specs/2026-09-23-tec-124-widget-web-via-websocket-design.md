@@ -78,6 +78,8 @@ O endpoint monta um `ParsedMessage` e chama `IngestionService.ingest([…], chan
 
 **Teto de tamanho por frame.** Texto acima do limite é recusado com um frame de erro e a conexão **continua aberta**: derrubar o socket transformaria um engano de colar texto grande em perda da conversa inteira.
 
+> **Correção (26/09/2026, TEC-364):** os frames de confirmação e de erro trocaram de nome, para o contrato das telas do chat web. A confirmação é `{"tipo": "ack", "messageId": "<id>"}` — era `{"tipo": "recebido", "id"}` — e continua confirmando o id, e não o conteúdo: o reenvio deduplicado recebe `ack` de novo. O erro é `{"tipo": "erro", "codigo", "mensagem", "messageId"?}` — era `{"tipo": "erro", "motivo"}` —, com os mesmos códigos de antes, uma frase em português que a tela pode mostrar como está, e o `messageId` quando a recusa é de uma mensagem. E a ficha de imóvel passou a chegar ao web como `{"tipo": "imovel", "imovel": ImovelCard, "texto": <prosa ou null>, "kind"}`, com ou sem foto, em vez do frame `imagem` com a legenda de texto. Nenhum cliente consumia o protocolo, então não houve convivência entre os formatos. Ver o desenho da TEC-364.
+
 **O que o WebSocket não pode fazer é o que o webhook já não faz:** nenhuma chamada a modelo dentro do ciclo da conexão. A RN-01.2 escreve isso para o webhook, e a razão — o ciclo de requisição não é lugar de LLM — vale igual aqui.
 
 ## D4 — `WebOutbound` publica, e nunca levanta

@@ -5,18 +5,25 @@
  * > Quando se inspecionam o codigo estatico do build (...) entao nenhum token
  * > de API e encontrado.
  *
- * Constroi-se com `MOBIA_ADMIN_TOKEN` valendo uma sentinela e procura-se a
+ * Constroi-se com `MOBIA_REDIS_URL` levando uma sentinela e procura-se a
  * sentinela em tudo que esta sob `.next/static` -- que e exatamente o que o
  * navegador baixa.
  *
+ * **Ate a TEC-309 a sentinela era `MOBIA_ADMIN_TOKEN`**, o token de API que o
+ * servidor mandava em toda chamada. Ele saiu do frontend: cada chamada agora
+ * leva o JWT de quem esta logado, que nasce em tempo de execucao, no Redis, e
+ * por isso nao tem como estar num arquivo do build. O segredo de ambiente que
+ * sobrou e a URL do Redis, que pode levar senha -- e quem a tivesse leria todas
+ * as sessoes. Ver a D9 do desenho da TEC-309.
+ *
  * **Ele pega um engano que o `server-only` nao pega, e e por isso que sao
- * dois gates.** `server-only` reprova o build quando o modulo do token e
+ * dois gates.** `server-only` reprova o build quando um modulo de `lib/servidor/` e
  * arrastado para um componente de cliente. Ele NAO diz nada se alguem
- * renomear a variavel para `NEXT_PUBLIC_MOBIA_ADMIN_TOKEN`, que e o caminho
+ * renomear a variavel para `NEXT_PUBLIC_MOBIA_REDIS_URL`, que e o caminho
  * pelo qual o valor literal vai parar no bundle. Esta varredura e o gate desse
  * caso.
  *
- * `.next/server` fica de fora de proposito: la o token pode aparecer sem que
+ * `.next/server` fica de fora de proposito: la o segredo pode aparecer sem que
  * nada esteja errado, e incluir aquele diretorio produziria ruido sobre a
  * unica pergunta que importa, que e o que o navegador recebe.
  */
@@ -43,7 +50,7 @@ async function* arquivosDe(diretorio) {
   } catch {
     reprovar(
       `nao achei ${relative(RAIZ, diretorio)}. Rode \`npm run build\` com a mesma ` +
-        'MOBIA_ADMIN_TOKEN antes desta verificacao.',
+        'MOBIA_REDIS_URL antes desta verificacao.',
     )
     return
   }
@@ -57,7 +64,7 @@ async function* arquivosDe(diretorio) {
   }
 }
 
-const sentinela = process.env.MOBIA_ADMIN_TOKEN
+const sentinela = process.env.MOBIA_REDIS_URL
 
 // Reprova em vez de pular: verificacao que pula em silencio e verificacao que
 // ninguem nota ter parado de rodar. E a variavel e a MESMA que o build leu --
@@ -65,7 +72,7 @@ const sentinela = process.env.MOBIA_ADMIN_TOKEN
 // passar a testar outra coisa.
 if (!sentinela) {
   reprovar(
-    'MOBIA_ADMIN_TOKEN nao esta setada. Ela precisa valer a mesma sentinela ' +
+    'MOBIA_REDIS_URL nao esta setada. Ela precisa valer a mesma sentinela ' +
       'que o `npm run build` viu, senao esta verificacao nao procura nada.',
   )
 }
@@ -93,7 +100,7 @@ for await (const arquivo of arquivosDe(ESTATICOS)) {
 
 if (vazados.length > 0) {
   reprovar(
-    `o token de API esta no bundle que o navegador baixa, em ${vazados.length} ` +
+    `a URL do Redis esta no bundle que o navegador baixa, em ${vazados.length} ` +
       `arquivo(s):\n  ${vazados.join('\n  ')}\n\n` +
       'Causa quase certa: alguma variavel de ambiente com segredo ganhou o ' +
       'prefixo NEXT_PUBLIC_, que faz o Next embutir o valor literal no codigo ' +
@@ -101,4 +108,4 @@ if (vazados.length > 0) {
   )
 }
 
-console.log(`verificar-bundle: ${lidos} arquivo(s) de .next/static, nenhum com o token.`)
+console.log(`verificar-bundle: ${lidos} arquivo(s) de .next/static, nenhum com o segredo.`)

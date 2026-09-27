@@ -106,6 +106,34 @@ class Ficha:
     rentabilidade: Rentabilidade | None = None
 
 
+def card_de(ficha: Ficha) -> dict[str, object]:
+    """O `ImovelCard` do chat web: a ficha em campos, e nao em legenda. TEC-364, D2.
+
+    O canal web desenha o card (TEC-349) e precisa dos campos soltos; o
+    WhatsApp continua usando a legenda de `legenda_de`, e ignora esta chave.
+    Precos em centavos, como a ficha os tem: formatar e da tela, e um `R$` ja
+    formatado aqui obrigaria o cliente a desfazer a formatacao para ordenar.
+
+    `url` e sempre nulo: o catalogo nao guarda a pagina do imovel no site do
+    tenant (L1 do desenho). A chave existe para a tela nao mudar quando a
+    coluna nascer. `rentabilidade`, da trilha do investidor, fica fora: o card
+    da TEC-349 nao a pede, e ela continua chegando pela legenda.
+    """
+    return {
+        "id": str(ficha.id),
+        "titulo": ficha.titulo,
+        "bairro": ficha.bairro,
+        "precoCentavos": ficha.preco_centavos,
+        "condominioCentavos": ficha.condominio_centavos,
+        "quartos": ficha.quartos,
+        "vagas": ficha.vagas,
+        "areaUtilM2": ficha.area_util_m2,
+        "diferencial": ficha.diferencial,
+        "foto": ficha.foto,
+        "url": None,
+    }
+
+
 def reais_de(centavos: int) -> str:
     """`R$ 516.464` a partir de 51646430.
 

@@ -26,7 +26,7 @@ from mobia.domain.agendamento.conversa import (
 from mobia.domain.agendamento.conversa import Reservou as AgendamentoReservado
 from mobia.domain.agendamento.conversa import atender as atender_agendamento
 from mobia.domain.agendamento.repositorio import AgendaPostgres
-from mobia.domain.agente.apresentacao import Ficha, legenda_de
+from mobia.domain.agente.apresentacao import Ficha, card_de, legenda_de
 from mobia.domain.agente.citacao import divergencias_de
 from mobia.domain.agente.classificador import (
     ClassificadorPort,
@@ -4840,6 +4840,11 @@ async def _entregar_fichas(
         payload: dict[str, Any] = {
             "para": message.conversation_key,
             "de": message.recipient_external_id,
+            # TEC-364, D2. O card em campos e a prosa solta, para o canal web
+            # desenhar a ficha em vez de mostrar a legenda. O WhatsApp ignora
+            # as duas chaves e segue com `texto`/`legenda` abaixo.
+            "imovel": card_de(ficha),
+            "prosa": prosa if posicao == 0 else None,
         }
         if ficha.foto is None:
             # D13: sem foto, cai no caminho de texto que ja existe em vez de

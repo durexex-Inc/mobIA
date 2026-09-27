@@ -1,4 +1,5 @@
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
+import { SemPermissao } from '@/components/SemPermissao'
 import { Filtros } from '@/components/Filtros'
 import { Funil } from '@/components/Funil'
 import { Indicadores } from '@/components/Indicadores'
@@ -8,7 +9,12 @@ import {
   type Filtros as FiltrosTipo,
   type Funil as FunilTipo,
 } from '@/lib/metricas'
+import { redirect } from 'next/navigation'
+
+import { urlDoLogin } from '@/lib/destino'
 import { periodoPadrao } from '@/lib/periodo'
+import { exigirPermissao } from '@/lib/servidor/quemSou'
+import { apagarSessaoDaRequisicao } from '@/lib/servidor/sessao'
 
 type Busca = Record<string, string | string[] | undefined>
 
@@ -30,15 +36,14 @@ function filtrosDaUrl(busca: Busca): FiltrosTipo {
 
 /**
  * O aviso depende do status, porque as causas sao diferentes e o conserto
- * tambem: 403 e configuracao do operador (token errado no env do servidor),
- * 422 e filtro invalido que a gerente pode corrigir sozinha, e o resto e o
- * backend. Um aviso unico mandaria a gerente procurar o erro dela num
+ * tambem: 422 e filtro invalido que a gerente pode corrigir sozinha, e o resto
+ * e o backend. Um aviso unico mandaria a gerente procurar o erro dela num
  * problema que nao e dela.
+ *
+ * O 403 nao passa por aqui: desde a TEC-312 ele vira a tela "Sem permissao",
+ * e nao um aviso acima de um funil vazio (ver o corpo da pagina).
  */
 function avisoDe(erro: ErroDeMetricas): string {
-  if (erro.status === 403) {
-    return 'Não foi possível carregar: o servidor recusou o token de acesso. É configuração do ambiente, não um problema do seu filtro.'
-  }
   if (erro.status === 422) {
     return `Não foi possível carregar: um filtro tem valor inválido — ${erro.message}`
   }
@@ -63,16 +68,38 @@ function urlDoRecorte(filtros: FiltrosTipo): string {
   return `/?${busca.toString()}`
 }
 
+/**
+ * O que a tela "Sem permissao" acrescenta quando e a PAGINA INICIAL do papel
+ * que cai nela (D6 do desenho).
+ *
+ * Hoje so o CORRETOR: `/` e a pagina inicial de todo papel, e ele nao ve o
+ * funil. A tela dele e a lista de leads (TEC-321), que ainda nao existe -- e a
+ * frase diz isso, em vez de deixa-lo achar que entrou com a conta errada.
+ */
+function detalheDoInicio(papel: string): string | undefined {
+  return papel === 'CORRETOR'
+    ? 'A tela do corretor, com a lista dos seus leads, ainda não está disponível.'
+    : undefined
+}
+
 export default async function Pagina({ searchParams }: { searchParams: Promise<Busca> }) {
   const busca = await searchParams
   const filtros = filtrosDaUrl(busca)
+  const recorte = urlDoRecorte(filtros)
+  // Antes de qualquer busca: sem sessao, ou sem `VER_FUNIL`, nada e pedido ao
+  // FastAPI alem de `/auth/me`. E a guarda de pagina da TEC-312 (D3) -- o
+  // menu ja esconde o funil de quem nao o ve, mas esconder e conveniencia.
+  const { sessao, quem, permitido } = await exigirPermissao(recorte, (p) => p.has('VER_FUNIL'))
+  if (!permitido) {
+    return <SemPermissao papel={quem.papel} detalhe={detalheDoInicio(quem.papel)} />
+  }
 
   let funil: FunilTipo | null = null
   let erroDeCarga: ErroDeMetricas | null = null
   let aviso: string | null = null
 
   try {
-    funil = await buscarFunil(filtros)
+    funil = await buscarFunil(filtros, sessao.acesso)
   } catch (erro) {
     // O funil NAO e renderizado quando a busca falha. Um funil de zeros e
     // indistinguivel de um periodo sem lead, e a gerente leria a queda como
@@ -82,6 +109,27 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
     aviso = erroDeCarga
       ? avisoDe(erroDeCarga)
       : 'Não foi possível carregar os dados do painel.'
+  }
+
+  // **401 e o FastAPI recusando um token que o painel acha valido.** A
+  // expiracao comum nao chega aqui: a sessao renova o access antes de ele
+  // vencer (TEC-310). Sobra o `JWT_SEGREDO` trocado, o usuario desativado.
+  // Volta ao login com o recorte preservado. O `redirect` fica FORA do `try`
+  // acima de proposito -- ele lanca para interromper o render, e o `catch` o
+  // engoliria.
+  if (erroDeCarga?.status === 401) {
+    // A sessao sai do Redis ANTES do redirecionamento (TEC-310, D5): sem isto,
+    // o login veria a sessao viva e mandaria de volta para ca, num laco.
+    await apagarSessaoDaRequisicao()
+    redirect(urlDoLogin({ returnTo: recorte, erro: 'sessao_expirada' }))
+  }
+
+  // **O 403 do backend vence o menu** (TEC-312, cenario 3 do Gherkin). O menu
+  // mostrou o funil porque `/auth/me` disse `VER_FUNIL`; se o FastAPI recusar
+  // assim mesmo -- um papel que mudou no meio, uma regra nova na rota --, a
+  // resposta dele e a verdade, e a tela diz isso em vez de um funil vazio.
+  if (erroDeCarga?.status === 403) {
+    return <SemPermissao papel={quem.papel} paginaInicial={null} />
   }
 
   // **O 422 vai para o formulario; o resto vai para o `ErroDeCarga`.** Um
@@ -108,7 +156,7 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
         <ErroDeCarga
           mensagem={aviso}
           requestId={erroDeCarga?.requestId}
-          urlParaTentarDeNovo={urlDoRecorte(filtros)}
+          urlParaTentarDeNovo={recorte}
         />
       )}
       {funil ? (

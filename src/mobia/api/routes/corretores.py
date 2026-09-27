@@ -12,7 +12,8 @@ pessoal: nome, e-mail e telefone de pessoas reais. Decisao consciente de
 **A exposicao diminuiu e nao acabou.** Quem entra por JWT agora precisa ser
 ADMIN; quem tem o `X-Admin-Token` compartilhado continua lendo o contato de
 todos os corretores, porque ele resolve para um ADMIN sintetico (D2 da
-TEC-202). Quem o apaga e a TEC-309. Ver tambem a D8 do desenho da TEC-196.
+TEC-202). O painel parou de manda-lo na TEC-309, e quem o apaga do FastAPI e
+a TEC-382. Ver tambem a D8 do desenho da TEC-196.
 
 Nao ha rota DELETE de proposito: desativar e `ativo = false` (D6).
 """

@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 import pytest
 from conftest import _corretor
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.app.config import get_settings
@@ -168,7 +168,10 @@ async def test_revelar_devolve_o_numero_e_grava_a_trilha(
     chave = await _lead(session, valor=TELEFONE)
     lead_id = await _apelido(session, chave=chave)
 
-    antes = datetime.now(UTC)
+    # O `antes` sai do relogio do banco, e nao do host: `criado_em` e carimbado
+    # pelo trigger com `clock_timestamp()`, na VM do Docker, e os dois relogios
+    # ja foram medidos ~0,6 s fora de sincronia (TEC-379).
+    antes = await session.scalar(text("SELECT clock_timestamp()"))
     resposta = await client.post(
         f"{ROTA}/{lead_id}/revelar", json={"campo": "telefone"}, headers=_bearer("GERENTE")
     )

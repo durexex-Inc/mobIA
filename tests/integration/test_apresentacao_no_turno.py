@@ -260,6 +260,28 @@ async def test_a_prosa_vira_prefixo_da_primeira_e_as_outras_sao_ficha_pura(
     assert PROSA not in terceira
 
 
+async def test_o_payload_da_ficha_leva_o_card_e_a_prosa_so_na_primeira(
+    session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
+) -> None:
+    """TEC-364, D2. O que o canal web desenha sai do turno em campos.
+
+    O WhatsApp ignora as duas chaves; o `WebOutbound` as transforma no frame
+    `imovel` (`tests/integration/test_web_outbound.py`). Aqui se prova que o
+    turno de verdade as poe no payload, na ordem das fichas.
+    """
+    await _conversa_ja_existe(session)
+    ids = [await _imovel(session, f"AP-{n:03d}", 50000000 + n) for n in range(3)]
+    classificador = _ClassificadorComCandidatos(
+        [_candidato(i, 50000000 + n) for n, i in enumerate(ids)]
+    )
+    outbound = outbound_fake()
+
+    await rodar_turno(session, classificador, outbound, resumidor_fake(), contador_fake())
+
+    assert [payload["imovel"]["id"] for payload in outbound.payloads] == [str(i) for i in ids]
+    assert [payload["prosa"] for payload in outbound.payloads] == [PROSA, None, None]
+
+
 async def test_prosa_longa_na_apresentacao_nao_vira_mensagem_de_texto_extra(
     session: Any, outbound_fake: Any, resumidor_fake: Any, contador_fake: Any, rodar_turno: Any
 ) -> None:

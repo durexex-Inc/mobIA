@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 
 import { chamarApi } from '@/lib/servidor/api'
 import { caminhoPermitido, idDeRequisicao, origemAceita } from '@/lib/servidor/bff'
+import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
 
 /**
  * O proxy `/bff/*` (TEC-302).
@@ -11,16 +12,19 @@ import { caminhoPermitido, idDeRequisicao, origemAceita } from '@/lib/servidor/b
  * regra mora aqui -- este arquivo e o adaptador entre a `Request` do Next e
  * funcoes que se testam sem ele.
  *
- * **Ele nao tem consumidor de cliente nesta card, e isso e esperado.** O painel
- * e `<form method="get">` mais Server Component: nenhuma linha de codigo de
- * cliente chama `/bff/*`. O proxy e a fundacao que a card diz destravar -- o
- * login (TEC-309) e a navegacao por papel (TEC-312) -- e nasce exercitado por
- * teste, nao pelo painel. Inventar um componente de cliente so para lhe dar
- * consumidor seria inventar entidade para um criterio se auto-satisfazer.
+ * **Ele ainda nao tem consumidor de cliente, e isso e esperado.** O painel e
+ * `<form method="get">` mais Server Component, e o login da TEC-309 tambem nao
+ * passa por aqui -- os formularios dele vao a `/login/entrar` e `/login/mfa`.
+ * A navegacao por papel (TEC-312) tambem nao: o menu e Server Component e le
+ * `/auth/me` pelo servidor (D2 do desenho dela). Ate o primeiro componente de
+ * cliente precisar dele, ele e exercitado por teste. Inventar um componente de
+ * cliente so para lhe dar consumidor seria inventar entidade para um criterio
+ * se auto-satisfazer.
  *
- * **Ele tambem nao autentica ninguem.** A checagem de `Origin` e defesa de
- * CSRF: vale porque quem escreve aquele header e o navegador. Ver a L1 do
- * desenho.
+ * **Desde a TEC-309 ele autentica.** Sem sessao valida no Redis, responde
+ * `401` e nada chega ao FastAPI; com ela, a chamada leva o JWT de quem esta
+ * logado, e e o FastAPI que decide pelo papel. A checagem de `Origin` continua
+ * sendo o que ela era -- defesa de CSRF, e nao autenticacao.
  */
 
 /** Metodos que nao carregam corpo, e de que nao se deve tentar ler um. */
@@ -55,6 +59,24 @@ async function repassar(
     return recusar(403, 'origem_nao_permitida', id)
   }
 
+  // A sessao e conferida DEPOIS da origem e ANTES da allowlist: quem nao esta
+  // logado nao aprende pela diferenca entre 401 e 404 quais rotas existem.
+  // `401`, e nao um redirecionamento ao login: quem chama o `/bff/*` e codigo
+  // (`fetch`), e redirecionamento e resposta de navegacao.
+  //
+  // A sessao ja vem renovada se faltarem 5 minutos para o access vencer
+  // (TEC-310). `503` quando o Redis ou a renovacao nao respondem: nao e falta
+  // de sessao, e quem chama deve tentar de novo, e nao mandar ao login.
+  let sessao: Awaited<ReturnType<typeof obterSessaoValida>>
+  try {
+    sessao = await obterSessaoValida(requisicao.cookies.get(COOKIE_DA_SESSAO)?.value)
+  } catch {
+    return recusar(503, 'sessao_indisponivel', id)
+  }
+  if (!sessao) {
+    return recusar(401, 'sem_sessao', id)
+  }
+
   const caminho = caminhoPermitido(metodo, rota)
   if (caminho === null) {
     // 404 e nao 403: 403 afirma "existe e voce nao pode", 404 afirma "aqui nao
@@ -66,6 +88,7 @@ async function repassar(
   let resposta: Response
   try {
     resposta = await chamarApi(caminho, {
+      acesso: sessao.acesso,
       metodo,
       busca: requisicao.nextUrl.searchParams,
       corpo: SEM_CORPO.has(metodo) ? null : await requisicao.arrayBuffer(),

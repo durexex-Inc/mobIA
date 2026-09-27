@@ -23,4 +23,5 @@ def get_ingestion_service(conexao: HTTPConnection) -> IngestionService:
 #
 # O ramo do token compartilhado nao morreu: virou
 # `_do_token_compartilhado` em `api/autorizacao.py`, com os comentarios da
-# TEC-156 e da TEC-201 que ainda valem. Quem o apaga continua sendo a TEC-309.
+# TEC-156 e da TEC-201 que ainda valem. O painel parou de manda-lo na TEC-309;
+# quem o apaga do FastAPI e a TEC-382.

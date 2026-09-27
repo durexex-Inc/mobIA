@@ -15,21 +15,20 @@ function respostaOk() {
 describe('buscarFunil', () => {
   beforeEach(() => {
     process.env.MOBIA_API_BASE = 'http://backend:8000'
-    process.env.MOBIA_ADMIN_TOKEN = 'segredo'
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  it('manda o token no header e devolve o corpo', async () => {
+  it('manda o access token da sessao e devolve o corpo', async () => {
     const fetchFalso = respostaOk()
     vi.stubGlobal('fetch', fetchFalso)
 
-    const funil = await buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })
+    const funil = await buscarFunil({ de: '2026-08-01', ate: '2026-08-22' }, 'jwt')
 
     expect(funil.etapas[0].quantidade).toBe(320)
     const [url, init] = fetchFalso.mock.calls[0]
     expect(String(url)).toContain('/api/v1/metricas/funil')
     expect(String(url)).toContain('de=2026-08-01')
-    expect(init.headers['X-Admin-Token']).toBe('segredo')
+    expect(init.headers.Authorization).toBe('Bearer jwt')
     expect(init.next).toEqual({ revalidate: 60 })
   })
 
@@ -43,7 +42,7 @@ describe('buscarFunil', () => {
     const fetchFalso = respostaOk()
     vi.stubGlobal('fetch', fetchFalso)
 
-    await buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })
+    await buscarFunil({ de: '2026-08-01', ate: '2026-08-22' }, 'jwt')
 
     const [, init] = fetchFalso.mock.calls[0]
     expect(init.headers['X-Request-Id']).toBeUndefined()
@@ -54,7 +53,7 @@ describe('buscarFunil', () => {
     const fetchFalso = respostaOk()
     vi.stubGlobal('fetch', fetchFalso)
 
-    await buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })
+    await buscarFunil({ de: '2026-08-01', ate: '2026-08-22' }, 'jwt')
 
     expect(String(fetchFalso.mock.calls[0][0])).not.toContain('canal=')
   })
@@ -68,7 +67,7 @@ describe('buscarFunil', () => {
       ate: '2026-08-22',
       temperatura: 'QUENTE',
       corretorId: 'abc',
-    })
+    }, 'jwt')
 
     const url = String(fetchFalso.mock.calls[0][0])
     expect(url).toContain('temperatura=QUENTE')
@@ -78,10 +77,10 @@ describe('buscarFunil', () => {
   it('levanta ErroDeMetricas com o status quando o backend recusa', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 403 })))
 
-    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })).rejects.toBeInstanceOf(
+    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' }, 'jwt')).rejects.toBeInstanceOf(
       ErroDeMetricas,
     )
-    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })).rejects.toMatchObject({
+    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' }, 'jwt')).rejects.toMatchObject({
       status: 403,
     })
   })
@@ -105,7 +104,7 @@ describe('buscarFunil', () => {
       ),
     )
 
-    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })).rejects.toMatchObject({
+    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' }, 'jwt')).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining('corretorId'),
     })
@@ -121,7 +120,7 @@ describe('buscarFunil', () => {
       ),
     )
 
-    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' })).rejects.toMatchObject({
+    await expect(buscarFunil({ de: '2026-08-01', ate: '2026-08-22' }, 'jwt')).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining('MORNA'),
     })
@@ -131,7 +130,6 @@ describe('buscarFunil', () => {
 describe('o erro carrega o que a tela precisa (TEC-313)', () => {
   beforeEach(() => {
     process.env.MOBIA_API_BASE = 'http://backend:8000'
-    process.env.MOBIA_ADMIN_TOKEN = 'segredo'
   })
   afterEach(() => vi.unstubAllGlobals())
 
@@ -149,7 +147,7 @@ describe('o erro carrega o que a tela precisa (TEC-313)', () => {
       ),
     )
 
-    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' }, 'jwt')).rejects.toMatchObject({
       status: 500,
       requestId: '7f3c-91ab',
     })
@@ -163,7 +161,7 @@ describe('o erro carrega o que a tela precisa (TEC-313)', () => {
       vi.fn().mockResolvedValue(new Response('nao e json', { status: 502 })),
     )
 
-    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' }, 'jwt')).rejects.toMatchObject({
       requestId: null,
     })
   })
@@ -181,7 +179,7 @@ describe('o erro carrega o que a tela precisa (TEC-313)', () => {
       ),
     )
 
-    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' }, 'jwt')).rejects.toMatchObject({
       status: 422,
       campos: ['corretorId'],
     })
@@ -198,7 +196,7 @@ describe('o erro carrega o que a tela precisa (TEC-313)', () => {
       ),
     )
 
-    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' })).rejects.toMatchObject({
+    await expect(buscarFunil({ de: '2026-09-01', ate: '2026-09-30' }, 'jwt')).rejects.toMatchObject({
       campos: [],
       message: 'o periodo nao pode passar de 90 dias',
     })

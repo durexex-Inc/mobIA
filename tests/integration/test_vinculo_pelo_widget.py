@@ -25,7 +25,7 @@ async def test_fala_com_telefone_vincula_a_sessao(ws_cliente, session) -> None:
     ws, sessao = await _abrir(ws_cliente)
     try:
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "meu whats e (48) 99999-0000"})
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert (await ws.receber())["tipo"] == "ack"
     finally:
         await ws.__aexit__()
 
@@ -61,7 +61,7 @@ async def test_reenvio_nao_tenta_vincular_de_novo(ws_cliente, session, monkeypat
     try:
         for _ in range(2):
             await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "(48) 99999-0000"})
-            assert (await ws.receber())["tipo"] == "recebido"
+            assert (await ws.receber())["tipo"] == "ack"
     finally:
         await ws.__aexit__()
 
@@ -80,10 +80,10 @@ async def test_falha_no_vinculo_nao_derruba_a_conversa(ws_cliente, session, monk
     ws, _ = await _abrir(ws_cliente)
     try:
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "(48) 99999-0000"})
-        # A mensagem ja estava persistida: o `recebido` chega, e o socket segue.
-        assert (await ws.receber())["tipo"] == "recebido"
+        # A mensagem ja estava persistida: o `ack` chega, e o socket segue.
+        assert (await ws.receber())["tipo"] == "ack"
         await ws.enviar({"tipo": "mensagem", "id": "m-2", "texto": "e dois quartos"})
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert (await ws.receber())["tipo"] == "ack"
     finally:
         await ws.__aexit__()
 
@@ -100,7 +100,7 @@ async def test_fala_com_dois_telefones_diferentes_nao_vincula(ws_cliente, sessio
                 "texto": "o meu e (48) 99999-0000, o da minha esposa e (48) 98888-1111",
             }
         )
-        assert (await ws.receber())["tipo"] == "recebido"
+        assert (await ws.receber())["tipo"] == "ack"
     finally:
         await ws.__aexit__()
 

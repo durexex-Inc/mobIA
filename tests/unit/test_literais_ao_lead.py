@@ -28,6 +28,8 @@ def test_a_lista_de_literais_nao_encolheu_sem_querer() -> None:
     ate a TEC-169, que acrescentou os tres da lista de espera -- a oferta, o
     aceite e o aviso de slot liberado. Foi 49 ate a TEC-207, que acrescentou
     os tres textos do pedido de titular -- as confirmacoes de eliminacao e de
-    acesso, e a pergunta que abre o segundo passo da eliminacao.
+    acesso, e a pergunta que abre o segundo passo da eliminacao. Foi 52 ate a
+    TEC-364, que acrescentou as cinco frases de `erro.mensagem` do chat web
+    (`MENSAGEM_DO_ERRO`, em `widget.py`).
     """
-    assert len(LITERAIS_AO_LEAD) == 52
+    assert len(LITERAIS_AO_LEAD) == 57

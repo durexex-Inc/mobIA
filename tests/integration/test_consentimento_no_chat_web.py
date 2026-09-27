@@ -136,11 +136,18 @@ async def test_marketing_que_nao_e_booleano_e_recusado_SEM_fechar(ws_cliente, se
     async with ws_cliente() as ws:
         sessao = await _cumprimentar(ws)
         await ws.enviar({"tipo": "consentimento", "marketing": "nao", "textoExibido": AVISO})
-        assert await ws.receber() == {"tipo": "erro", "motivo": "consentimento_invalido"}
+        erro = await ws.receber()
+        # Sem `messageId`: a recusa e de consentimento, nao de uma mensagem.
+        assert (erro["tipo"], erro["codigo"], "messageId" in erro) == (
+            "erro",
+            "consentimento_invalido",
+            False,
+        )
+        assert erro["mensagem"]
 
         # E o socket continua servindo: a recusa nao custa a conversa.
         await ws.enviar({"tipo": "mensagem", "id": "m-1", "texto": "e o apartamento?"})
-        assert await ws.receber() == {"tipo": "recebido", "id": "m-1"}
+        assert await ws.receber() == {"tipo": "ack", "messageId": "m-1"}
 
     assert (
         await session.execute(
@@ -156,7 +163,14 @@ async def test_aviso_vazio_e_recusado_sem_fechar(ws_cliente) -> None:
     async with ws_cliente() as ws:
         await _cumprimentar(ws)
         await ws.enviar({"tipo": "consentimento", "marketing": True, "textoExibido": "   "})
-        assert await ws.receber() == {"tipo": "erro", "motivo": "aviso_ausente"}
+        erro = await ws.receber()
+        # Sem `messageId`: a recusa e de consentimento, nao de uma mensagem.
+        assert (erro["tipo"], erro["codigo"], "messageId" in erro) == (
+            "erro",
+            "aviso_ausente",
+            False,
+        )
+        assert erro["mensagem"]
 
 
 async def test_aviso_longo_demais_e_recusado_sem_fechar(ws_cliente) -> None:
@@ -165,7 +179,14 @@ async def test_aviso_longo_demais_e_recusado_sem_fechar(ws_cliente) -> None:
     async with ws_cliente() as ws:
         await _cumprimentar(ws)
         await ws.enviar({"tipo": "consentimento", "marketing": True, "textoExibido": "a" * 4001})
-        assert await ws.receber() == {"tipo": "erro", "motivo": "aviso_longo_demais"}
+        erro = await ws.receber()
+        # Sem `messageId`: a recusa e de consentimento, nao de uma mensagem.
+        assert (erro["tipo"], erro["codigo"], "messageId" in erro) == (
+            "erro",
+            "aviso_longo_demais",
+            False,
+        )
+        assert erro["mensagem"]
 
 
 async def test_exibido_em_ilegivel_nao_custa_o_registro(ws_cliente, session) -> None:

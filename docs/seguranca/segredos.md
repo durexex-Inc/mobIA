@@ -104,7 +104,7 @@ A chave de índice e a do `lead_ref` podem rodar na mesma execução: troque as 
 
 ### `JWT_SEGREDO`
 
-Troca simples de valor e reinício. Todo JWT emitido com o segredo velho deixa de validar: o token de acesso (vida de `JWT_MINUTOS`, 60 por padrão) e o token de MFA pendente. **O refresh token não é JWT** — é um token opaco guardado como digest em `sessoes_de_refresh` — e sobrevive à troca: qualquer cliente que tenha um obtém token de acesso novo por `POST /api/v1/auth/refresh`, sem entrar de novo. Hoje o `frontend/` não guarda nem renova refresh token; o login do painel é a TEC-309. Se o motivo da troca for vazamento e for preciso derrubar as sessões também, revogue os refresh abertos:
+Troca simples de valor e reinício. Todo JWT emitido com o segredo velho deixa de validar: o token de acesso (vida de `JWT_MINUTOS`, 60 por padrão) e o token de MFA pendente. **O refresh token não é JWT** — é um token opaco guardado como digest em `sessoes_de_refresh` — e sobrevive à troca: qualquer cliente que tenha um obtém token de acesso novo por `POST /api/v1/auth/refresh`, sem entrar de novo. O painel guarda o refresh token de cada sessão no Redis (a sessão do BFF, `mobia:painel:sessao:*`, desde a TEC-309) e o usa para renovar o acesso perto de ele vencer (TEC-310). Quem estiver logado no painel na hora da troca volta ao login na primeira página que abrir: o FastAPI recusa o token de acesso antigo, e o painel apaga a sessão em vez de tentar de novo. Os refresh que estiverem só no Redis continuam válidos no banco até a revogação abaixo. Se o motivo da troca for vazamento e for preciso derrubar as sessões também, revogue os refresh abertos:
 
 ```sql
 UPDATE sessoes_de_refresh SET revogado_em = now() WHERE revogado_em IS NULL;

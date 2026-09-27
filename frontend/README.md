@@ -6,74 +6,120 @@ RN-17.3. Consome `GET /api/v1/metricas/funil` do FastAPI.
 
 ## Rodar em desenvolvimento
 
-O backend precisa estar de pé, com `CATALOGO_ADMIN_TOKEN` configurado:
+O backend e o Redis precisam estar de pé:
 
 ```bash
 cd ..
 docker compose up -d
 ./.venv/Scripts/python.exe -m alembic upgrade head
-CATALOGO_ADMIN_TOKEN=local ./.venv/Scripts/python.exe -m uvicorn mobia.app.main:app --port 8000
+./.venv/Scripts/python.exe -m uvicorn mobia.app.main:app --port 8000
 ```
 
 Noutro terminal:
 
 ```bash
-MOBIA_API_BASE=http://localhost:8000 MOBIA_ADMIN_TOKEN=local npm run dev
+MOBIA_API_BASE=http://localhost:8000 npm run dev
 ```
+
+**Para entrar, é preciso um usuário, e desde a TEC-309 ele nasce por script** —
+ainda não há tela de cadastro:
+
+```bash
+cd ..
+./.venv/Scripts/python.exe scripts/criar_usuario.py --email ana@x.com --nome "Ana" --papel GERENTE
+```
+
+A senha é pedida pelo terminal. Para `ADMIN`, o script também imprime uma URI
+`otpauth://` para cadastrar no aplicativo autenticador: administrador só entra
+com o código de 6 dígitos (RNF-11). A URI leva a semente em claro.
 
 ## As variáveis, e por que nenhuma delas é `NEXT_PUBLIC_`
 
 | variável | onde é lida | obrigatória |
 | --- | --- | --- |
 | `MOBIA_API_BASE` | servidor Next, ao montar a URL do FastAPI | não (`http://localhost:8000`) |
-| `MOBIA_ADMIN_TOKEN` | servidor Next, no header `X-Admin-Token` | sim, na prática — sem ela o backend responde 403 |
-| `MOBIA_ORIGEM_DO_PAINEL` | proxy `/bff/*`, na checagem de `Origin` | só atrás de proxy — ver abaixo |
+| `MOBIA_REDIS_URL` | servidor Next, onde a sessão do painel mora | não (`redis://localhost:6380`, o do `docker compose`) |
+| `MOBIA_ORIGEM_DO_PAINEL` | proxy `/bff/*` e login, na checagem de `Origin` | só atrás de proxy — ver abaixo |
 
-**`MOBIA_ADMIN_TOKEN` nunca chega ao navegador, e desde a TEC-302 isso é
-verificado em vez de combinado.** É o token de admin do backend inteiro — quem
-o tem lê o catálogo, o cadastro de corretores e este painel. Prefixá-lo com
-`NEXT_PUBLIC_` o embutiria no bundle de cliente, entregando-o a qualquer pessoa
-que abrisse o painel.
+**Não há mais token de API no ambiente do Next.** Até a TEC-309 havia o
+`MOBIA_ADMIN_TOKEN`, que ia em toda chamada como `X-Admin-Token` — um ADMIN sem
+usuário. Agora cada chamada leva o JWT de quem está logado, que o FastAPI
+emitiu no login e que fica guardado no Redis, e não no navegador. Um ambiente
+que ainda tenha a variável antiga não faz diferença: nada mais a lê.
 
-**Dois gates guardam isso, e eles pegam enganos diferentes:**
+**`MOBIA_REDIS_URL` nunca chega ao navegador**: pode levar a senha do Redis, e
+quem a tivesse leria todas as sessões. **Dois gates guardam isso, e eles pegam
+enganos diferentes:**
 
 | engano | quem reprova |
 | --- | --- |
-| importar `lib/servidor/api.ts` de um componente de cliente | `npm run build`, pelo `import 'server-only'` |
-| renomear a variável para `NEXT_PUBLIC_MOBIA_ADMIN_TOKEN` | `npm run verificar:bundle` |
+| importar `lib/servidor/` de um componente de cliente | `npm run build`, pelo `import 'server-only'` |
+| renomear a variável para `NEXT_PUBLIC_MOBIA_REDIS_URL` | `npm run verificar:bundle` |
 
 ```bash
-MOBIA_ADMIN_TOKEN=sentinela-com-16-ou-mais npm run build
-MOBIA_ADMIN_TOKEN=sentinela-com-16-ou-mais npm run verificar:bundle
+MOBIA_REDIS_URL=redis://:sentinela-com-16-ou-mais@localhost:6380 npm run build
+MOBIA_REDIS_URL=redis://:sentinela-com-16-ou-mais@localhost:6380 npm run verificar:bundle
 ```
 
-A varredura procura o valor de `MOBIA_ADMIN_TOKEN` em tudo que está sob
+A varredura procura o valor de `MOBIA_REDIS_URL` em tudo que está sob
 `.next/static` — o que o navegador de fato baixa. Ela **reprova** se a variável
 não estiver setada, em vez de pular: verificação que pula em silêncio é
 verificação que ninguém nota ter parado de rodar. No CI a sentinela é definida
 uma vez, no nível do job, porque duas cópias divergentes fariam a varredura
 passar sem ter procurado nada.
 
-**O que nenhum dos dois pega:** o token passado como prop de um Server
+**O que nenhum dos dois pega:** um segredo passado como prop de um Server
 Component para um Client Component. Ele iria no payload RSC do HTML, que não é
 arquivo estático, e não dispara o `server-only` porque o módulo continua sendo
 importado só do servidor.
+
+## A sessão (TEC-309)
+
+O login é senha mais, para `ADMIN`, um código TOTP — e não OIDC, que é o que a
+card descrevia: o backend adotou credencial local (Emenda E-01 à RNF-11). O
+desenho está em
+`docs/superpowers/specs/2026-09-26-tec-309-login-do-painel-design.md`.
+
+- **O navegador recebe só um id opaco**, no cookie `mobia_sessao` (`HttpOnly`,
+  `Secure`, `SameSite=Lax`, 7 dias). Os tokens do FastAPI ficam no Redis, sob o
+  SHA-256 desse id.
+- **Duas guardas:** `proxy.ts` manda ao login quem chega sem o cookie, e
+  `exigirSessao` (em `lib/servidor/sessao.ts`) procura o valor no Redis. A
+  primeira é só uma checagem rápida; a segunda é a de verdade, e toda página
+  que mostre dado de lead precisa chamá-la.
+- **Renovação transparente (TEC-310).** Faltando 5 minutos para o access
+  vencer, a sessão troca o refresh por um par novo, com um lock no Redis —
+  o refresh da TEC-201 detecta reuso, e duas renovações juntas derrubariam a
+  sessão. A sessão dura 7 dias contados do login; renovar não estende.
+- **"Sair" é um POST para `/sair`**: revoga o refresh no FastAPI, apaga a
+  sessão e o cookie, e responde com `Clear-Site-Data: "cache"`.
+- **Sessão ociosa (TEC-311).** Aos 30 minutos sem interação, um aviso conta
+  60 segundos e depois chama `/sair`. É o **único componente de cliente** do
+  painel (`components/AvisoDeInatividade.tsx`); ele guarda no `localStorage`
+  só o horário da última interação, para as abas se enxergarem. O servidor
+  também encerra a sessão ociosa há mais de 32 minutos — para o celular
+  esquecido, que não roda o aviso.
+- **O Redis dos testes é um mapa** (`test/armazem-em-memoria.ts`), trocado por
+  `vi.mock`: nenhum teste do frontend precisa de Redis de pé.
 
 ## Os dois caminhos até a API
 
 Toda chamada autenticada sai do servidor, por um de dois caminhos, e os dois
 passam pela mesma porta (`lib/servidor/api.ts`), que é o único lugar do projeto
-que lê o token:
+que põe o JWT da sessão num cabeçalho:
 
 | caminho | quem usa | cache | `X-Request-Id` |
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
-| Route Handler `/bff/[...rota]` | fundação para TEC-309 e TEC-312 | `no-store` | sim |
+| Route Handler `/bff/[...rota]` | ainda ninguém — nem o login nem o menu passam por ele | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
 chamando o próprio Route Handler custaria um round-trip HTTP do processo para
-ele mesmo e perderia o `revalidate: 60`, que é o que faz N navegadores com o
-painel aberto virarem **uma** chamada por minuto ao FastAPI. Migrar o painel,
+ele mesmo e perderia o `revalidate: 60`, que é o que faz as abas de uma pessoa
+com o painel aberto virarem **uma** chamada por minuto ao FastAPI. Desde a
+TEC-309 é uma por pessoa, e não uma no total: o JWT vai no cabeçalho, e cabeçalho
+entra na chave do cache — que é justamente o que impede o funil de um usuário
+ser servido a outro. Migrar o painel,
 na TEC-302, foi tirar dele o caminho privado até a API — não lhe dar um salto.
 
 **O `X-Request-Id` não viaja no caminho cacheado, e o motivo não é óbvio.** O
@@ -88,20 +134,17 @@ header em lugar nenhum — `correlation_id`, em `app/logging.py`, é preenchido 
 um UUID próprio pelo webhook e pelo widget, e a rota de métricas nem isso faz. O
 header sai do BFF e é descartado na entrada.
 
-## O proxy `/bff/*` não autentica ninguém
+## O proxy `/bff/*` exige sessão
 
-A checagem de `Origin` é defesa de **CSRF**: ela vale porque quem escreve aquele
-header é o navegador. `curl` não manda `Origin` nenhum, e um `GET` sem `Origin` é
-aceito — senão navegação e prefetch legítimos quebrariam, porque o navegador
-também não o manda em requisição de mesma origem com método seguro.
+Desde a TEC-309, uma requisição sem sessão válida no Redis leva `401` e não
+chega ao FastAPI. Com sessão, ela leva o JWT de quem está logado, e é o FastAPI
+que decide pelo papel (TEC-202).
 
-Então **quem alcança o servidor Next lê o funil**. Não é regressão: esse mesmo
-alguém já lia o funil pedindo o HTML do painel, que também não autentica. O que
-muda é a conveniência. O que contém o estrago é a allowlist de uma entrada só
-(`GET /api/v1/metricas/funil`), uma leitura agregada sem dado pessoal de lead.
-
-**Enquanto a TEC-309 não existir, este servidor não pode ficar exposto na
-internet.**
+A checagem de `Origin` continua sendo o que era: defesa de **CSRF**, e não
+autenticação. Ela vale porque quem escreve aquele header é o navegador; um `GET`
+sem `Origin` é aceito, senão navegação e prefetch legítimos quebrariam. As
+rotas de POST do login usam a mesma regra — lá ela barra o CSRF de login, em que
+quem ataca faz a vítima entrar na conta dele.
 
 `MOBIA_ORIGEM_DO_PAINEL` só é necessária atrás de proxy, onde o `Host` que o
 Next vê pode ser `localhost:3000` enquanto o navegador manda o domínio público —

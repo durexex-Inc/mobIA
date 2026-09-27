@@ -121,3 +121,75 @@ async def test_o_opt_out_barra_a_publicacao(session, session_factory, redis_pool
 
     porta = WebOutbound(session_factory, redis_pool)
     assert await porta.send(linha.id, "resposta", {"para": sessao, "texto": "ola"}) is False
+
+
+_CARD = {
+    "id": "1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed",
+    "titulo": "Casa 3 quartos",
+    "bairro": "Lagoa da Conceição",
+    "precoCentavos": 90000000,
+    "condominioCentavos": None,
+    "quartos": 3,
+    "vagas": 2,
+    "areaUtilM2": 140,
+    "diferencial": "piscina",
+    "foto": "http://f/1.jpg",
+    "url": None,
+}
+
+
+async def test_a_ficha_vira_imovel_com_o_card_e_a_prosa(
+    session, session_factory, redis_pool
+) -> None:
+    """TEC-364, D2: o card estruturado, e a prosa solta -- nao a legenda."""
+    sessao = "8c0f0a3e-0000-4000-8000-000000000005"
+    linha = await _linha_web(session, sessao)
+    ouvinte = await _assinar(redis_pool, sessao)
+
+    porta = WebOutbound(session_factory, redis_pool)
+    try:
+        await porta.send(
+            linha.id,
+            "ficha_1",
+            {
+                "para": sessao,
+                "tipo": "imagem",
+                "link": "http://f/1.jpg",
+                "legenda": "Achei esta. Casa 3 quartos...",
+                "imovel": _CARD,
+                "prosa": "Achei esta.",
+            },
+        )
+        assert await _proxima(ouvinte) == {
+            "tipo": "imovel",
+            "imovel": _CARD,
+            "texto": "Achei esta.",
+            "kind": "ficha_1",
+        }
+    finally:
+        await ouvinte.aclose()
+
+
+async def test_a_ficha_sem_foto_tambem_vira_imovel(session, session_factory, redis_pool) -> None:
+    """Sem foto o payload e de texto, e o web ainda precisa do card para o
+    placeholder com o bairro da TEC-349. A segunda ficha nao leva prosa."""
+    sessao = "8c0f0a3e-0000-4000-8000-000000000006"
+    linha = await _linha_web(session, sessao)
+    ouvinte = await _assinar(redis_pool, sessao)
+    sem_foto = {**_CARD, "foto": None}
+
+    porta = WebOutbound(session_factory, redis_pool)
+    try:
+        await porta.send(
+            linha.id,
+            "ficha_2",
+            {"para": sessao, "texto": "Casa 3 quartos...", "imovel": sem_foto, "prosa": None},
+        )
+        assert await _proxima(ouvinte) == {
+            "tipo": "imovel",
+            "imovel": sem_foto,
+            "texto": None,
+            "kind": "ficha_2",
+        }
+    finally:
+        await ouvinte.aclose()

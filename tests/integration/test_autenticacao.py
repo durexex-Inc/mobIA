@@ -265,9 +265,10 @@ async def test_rota_administrativa_aceita_jwt_e_o_token_compartilhado(
 ) -> None:
     """A convivencia da D2, que e o que garante que esta card nao quebrou o painel.
 
-    O BFF do frontend ainda manda `X-Admin-Token`; quem o faz mandar sessao de
-    verdade e a TEC-309, que esta card destrava. Os dois caminhos precisam
-    funcionar ate la -- e o terceiro, sem credencial nenhuma, precisa recusar.
+    Escrito quando o BFF do frontend ainda mandava `X-Admin-Token`. Desde a
+    TEC-309 ele manda o JWT de quem esta logado, e o token so vale para quem
+    chama a API direto; os dois caminhos funcionam ate a TEC-382 apagar o
+    segundo -- e o terceiro, sem credencial nenhuma, precisa recusar.
     """
     await _semear(session, email="admin-rota@x.com", papel="ADMIN", com_mfa=True)
     from mobia.app.config import get_settings

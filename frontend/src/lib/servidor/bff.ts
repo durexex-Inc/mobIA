@@ -13,10 +13,12 @@
 /**
  * O que o navegador pode alcancar atraves do proxy.
  *
- * Uma entrada so, e e a que o epico precisa. Allowlist curta e o que contem o
- * estrago enquanto nao ha autenticacao (TEC-309): esta rota e leitura agregada,
- * e o proprio router dela no backend registra que nao ha dado pessoal de lead
- * na resposta, so contagens e medias.
+ * Uma entrada so, e e a que o epico precisa. A allowlist nasceu (TEC-302) como
+ * o que continha o estrago enquanto o proxy nao autenticava ninguem: esta rota
+ * e leitura agregada, e o proprio router dela no backend registra que nao ha
+ * dado pessoal de lead na resposta, so contagens e medias. Desde a TEC-309 o
+ * proxy exige sessao, e a allowlist continua pela outra razao que sempre teve:
+ * o navegador so alcanca do FastAPI o que alguem decidiu expor.
  *
  * `*` casa EXATAMENTE um segmento. Nenhuma rota de hoje precisa dele, e ele
  * existe mesmo assim: sem ele, a primeira rota parametrizada do epico chega com
@@ -108,7 +110,8 @@ export function caminhoPermitido(metodo: string, segmentos: readonly string[]): 
  *
  * **Isto e defesa de CSRF, e nao autenticacao.** Vale porque quem escreve o
  * header e o navegador; `curl` nao manda `Origin` nenhum e por isso um `GET`
- * dele passa. Quem autentica e a TEC-309.
+ * dele passa desta checagem. Quem autentica e a sessao, conferida logo depois
+ * no Route Handler (TEC-309).
  */
 export function origemAceita({
   origem,

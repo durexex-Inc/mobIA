@@ -81,6 +81,39 @@ TAMANHO_MAXIMO_DO_ID = 128
 # 4000 cabe qualquer aviso de privacidade real com folga larga.
 TAMANHO_MAXIMO_DO_AVISO = 4000
 
+# TEC-364, D1. O vocabulario fechado de `erro.codigo`, e a frase que a tela
+# pode mostrar como esta -- texto que chega a visitante, entao com acento. Os
+# codigos sao os `motivo` da TEC-124, sem renomear: so o nome da chave mudou.
+# A frase do texto longo demais e montada com o teto vigente em `_erro`, e
+# por isso nao esta aqui.
+MENSAGEM_DO_ERRO: dict[str, str] = {
+    "texto_vazio": "Sua mensagem está vazia.",
+    "consentimento_invalido": "Não entendemos sua resposta ao aviso de privacidade.",
+    "aviso_ausente": "O texto do aviso de privacidade não chegou junto com a resposta.",
+    "aviso_longo_demais": "O texto do aviso de privacidade é longo demais.",
+    "consentimento_nao_registrado": (
+        "Não conseguimos registrar sua resposta ao aviso agora. Tente de novo."
+    ),
+}
+
+
+async def _erro(websocket: WebSocket, codigo: str, *, message_id: str | None = None) -> None:
+    """O frame de erro da TEC-364: `codigo`, `mensagem` e, se houver, `messageId`.
+
+    `messageId` so vem quando o erro e sobre uma mensagem -- e o que deixa o
+    cliente marcar AQUELE balao como `falhou` (RN-FE-17.5). As recusas de
+    consentimento nao tem mensagem, e saem sem ele.
+    """
+    if codigo == "texto_longo_demais":
+        teto = get_settings().tamanho_maximo_do_texto_do_widget
+        mensagem = f"Sua mensagem passou do limite de {teto} caracteres."
+    else:
+        mensagem = MENSAGEM_DO_ERRO[codigo]
+    corpo: dict[str, str] = {"tipo": "erro", "codigo": codigo, "mensagem": mensagem}
+    if message_id is not None:
+        corpo["messageId"] = message_id
+    await websocket.send_json(corpo)
+
 
 @router.websocket("/widget/chat")
 async def chat(
@@ -360,17 +393,17 @@ async def _registrar_consentimento(
         # `str()` ou truthiness aceitariam `"nao"` e `0` como resposta, e uma
         # string nao vazia viraria consentimento. Num registro que serve de
         # prova, coagir e pior que recusar.
-        await websocket.send_json({"tipo": "erro", "motivo": "consentimento_invalido"})
+        await _erro(websocket, "consentimento_invalido")
         return
 
     texto = str(frame.get("textoExibido") or "")
     if not texto.strip():
         # Sem o texto nao ha evidencia: o registro diria "aceitou" sem dizer
         # aceitou o que. Gravar assim seria fingir que ha prova.
-        await websocket.send_json({"tipo": "erro", "motivo": "aviso_ausente"})
+        await _erro(websocket, "aviso_ausente")
         return
     if len(texto) > TAMANHO_MAXIMO_DO_AVISO:
-        await websocket.send_json({"tipo": "erro", "motivo": "aviso_longo_demais"})
+        await _erro(websocket, "aviso_longo_demais")
         return
 
     try:
@@ -389,13 +422,13 @@ async def _registrar_consentimento(
             reason=type(exc).__name__,
             detail=motivo_do_erro_de_banco(exc),
         )
-        await websocket.send_json({"tipo": "erro", "motivo": "consentimento_nao_registrado"})
+        await _erro(websocket, "consentimento_nao_registrado")
         return
 
     # O ack nao esta no texto da card, e existe porque sem ele o cliente ou
     # assume que deu certo -- e perde registros em silencio -- ou reenvia
-    # sempre. Frame proprio e nao `recebido`, que carrega um `id` de mensagem
-    # que consentimento nao tem.
+    # sempre. Frame proprio e nao `ack`, que carrega um `messageId` que
+    # consentimento nao tem.
     log.info("widget.consentimento_registrado", sessao=sessao, marketing=marketing)
     await websocket.send_json({"tipo": "consentimento_registrado"})
 
@@ -450,18 +483,8 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
 
-        texto = str(frame.get("texto") or "")
-        if not texto.strip():
-            # Nao vira linha: um turno sobre texto vazio custaria chamada paga
-            # ao modelo para responder ao nada.
-            await websocket.send_json({"tipo": "erro", "motivo": "texto_vazio"})
-            continue
-        if len(texto) > teto:
-            # Recusa SEM fechar: derrubar o socket transformaria um Ctrl+V
-            # infeliz em perda da conversa inteira.
-            await websocket.send_json({"tipo": "erro", "motivo": "texto_longo_demais"})
-            continue
-
+        # O id e lido ANTES das recusas de texto desde a TEC-364: o `erro`
+        # delas carrega o `messageId`, para o cliente saber qual balao falhou.
         bruto_id = frame.get("id")
         if bruto_id is None:
             # Sem `id` o cliente funciona, so nao ganha a dedup da UNIQUE.
@@ -475,6 +498,18 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             # mesmo id para sempre.
             await websocket.close(code=CODIGO_PROTOCOLO)
             return
+
+        texto = str(frame.get("texto") or "")
+        if not texto.strip():
+            # Nao vira linha: um turno sobre texto vazio custaria chamada paga
+            # ao modelo para responder ao nada.
+            await _erro(websocket, "texto_vazio", message_id=identificador)
+            continue
+        if len(texto) > teto:
+            # Recusa SEM fechar: derrubar o socket transformaria um Ctrl+V
+            # infeliz em perda da conversa inteira.
+            await _erro(websocket, "texto_longo_demais", message_id=identificador)
+            continue
         try:
             gravadas = await service.ingest(
                 [
@@ -501,7 +536,7 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
             # O widget nao precisa pagar esse preco: o equivalente da
             # reentrega e o cliente reenviar com o mesmo `id`, e a UNIQUE
             # segura a duplicata. O 1011 e o sinal para ele reconectar; o
-            # `recebido` nunca chega, entao ele sabe que aquela fala nao ficou.
+            # `ack` nunca chega, entao ele sabe que aquela fala nao ficou.
             log.exception(
                 "widget.persist_failed",
                 sessao=sessao,
@@ -543,12 +578,13 @@ async def _ler_do_lead(websocket: WebSocket, service: IngestionService, sessao: 
                     # nao vai no log -- a mascara de PII cobre corridas de
                     # digitos, mas nao ha por que confiar nela para isto.
                     log.info("widget.vinculo_mantido", sessao=sessao)
-        # `recebido` confirma o ID, e nao o conteudo: um reenvio com o mesmo id
-        # e descartado pela UNIQUE e ainda assim confirmado, que e o que torna
-        # o reenvio idempotente. O custo e que um cliente que reuse um id para
-        # texto DIFERENTE ve a confirmacao e perde o texto novo -- defeito do
-        # cliente, mas silencioso deste lado.
-        await websocket.send_json({"tipo": "recebido", "id": identificador})
+        # `ack` confirma o ID, e nao o conteudo: um reenvio com o mesmo id e
+        # descartado pela UNIQUE e ainda assim confirmado, que e o que torna o
+        # reenvio idempotente -- o segundo cenario da TEC-364. O custo e que um
+        # cliente que reuse um id para texto DIFERENTE ve a confirmacao e
+        # perde o texto novo -- defeito do cliente, mas silencioso deste lado.
+        # Era `recebido {id}` ate a TEC-364, que adotou o nome da card.
+        await websocket.send_json({"tipo": "ack", "messageId": identificador})
 
 
 def _chave_do_id(sessao: str, identificador: str) -> str:
@@ -556,7 +592,8 @@ def _chave_do_id(sessao: str, identificador: str) -> str:
 
     O id vem do cliente, e a UNIQUE `(channel, provider_message_id)` e global
     ao canal. Gravado cru, o `"m-1"` de um visitante colidia com o `"m-1"` de
-    outro, e o segundo perdia a mensagem recebendo `recebido`. Prefixado pela
+    outro, e o segundo perdia a mensagem recebendo a confirmacao (`ack`, que
+    era `recebido` ate a TEC-364). Prefixado pela
     sessao, a dedup continua fazendo o que existe para fazer -- absorver o
     reenvio da MESMA pagina depois de uma queda -- e so isso.
 
