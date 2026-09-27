@@ -30,6 +30,10 @@ registra na trilha antes de responder.
 **O detalhe e a transcricao sao `GET` que registram** (TEC-193, D3). Abrir a
 tela e o acesso, e o registro e comitado antes de o conteudo sair -- o molde de
 `revelar`, sem o `POST`. Ver `_abrir_para_leitura`.
+
+**A excecao e o polling** (`?depois=`, TEC-327, D1): ele so registra quando
+traz fala, porque poll vazio nao entrega conteudo. Decisao do Eduardo,
+27/09/2026. Ver `_posteriores`.
 """
 
 import uuid
@@ -65,8 +69,12 @@ from mobia.domain.leads.repositorio import (
 )
 from mobia.domain.leads.transcricao import (
     LIMITE_PADRAO_DA_TRANSCRICAO,
+    CursorDaTranscricao,
+    Fala,
+    cursor_posterior,
     decodificar_cursor_da_transcricao,
     pagina_da_transcricao,
+    posteriores_da_transcricao,
     validar_limite_da_transcricao,
 )
 from mobia.domain.usuarios.permissoes import Permissao
@@ -278,6 +286,25 @@ async def _abrir_para_leitura(
     credencial e 401 e nada e escrito. Uma repeticao por proxy produz um
     registro a mais, e a trilha erra para o lado de registrar.
     """
+    par = await _conferir_acesso(session, lead_id=lead_id, request=request, identidade=identidade)
+    await _registrar_leitura(
+        session, lead_id=lead_id, campo=campo, par=par, request=request, identidade=identidade
+    )
+    return par
+
+
+async def _conferir_acesso(
+    session: AsyncSession,
+    *,
+    lead_id: uuid.UUID,
+    request: Request,
+    identidade: IdentidadeDaRequisicao,
+) -> tuple[str, str]:
+    """404, depois o recorte do CORRETOR. A primeira metade de `_abrir_para_leitura`.
+
+    Separada desde a TEC-327: o polling (`depois`) confere o acesso em todo
+    poll, e so registra a leitura quando ha fala para entregar (D1 de la).
+    """
     par = await par_de(session, lead_id)
     if par is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="lead nao existe")
@@ -290,7 +317,19 @@ async def _abrir_para_leitura(
             permissao=Permissao.VER_DETALHE_DO_LEAD,
             corretor_id=identidade.corretor_id if dono else None,
         )
+    return par
 
+
+async def _registrar_leitura(
+    session: AsyncSession,
+    *,
+    lead_id: uuid.UUID,
+    campo: str,
+    par: tuple[str, str],
+    request: Request,
+    identidade: IdentidadeDaRequisicao,
+) -> None:
+    """O `DADO_PESSOAL_ACESSADO`, COMITADO. A segunda metade de `_abrir_para_leitura`."""
     await registrar_evento(
         session,
         ator=identidade.como_ator(),
@@ -303,7 +342,6 @@ async def _abrir_para_leitura(
         origem=origem_da_requisicao(request),
     )
     await session.commit()
-    return par
 
 
 @router.get("/{lead_id}")
@@ -398,6 +436,18 @@ def _detalhe_como_json(lido: DetalheDoLead) -> dict[str, object]:
             }
             for f in lido.followups
         ],
+        # TEC-327, D2. O mesmo formato de `assumidoPor` no 409 de `assumir`.
+        "atendimento": (
+            {
+                "assumidoPor": {
+                    "corretorId": str(lido.atendimento.corretor_id),
+                    "nome": lido.atendimento.nome,
+                },
+                "assumidoEm": lido.atendimento.assumido_em.isoformat(),
+            }
+            if lido.atendimento is not None
+            else None
+        ),
     }
 
 
@@ -420,6 +470,7 @@ async def mensagens(
     request: Request,
     limite: Annotated[int, Query()] = LIMITE_PADRAO_DA_TRANSCRICAO,
     cursor: Annotated[str | None, Query()] = None,
+    depois: Annotated[str | None, Query()] = None,
     identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_DETALHE_DO_LEAD)),
 ) -> dict[str, object]:
     """A transcricao, da mais recente para tras. TEC-193, D5, para a TEC-324.
@@ -432,14 +483,37 @@ async def mensagens(
 
     O filtro e validado ANTES de abrir o lead, para que um `?limite=0` nao
     grave um acesso na trilha por uma resposta que nao devolveu nada.
+
+    **`depois` e o polling da conversa assumida** (TEC-327, D1): so as falas
+    posteriores, em ordem cronologica. **Com ele, o acesso so e gravado se a
+    resposta trouxer fala** -- poll vazio nao entrega dado pessoal, e
+    registra-lo encheria a trilha de leituras que nao leram nada. Decisao do
+    Eduardo, 27/09/2026. As duas formas devolvem `cursorPosterior`, o ponto de
+    partida do proximo poll.
     """
+    if cursor and depois:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="cursor e depois sao direcoes opostas: mande um so",
+        )
     try:
         validar_limite_da_transcricao(limite)
         posicao = decodificar_cursor_da_transcricao(cursor) if cursor else None
+        a_partir = decodificar_cursor_da_transcricao(depois) if depois else None
     except FiltroInvalido as erro:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
         ) from erro
+
+    if a_partir is not None and depois is not None:
+        return await _posteriores(
+            lead_id=lead_id,
+            limite=limite,
+            depois=a_partir,
+            depois_cru=depois,
+            request=request,
+            identidade=identidade,
+        )
 
     async with get_sessionmaker()() as session:
         par = await _abrir_para_leitura(
@@ -465,17 +539,70 @@ async def mensagens(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
             ) from erro
 
+    proximo = cursor_posterior(falas)
     return {
-        "itens": [
-            {
-                "id": str(f.id),
-                "autor": f.autor,
-                "tipo": f.tipo,
-                "conteudo": f.conteudo,
-                "retida": f.retida,
-                "em": f.em.isoformat(),
-            }
-            for f in falas
-        ],
+        "itens": [_fala_como_json(f) for f in falas],
         "cursorAnterior": anterior.codificar() if anterior else None,
+        "cursorPosterior": proximo.codificar() if proximo else None,
+    }
+
+
+async def _posteriores(
+    *,
+    lead_id: uuid.UUID,
+    limite: int,
+    depois: CursorDaTranscricao,
+    depois_cru: str,
+    request: Request,
+    identidade: IdentidadeDaRequisicao,
+) -> dict[str, object]:
+    """O poll da conversa assumida (TEC-327, D1). Registra so se veio fala.
+
+    Acesso conferido em todo poll -- a negacao do CORRETOR continua na trilha,
+    pelo `exigir_dono` --, e o registro de leitura so quando ha conteudo,
+    COMITADO antes de a resposta sair, como na D3 da TEC-193. Poll vazio
+    devolve o mesmo cursor que recebeu: a tela continua pedindo dali.
+    """
+    async with get_sessionmaker()() as session:
+        par = await _conferir_acesso(
+            session, lead_id=lead_id, request=request, identidade=identidade
+        )
+        try:
+            falas = await posteriores_da_transcricao(
+                session,
+                par=par,
+                limite=limite,
+                depois=depois,
+                ve_retidas=identidade.papel == "ADMIN",
+            )
+        except FiltroInvalido as erro:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
+            ) from erro
+        if falas:
+            await _registrar_leitura(
+                session,
+                lead_id=lead_id,
+                campo=CAMPO_TRANSCRICAO,
+                par=par,
+                request=request,
+                identidade=identidade,
+            )
+
+    proximo = cursor_posterior(falas)
+    return {
+        "itens": [_fala_como_json(f) for f in falas],
+        "cursorAnterior": None,
+        "cursorPosterior": proximo.codificar() if proximo else depois_cru,
+    }
+
+
+def _fala_como_json(fala: Fala) -> dict[str, object]:
+    return {
+        "id": str(fala.id),
+        "autor": fala.autor,
+        "tipo": fala.tipo,
+        "conteudo": fala.conteudo,
+        "retida": fala.retida,
+        "em": fala.em.isoformat(),
     }

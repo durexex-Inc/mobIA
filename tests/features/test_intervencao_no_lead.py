@@ -3,6 +3,7 @@
 Os quatro cenarios do Gherkin da card, e o que o desenho acrescentou: os
 desfechos do envio (D3), as duas guardas vistas pela fala do corretor, a trilha
 da edicao (D4), o autor na trilha de score (D6) e o vinculo de corretor (D2).
+E o 409 de assumir com o nome de quem tem a conversa (TEC-327, D3).
 
 **A porta de saida e falsa, mas as guardas sao as de verdade.** `PortaFalsa`
 herda de `GuardedOutbound` e so troca `_deliver`: e o que deixa o teste afirmar
@@ -24,7 +25,7 @@ from typing import Any
 import pytest
 from conftest import _corretor
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.app.config import get_settings
@@ -36,6 +37,7 @@ from mobia.domain.auditoria.vocabulario import Acao
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.conversa.models import Conversa
 from mobia.domain.conversa.vocabulario import MotivoDoEncerramento, Status
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status as StatusDoHandoff
 from mobia.domain.leads.repositorio import referencias_para
@@ -372,6 +374,32 @@ async def test_conversa_de_outro_corretor_e_409(
 
     assert (resposta.status_code, resposta.json()["detail"]) == (409, "conversa_de_outro")
     assert porta.entregues == []
+
+
+async def test_assumir_conversa_de_outro_e_409_com_o_nome_e_o_dono_nao_muda(
+    session: AsyncSession, cliente: AsyncClient
+) -> None:
+    """Terceiro cenario da TEC-327: a tela diz com quem a conversa esta (D3)."""
+    paulo = await _corretor(session)
+    ana = await _corretor(session, gerente=True)
+    await session.execute(update(Corretor).where(Corretor.id == ana).values(nome="Ana"))
+    await session.commit()
+    lead_id = await _lead(session, dono=paulo)
+    await cliente.post(f"{ROTA}/{lead_id}/assumir", headers=_bearer("GERENTE", corretor_id=ana))
+
+    resposta = await cliente.post(
+        f"{ROTA}/{lead_id}/assumir", headers=_bearer("CORRETOR", corretor_id=paulo)
+    )
+
+    assert resposta.status_code == 409
+    assert resposta.json()["detail"] == {
+        "motivo": "conversa_de_outro",
+        "assumidoPor": {"corretorId": str(ana), "nome": "Ana"},
+    }
+    dono = await session.scalar(
+        select(AtendimentoHumano.assumido_por).where(AtendimentoHumano.conversation_key == TELEFONE)
+    )
+    assert dono == ana
 
 
 async def test_texto_vazio_ou_longo_demais_e_422(

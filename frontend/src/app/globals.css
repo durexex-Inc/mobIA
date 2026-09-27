@@ -523,3 +523,39 @@ a {
   font-style: italic;
   opacity: 0.8;
 }
+
+/* --- Controle da conversa (TEC-327) ---------------------------------------- */
+
+.controle-da-conversa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+/* A faixa permanente: tem de ser vista sem ser procurada. */
+.controle-faixa {
+  flex-basis: 100%;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  border-left: 4px solid #2563eb;
+  background: color-mix(in srgb, #2563eb 14%, transparent);
+}
+
+.controle-de-outro {
+  opacity: 0.85;
+}
+
+.controle-acoes button {
+  padding: 0.45rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.controle-aviso {
+  flex-basis: 100%;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}

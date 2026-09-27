@@ -30,6 +30,7 @@ from mobia.api.saida import porta_de_saida
 from mobia.domain.agente.schemas import FormaPagamento, TipoImovel, Urgencia
 from mobia.domain.atendimento import tomada
 from mobia.domain.atendimento.fala import TETO_DA_FALA, FalaNaoEnviada, Recusa, falar_com_o_lead
+from mobia.domain.atendimento.repositorio import em_curso
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import Acao, Entidade
 from mobia.domain.corretores.models import Corretor
@@ -115,8 +116,22 @@ async def assumir(
         corretor_id = await _corretor_de(session, identidade)
         atendimento = await tomada.assumir_conversa(session, par=par, corretor_id=corretor_id)
         if atendimento is None:
+            # **O 409 diz quem tem a conversa** (TEC-327, D3): a tela precisa
+            # do nome, e tira-lo de dentro de uma frase prenderia a tela ao
+            # texto daqui. Entre a recusa e esta leitura o dono pode ter
+            # devolvido -- ai `assumidoPor` sai nulo, e a tela manda recarregar
+            # em vez de tentar de novo sozinha.
+            dono = await em_curso(session, channel=par[0], conversation_key=par[1])
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="conversa ja assumida por outro"
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "motivo": "conversa_de_outro",
+                    "assumidoPor": (
+                        {"corretorId": str(dono.corretor_id), "nome": dono.nome}
+                        if dono is not None
+                        else None
+                    ),
+                },
             )
         await session.commit()
     return {

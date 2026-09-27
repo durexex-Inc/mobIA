@@ -22,8 +22,9 @@
  * **A segunda entrada, a transcricao (TEC-324), E dado pessoal**, e passa
  * aqui porque a sessao e o FastAPI ja cuidam dela: o JWT e o de quem esta
  * logado, o recorte do CORRETOR e do backend, e cada pagina grava na trilha.
- * O que a allowlist ainda decide e que so ela, entre as rotas de lead, chega
- * ao navegador.
+ * O que a allowlist ainda decide e QUAIS rotas de lead chegam ao navegador:
+ * desde a TEC-327 sao tres -- a transcricao, assumir e devolver --, e o
+ * detalhe, a revelacao e a edicao continuam fora.
  *
  * `*` casa EXATAMENTE um segmento. A primeira rota que precisou dele foi a
  * transcricao do lead (TEC-324); ele foi escrito antes, porque sem ele a
@@ -42,6 +43,12 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // do alcance do navegador. Cada pagina grava um acesso na trilha (D3 da
   // TEC-193), e e por isso que so o clique do usuario a pede.
   { metodo: 'GET', padrao: ['api', 'v1', 'leads', '*', 'mensagens'] },
+  // Assumir e devolver a conversa (TEC-327, D4): as primeiras MUTACOES que o
+  // navegador faz pelo proxy. A regra de `Origin` ja recusa mutacao sem ela
+  // (CSRF), e o corretor em nome de quem se age e o da claim do JWT -- o corpo
+  // nem e lido pelo FastAPI.
+  { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'assumir'] },
+  { metodo: 'POST', padrao: ['api', 'v1', 'leads', '*', 'devolver'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

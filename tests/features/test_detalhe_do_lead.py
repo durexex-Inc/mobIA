@@ -3,7 +3,9 @@
 Os quatro cenarios do Gherkin da card, e o que o desenho acrescentou: a
 paginacao da transcricao para tras (D5), a fala retida por papel (TEC-324), o
 recorte do CORRETOR e de LEITURA (D2), a trilha das duas leituras (D3) e a
-trava de 60 s da regeneracao (D6).
+trava de 60 s da regeneracao (D6). No fim, o que a TEC-327 acrescentou: o
+polling por `depois`, que so grava na trilha quando traz fala, e o
+`atendimento` no detalhe.
 
 **O setimo bloco -- a transcricao -- e lido pela rota ao lado**, e o primeiro
 cenario o afirma assim: o detalhe traz seis blocos e o resumo, e
@@ -32,6 +34,7 @@ from mobia.domain.auditoria.referencia import lead_ref
 from mobia.domain.auditoria.vocabulario import Acao
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
+from mobia.domain.corretores.models import Corretor
 from mobia.domain.followup.models import FollowUp
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.repositorio import gravar_resumo
@@ -733,3 +736,134 @@ async def test_regenerar_depois_de_60_segundos_passa_pela_trava(
 
     assert resposta.status_code == 200, resposta.text
     assert chamadas == [handoff_id]
+
+
+# --- TEC-327: o polling da conversa assumida, e quem tem a conversa -------------
+
+
+async def test_depois_devolve_so_as_falas_posteriores(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """D1 da TEC-327: a tela pede so o que ainda nao tem, em ordem cronologica,
+    e recebe o cursor para o proximo poll."""
+    session.add_all([_fala(texto=f"fala {n}", em=INICIO + timedelta(seconds=n)) for n in range(5)])
+    await session.commit()
+    lead_id = await _apelido(session)
+    primeira = (await client.get(f"{ROTA}/{lead_id}/mensagens", headers=_bearer("GERENTE"))).json()
+    session.add_all(
+        [_fala(texto=f"nova {n}", em=INICIO + timedelta(minutes=1, seconds=n)) for n in range(2)]
+    )
+    await session.commit()
+
+    resposta = await client.get(
+        f"{ROTA}/{lead_id}/mensagens",
+        params={"depois": primeira["cursorPosterior"]},
+        headers=_bearer("GERENTE"),
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert [i["conteudo"] for i in resposta.json()["itens"]] == ["nova 0", "nova 1"]
+    seguinte = await client.get(
+        f"{ROTA}/{lead_id}/mensagens",
+        params={"depois": resposta.json()["cursorPosterior"]},
+        headers=_bearer("GERENTE"),
+    )
+    assert seguinte.json()["itens"] == []
+
+
+async def test_poll_vazio_nao_grava_acesso_e_poll_com_fala_grava(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """A decisao do Eduardo (D1 da TEC-327): a trilha registra o conteudo que
+    saiu, e um poll sem fala nova nao entregou conteudo nenhum."""
+    session.add(_fala(texto="oi", em=INICIO))
+    await session.commit()
+    lead_id = await _apelido(session)
+    primeira = (await client.get(f"{ROTA}/{lead_id}/mensagens", headers=_bearer("GERENTE"))).json()
+    antes = len(await _acessos(session))
+
+    vazio = await client.get(
+        f"{ROTA}/{lead_id}/mensagens",
+        params={"depois": primeira["cursorPosterior"]},
+        headers=_bearer("GERENTE"),
+    )
+    assert vazio.json()["itens"] == []
+    # O cursor volta o mesmo: a tela continua pedindo a partir dali.
+    assert vazio.json()["cursorPosterior"] == primeira["cursorPosterior"]
+    assert len(await _acessos(session)) == antes
+
+    session.add(_fala(texto="Pode ser amanhã às 10h?", em=INICIO + timedelta(minutes=1)))
+    await session.commit()
+    com_fala = await client.get(
+        f"{ROTA}/{lead_id}/mensagens",
+        params={"depois": primeira["cursorPosterior"]},
+        headers=_bearer("GERENTE"),
+    )
+
+    assert [i["conteudo"] for i in com_fala.json()["itens"]] == ["Pode ser amanhã às 10h?"]
+    acessos = await _acessos(session)
+    assert len(acessos) == antes + 1
+    assert acessos[-1].campo == "transcricao"
+
+
+async def test_cursor_e_depois_juntos_e_422_sem_gravar(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    session.add(_fala(texto="oi", em=INICIO))
+    await session.commit()
+    lead_id = await _apelido(session)
+    primeira = (await client.get(f"{ROTA}/{lead_id}/mensagens", headers=_bearer("GERENTE"))).json()
+    antes = len(await _acessos(session))
+
+    resposta = await client.get(
+        f"{ROTA}/{lead_id}/mensagens",
+        params={"depois": primeira["cursorPosterior"], "cursor": primeira["cursorPosterior"]},
+        headers=_bearer("GERENTE"),
+    )
+
+    assert resposta.status_code == 422
+    assert len(await _acessos(session)) == antes
+
+
+async def test_depois_de_outro_lead_e_422(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    outra = chave_de(CANAL, "5548990000099")
+    session.add_all([_fala(texto="daqui", em=INICIO), _fala(chave=outra, texto="de la", em=INICIO)])
+    await session.commit()
+    lead_id = await _apelido(session)
+    outro_id = await _apelido(session, outra)
+    de_la = (await client.get(f"{ROTA}/{outro_id}/mensagens", headers=_bearer("GERENTE"))).json()
+
+    resposta = await client.get(
+        f"{ROTA}/{lead_id}/mensagens",
+        params={"depois": de_la["cursorPosterior"]},
+        headers=_bearer("GERENTE"),
+    )
+
+    assert resposta.status_code == 422
+
+
+async def test_o_detalhe_diz_quem_tem_a_conversa(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """D2 da TEC-327: sem isto, a faixa "Voce esta no controle" some ao
+    recarregar a pagina."""
+    paulo = await _corretor(session)
+    await session.execute(update(Corretor).where(Corretor.id == paulo).values(nome="Paulo"))
+    session.add(_fala(texto="oi", em=INICIO))
+    await session.commit()
+    await _handoff(session, dono=paulo)
+    lead_id = await _apelido(session)
+    como_paulo = _bearer("CORRETOR", corretor_id=paulo)
+
+    livre = (await client.get(f"{ROTA}/{lead_id}", headers=como_paulo)).json()
+    await client.post(f"{ROTA}/{lead_id}/assumir", headers=como_paulo)
+    assumida = (await client.get(f"{ROTA}/{lead_id}", headers=como_paulo)).json()
+    await client.post(f"{ROTA}/{lead_id}/devolver", headers=como_paulo)
+    devolvida = (await client.get(f"{ROTA}/{lead_id}", headers=como_paulo)).json()
+
+    assert livre["atendimento"] is None
+    assert assumida["atendimento"]["assumidoPor"] == {"corretorId": str(paulo), "nome": "Paulo"}
+    assert assumida["atendimento"]["assumidoEm"]
+    assert devolvida["atendimento"] is None

@@ -96,7 +96,8 @@ desenho está em
 - **Sessão ociosa (TEC-311).** Aos 30 minutos sem interação, um aviso conta
   60 segundos e depois chama `/sair`. Foi o **primeiro componente de cliente**
   do painel (`components/AvisoDeInatividade.tsx`); o segundo é a busca da lista
-  de leads (TEC-321), e o terceiro, a conversa do lead (TEC-324). Ele guarda no `localStorage`
+  de leads (TEC-321), o terceiro, a conversa do lead (TEC-324), e o quarto, o controle da
+  conversa (TEC-327). Ele guarda no `localStorage`
   só o horário da última interação, para as abas se enxergarem. O servidor
   também encerra a sessão ociosa há mais de 32 minutos — para o celular
   esquecido, que não roda o aviso.
@@ -191,6 +192,22 @@ de lead. O desenho está em
   depois.
 - **A moderação é do backend.** A fala retida só chega para ADMIN, e a tela a
   mostra como "Mensagem retida pela moderação" mesmo que um conteúdo viesse.
+
+## Assumir e devolver a conversa (TEC-327)
+
+Quem tem `ATENDER_LEAD` e vínculo de corretor vê "Assumir conversa" ou
+"Devolver ao agente" logo abaixo do título do lead. As duas ações pedem
+confirmação e vão como `POST` pelo `/bff/*`, as primeiras mutações do
+navegador pelo proxy. Depois de cada uma, a tela recarrega do servidor
+(`router.refresh()`) em vez de mudar a faixa por conta própria. O desenho está
+em `docs/superpowers/specs/2026-09-27-tec-327-assumir-e-devolver-design.md`.
+
+- **Com a conversa assumida por quem vê a tela, a conversa faz polling a cada
+  5 s**, só com a aba visível, pedindo `?depois=` o cursor que o servidor
+  devolveu. **O backend só grava esse poll na trilha quando ele traz fala**
+  (decisão de 27/09/2026): um poll vazio não entrega dado pessoal.
+- **A faixa sobrevive a recarregar**, porque o detalhe diz quem tem a conversa
+  (`atendimento`). O 409 de "já assumida" traz o nome de quem a tem.
 
 ## O proxy `/bff/*` exige sessão
 

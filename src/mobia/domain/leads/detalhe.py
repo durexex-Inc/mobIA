@@ -4,6 +4,9 @@ RN-18.2 e D4 do desenho. A transcricao, que e o setimo bloco, mora em
 `transcricao.py` e tem rota propria (D1): ela e paginada, e embuti-la aqui faria
 a tela pagar a conversa inteira para mostrar o resumo.
 
+Desde a TEC-327 o detalhe tambem diz quem tem a conversa (`atendimento`), para
+a faixa "Voce esta no controle" do painel sobreviver a recarregar a pagina.
+
 **Os seis blocos sao pequenos pela natureza deles, e nao por teto** -- a trilha
 de score so grava quando algo muda, e um lead tem poucas recomendacoes, poucos
 agendamentos e no maximo a cadencia de follow-ups. Isso NAO foi medido num lead
@@ -28,6 +31,7 @@ from sqlalchemy.orm import InstrumentedAttribute
 
 from mobia.domain.agendamento.models import Agendamento
 from mobia.domain.agente.models import Recomendacao
+from mobia.domain.atendimento.repositorio import AtendimentoEmCurso, em_curso
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import LeadQualification, LeadScoreAudit
 from mobia.domain.conversa.models import Conversa
@@ -127,6 +131,9 @@ class DetalheDoLead:
     recomendacoes: list[ImovelRecomendado]
     agendamentos: list[AgendamentoDoLead]
     followups: list[FollowUpDisparado]
+    # Quem tem a conversa agora, ou `None` (TEC-327, D2): sem isto a faixa
+    # "Voce esta no controle" sumiria ao recarregar a pagina.
+    atendimento: AtendimentoEmCurso | None = None
 
 
 # O que sai de `lead_qualification`, e com qual nome. Lista explicita, e nao
@@ -214,6 +221,7 @@ async def ler_detalhe(
         recomendacoes=await _recomendacoes(session, par),
         agendamentos=await _agendamentos(session, par),
         followups=await _followups(session, par),
+        atendimento=await em_curso(session, channel=par[0], conversation_key=par[1]),
     )
 
 

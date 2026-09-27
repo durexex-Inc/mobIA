@@ -22,11 +22,16 @@ vi.mock('next/navigation', () => ({
   redirect: (destino: string) => {
     throw new Error(`REDIRECT:${destino}`)
   },
+  // O controle da conversa (TEC-327) e componente de cliente e pede o router.
+  useRouter: () => ({ refresh: vi.fn() }),
 }))
 
 const PERMISSOES: Record<string, string[]> = {
   CORRETOR: ['ATENDER_LEAD', 'BUSCAR_IMOVEIS', 'VER_DETALHE_DO_LEAD', 'VER_LEADS'],
   LEITURA: ['BUSCAR_IMOVEIS', 'VER_FUNIL', 'VER_LEADS'],
+  // Um GERENTE sem cadastro de corretor: pode atender pela matriz, e nao tem
+  // em nome de quem falar (TEC-327, D4).
+  GERENTE_SEM_VINCULO: ['ATENDER_LEAD', 'VER_DETALHE_DO_LEAD', 'VER_LEADS'],
 }
 
 const LEAD_ID = '6f1c2a4e-0000-4000-8000-000000000001'
@@ -66,6 +71,7 @@ function detalhe(extra: Record<string, unknown> = {}) {
     recomendacoes: [],
     agendamentos: [],
     followups: [],
+    atendimento: null,
     ...extra,
   }
 }
@@ -84,7 +90,13 @@ function responde(
     papel = 'CORRETOR',
     transcricao = SEM_FALAS as unknown,
     statusDaTranscricao = 200,
-  }: { papel?: string; transcricao?: unknown; statusDaTranscricao?: number } = {},
+    corretorId = 'c-1' as string | null,
+  }: {
+    papel?: string
+    transcricao?: unknown
+    statusDaTranscricao?: number
+    corretorId?: string | null
+  } = {},
 ) {
   const api = vi.fn<(url: URL | string, init?: RequestInit) => Promise<Response>>(async (url) =>
     new URL(String(url)).pathname.endsWith('/mensagens')
@@ -93,7 +105,7 @@ function responde(
   )
   const me = async () =>
     new Response(
-      JSON.stringify({ usuarioId: 'u-1', papel, corretorId: 'c-1', permissoes: PERMISSOES[papel] }),
+      JSON.stringify({ usuarioId: 'u-1', papel, corretorId, permissoes: PERMISSOES[papel] }),
     )
   vi.stubGlobal(
     'fetch',
@@ -345,6 +357,46 @@ describe('PaginaDoLead', () => {
       expect(screen.getByRole('region', { name: 'Conversa' })).toHaveTextContent(
         'Não foi possível carregar a conversa.',
       )
+    })
+  })
+
+  describe('o controle da conversa (TEC-327)', () => {
+    it('com a conversa do proprio corretor, a faixa aparece e o polling liga', async () => {
+      responde(
+        detalhe({ atendimento: { assumidoPor: { corretorId: 'c-1', nome: 'Paulo' }, assumidoEm: '2026-09-27T10:00:00+00:00' } }),
+      )
+
+      await abrir()
+
+      expect(screen.getByText('Você está no controle — o agente está em silêncio')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Devolver ao agente' })).toBeInTheDocument()
+    })
+
+    it('sem ninguem na conversa, a faixa nao aparece e o botao e "Assumir conversa"', async () => {
+      responde(detalhe({ atendimento: null }))
+
+      await abrir()
+
+      expect(screen.queryByText(/Você está no controle/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Assumir conversa' })).toBeInTheDocument()
+    })
+
+    it('com a conversa de outro, diz com quem esta', async () => {
+      responde(
+        detalhe({ atendimento: { assumidoPor: { corretorId: 'c-9', nome: 'Ana' }, assumidoEm: '2026-09-27T10:00:00+00:00' } }),
+      )
+
+      await abrir()
+
+      expect(screen.getByText('A conversa está com Ana.')).toBeInTheDocument()
+    })
+
+    it('sem vinculo de corretor, nao ha botoes: todo clique seria 409', async () => {
+      responde(detalhe({ atendimento: null }), 200, { papel: 'GERENTE_SEM_VINCULO', corretorId: null })
+
+      await abrir()
+
+      expect(screen.queryByRole('button', { name: 'Assumir conversa' })).not.toBeInTheDocument()
     })
   })
 
