@@ -114,7 +114,7 @@ que põe o JWT da sessão num cabeçalho:
 | --- | --- | --- | --- |
 | Server Component → `buscarFunil` | o painel de funil | `revalidate: 60` | **não** |
 | Server Component → `buscarLeads` | a lista de leads | `no-store` | não |
-| Route Handler `/bff/[...rota]` | a conversa do lead, ao carregar as falas anteriores (TEC-324) | `no-store` | sim |
+| Route Handler `/bff/[...rota]` | a conversa do lead (falas anteriores, TEC-324; polling, TEC-327), assumir e devolver (TEC-327), revelar telefone (TEC-330) | `no-store` | sim |
 
 **O painel não passa pelo `/bff/*`, e isso é deliberado.** Um Server Component
 chamando o próprio Route Handler custaria um round-trip HTTP do processo para
@@ -208,6 +208,26 @@ em `docs/superpowers/specs/2026-09-27-tec-327-assumir-e-devolver-design.md`.
   (decisão de 27/09/2026): um poll vazio não entrega dado pessoal.
 - **A faixa sobrevive a recarregar**, porque o detalhe diz quem tem a conversa
   (`atendimento`). O 409 de "já assumida" traz o nome de quem a tem.
+
+## Revelar telefone e e-mail (TEC-330)
+
+O telefone chega mascarado para todo papel (`+55 48 9****-**21`), na lista e
+no detalhe: o número cheio nunca vem na página. Quem tem `VER_DADOS_COMPLETOS`
+(GERENTE e ADMIN) vê um botão "Revelar" ao lado da máscara. O clique faz
+`POST /leads/{leadId}/revelar` pelo `/bff/*`, e o backend grava a trilha antes
+de responder. O desenho está em
+`docs/superpowers/specs/2026-09-27-tec-330-revelar-dado-pessoal-design.md`.
+
+- **O número vive só no estado de `components/DadoRevelavel.tsx`.** Some em 5
+  minutos, no "Ocultar" ou ao sair da tela. Nada vai para a URL, o
+  armazenamento do navegador ou o `console`. Revelar de novo grava outra
+  linha na trilha.
+- **O e-mail não tem botão**, porque nenhuma tabela guarda e-mail de lead
+  (D7 da TEC-195) e o detalhe o recebe sempre nulo. Quando a fonte existir e o
+  backend mandar a máscara, o botão aparece sem mudar a tela.
+- **Na lista, o botão fica fora do link** que abre o detalhe.
+- **Toda resposta do `/bff/*` é `Cache-Control: no-store`**, recusa
+  inclusive.
 
 ## O proxy `/bff/*` exige sessão
 

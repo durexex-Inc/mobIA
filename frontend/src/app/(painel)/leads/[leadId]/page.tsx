@@ -122,7 +122,8 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
         <Link href="/leads">← Voltar para a lista</Link>
       </p>
       {/* Sem nome: nenhuma tabela o guarda (L3). O titulo e o telefone
-          mascarado, como a primeira coluna da lista. */}
+          mascarado, como a primeira coluna da lista, e fica mascarado mesmo
+          depois de revelar: quem revela e a secao Contato (D4 da TEC-330). */}
       <h1>{identificacaoDoLead({ telefone: detalhe.contato.telefone, channel: detalhe.channel })}</h1>
       <p className="detalhe-cabecalho">
         Score {detalhe.score ?? '—'} · {statusLegivel(detalhe.status)} ·{' '}
@@ -138,7 +139,11 @@ export default async function PaginaDoLead({ params }: { params: Promise<{ leadI
           meuCorretorId={meuCorretorId}
         />
       )}
-      <SecoesDoDetalhe detalhe={detalhe} agora={agora} />
+      <SecoesDoDetalhe
+        detalhe={detalhe}
+        agora={agora}
+        podeRevelar={quem.permissoes.has('VER_DADOS_COMPLETOS')}
+      />
       {/* A ultima secao da ordem da card. Se so ela falhar, o resto da tela
           continua util para quem vai ligar (D1). */}
       <section className="detalhe-secao" aria-label="Conversa">

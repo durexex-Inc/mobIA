@@ -1,3 +1,4 @@
+import { DadoRevelavel } from '@/components/DadoRevelavel'
 import {
   canalLegivel,
   dataAbsoluta,
@@ -27,6 +28,10 @@ import {
  * arquivo; o `<a>` nao depende de nenhum dos dois. So para quem tem
  * `VER_DETALHE_DO_LEAD` -- para LEITURA o link terminaria sempre em "Sem
  * permissao".
+ *
+ * **A mesma celula revela o telefone** para quem tem `VER_DADOS_COMPLETOS`
+ * (TEC-330, D4), com o botao FORA do link: botao dentro de `<a>` e HTML
+ * invalido, e o clique abriria o detalhe em vez de revelar.
  */
 export function TabelaDeLeads({
   itens,
@@ -34,12 +39,14 @@ export function TabelaDeLeads({
   busca,
   agora,
   abreDetalhe,
+  podeRevelar,
 }: {
   itens: LeadDaLista[]
   ordem: Ordem
   busca?: string
   agora: Date
   abreDetalhe: boolean
+  podeRevelar: boolean
 }) {
   return (
     <table className="leads-tabela">
@@ -62,11 +69,17 @@ export function TabelaDeLeads({
         {itens.map((lead) => (
           <tr key={lead.leadId} data-testid="lead">
             <td>
-              {abreDetalhe ? (
-                <a href={`/leads/${encodeURIComponent(lead.leadId)}`}>{identificacaoDoLead(lead)}</a>
-              ) : (
-                identificacaoDoLead(lead)
-              )}
+              {/* Sem telefone, o texto e o "Visitante do site" ou o
+                  "Telefone indisponível" de `identificacaoDoLead`, e sem
+                  mascara nao ha o que revelar. */}
+              <DadoRevelavel
+                leadId={lead.leadId}
+                campo="telefone"
+                mascarado={lead.telefone}
+                vazio={identificacaoDoLead(lead)}
+                podeRevelar={podeRevelar}
+                href={abreDetalhe ? `/leads/${encodeURIComponent(lead.leadId)}` : undefined}
+              />
             </td>
             <td>{temperaturaLegivel(lead.temperatura)}</td>
             {/* Sem score e travessao, e nao zero: "ainda nao pontuado" nao e

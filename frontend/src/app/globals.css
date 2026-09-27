@@ -559,3 +559,25 @@ a {
   border-left: 3px solid #b23c17;
   background: color-mix(in srgb, #b23c17 12%, transparent);
 }
+
+/* --- Dado pessoal revelavel (TEC-330) -------------------------------------- */
+
+.dado-revelavel {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.dado-revelavel-acao {
+  padding: 0.1rem 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.dado-revelavel-aviso {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  color: #b23c17;
+}

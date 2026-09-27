@@ -46,11 +46,17 @@ describe('caminhoPermitido', () => {
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'assumir'])).toBeNull()
     })
 
+    it('a revelacao entra so como `POST` (TEC-330)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBe(
+        `/api/v1/leads/${LEAD}/revelar`,
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBeNull()
+    })
+
     it('o `*` nao abre as outras rotas do lead', () => {
-      // O detalhe, a revelacao e a lista continuam fora do alcance do
-      // navegador: so a transcricao tem consumidor de cliente.
+      // O detalhe e a lista continuam fora do alcance do navegador: quem os
+      // le e o Server Component.
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD])).toBeNull()
-      expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'revelar'])).toBeNull()
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads'])).toBeNull()
       expect(caminhoPermitido('POST', ['api', 'v1', 'leads', LEAD, 'mensagens'])).toBeNull()
     })
