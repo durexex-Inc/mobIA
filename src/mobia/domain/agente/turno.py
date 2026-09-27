@@ -1406,8 +1406,9 @@ async def _executar_turno(
     # confirmacao de novo -- mensagem nova para quem pediu silencio. E
     # defensavel porque e a excecao que a D1 ja nomeia (a confirmacao do
     # proprio pedido e o unico envio permitido depois do registro -- ao lado,
-    # desde a TEC-207, da confirmacao do pedido de titular), e o gatilho e
-    # sempre uma fala do lead pedindo exatamente isso.
+    # desde a TEC-207, da confirmacao do pedido de titular e da pergunta de
+    # eliminacao), e o gatilho e sempre uma fala do lead pedindo exatamente
+    # isso.
     if not pedido_de_optout:
         async with session_factory() as sessao:
             if await esta_em_optout(

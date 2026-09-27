@@ -1,4 +1,8 @@
-"""Deteccao do pedido de titular no texto, e o texto que confirma ao lead.
+"""Deteccao do pedido de titular no texto, e os textos que respondem ao lead.
+
+Desde a revisao final (C2) o modulo tambem reconhece a palavra que confirma a
+eliminacao ("apagar") e guarda a pergunta que a pede -- a eliminacao pelo
+WhatsApp e em dois passos, ver `_CONFIRMACOES_DE_ELIMINACAO`.
 
 TEC-207, D3 do desenho. Deterministico e sem chamada paga, no molde de
 `optout/deteccao.py::pediu_optout` e `humano/deteccao.py::pediu_humano`: uma
@@ -158,8 +162,9 @@ def _fala_de_dados_do_lead(normalizado: str) -> bool:
 # REMOVido?". Um falso positivo aqui nao e inofensivo, mesmo com a
 # confirmacao em dois passos (ver `_CONFIRMACOES_DE_ELIMINACAO`): ele troca a
 # resposta do modelo pela pergunta de confirmacao, e o lead que queria outra
-# coisa fica sem ela naquele turno. O participio ("apagado", "removido") fica de fora de proposito:
-# e pergunta ou constatacao ("meus dados foram apagados?"), nao pedido.
+# coisa fica sem ela naquele turno. O participio ("apagado", "removido") fica
+# de fora de proposito: e pergunta ou constatacao ("meus dados foram
+# apagados?"), nao pedido.
 _TERMINACOES_DE_PEDIDO: dict[str, tuple[str, ...]] = {
     "apag": ("ar", "arem", "a", "ue", "uem"),
     "delet": ("ar", "arem", "a", "e", "em"),

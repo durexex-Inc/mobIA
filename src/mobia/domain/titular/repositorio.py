@@ -1,4 +1,7 @@
-"""O acesso a solicitacao de titular: registrar, recusar, atender e listar.
+"""O acesso a solicitacao de titular: registrar, recusar, atender e listar --
+e, desde a revisao final, saber se a pergunta de eliminacao esta pendente
+(`pergunta_de_eliminacao_pendente`, o segundo passo da eliminacao pelo
+WhatsApp).
 
 TEC-207, D2 e D3 do desenho. Funcoes livres com `session` posicional e o
 resto keyword-only, sem commit -- convencao dos repositorios deste repo (ver
