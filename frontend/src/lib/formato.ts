@@ -9,6 +9,36 @@ const PERCENTUAL = new Intl.NumberFormat('pt-BR', {
 
 const INTEIRO = new Intl.NumberFormat('pt-BR')
 
+/** US$ com 2 casas -- o total (RN-FE-06.2, TEC-319). */
+const MOEDA_TOTAL = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+/** US$ com 4 casas -- as medias, porque a de 2 casas arredondaria centavos de
+ * um centavo a zero (RN-FE-06.2, TEC-319). */
+const MOEDA_MEDIA = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 4,
+  maximumFractionDigits: 4,
+})
+
+/** O custo total do periodo. Sempre numerico -- `custoTotalUsd` nunca e nulo
+ * (D2 do desenho da TEC-319): um periodo sem gasto e US$ 0,00 de verdade. */
+export function moedaTotal(valor: number): string {
+  return MOEDA_TOTAL.format(valor)
+}
+
+/** Um custo medio, com 4 casas. `null` e responsabilidade de quem chama --
+ * ver `estadoDe`/`Vazio` (D2 do desenho da TEC-319): nulo aqui e "nao houve
+ * conversa", nao "custou zero". */
+export function moedaMedia(valor: number): string {
+  return MOEDA_MEDIA.format(valor)
+}
+
 /**
  * Percentual em pt-BR, ou travessao quando nao ha numero.
  *
