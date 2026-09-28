@@ -293,6 +293,36 @@ a {
   opacity: 0.6;
 }
 
+/* A fila de pedidos do titular (TEC-340). O destaque do prazo curto esta no
+   texto ("Prazo curto"); a cor e o fundo so reforcam. */
+.fila-do-titular {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.fila-do-titular th,
+.fila-do-titular td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.fila-do-titular td a {
+  text-decoration: underline;
+}
+
+.fila-do-titular__urgente {
+  background: color-mix(in srgb, #b45309 12%, transparent);
+}
+
+.fila-do-titular__aviso {
+  font-weight: 600;
+  color: #92400e;
+}
+
 /* --- Sair (TEC-310) ------------------------------------------------------- */
 
 .menu-conta {

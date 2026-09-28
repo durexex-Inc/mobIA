@@ -12,6 +12,7 @@ import { itensDoMenu, nomeDoPapel, paginaInicialDe, podeVerAdmin } from './naveg
 const PERMISSOES = {
   ADMIN: [
     'ATENDER_LEAD',
+    'ATENDER_TITULAR',
     'BUSCAR_IMOVEIS',
     'CONFIGURAR_AGENTE',
     'GERIR_CATALOGO',

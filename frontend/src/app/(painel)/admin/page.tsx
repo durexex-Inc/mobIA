@@ -11,11 +11,11 @@ export const metadata: Metadata = {
 /**
  * As secoes previstas da area de administracao, e a card de cada uma.
  *
- * **Nenhuma existe ainda, e a pagina diz isso** (D5 do desenho, decisao de
- * 26/09/2026). Ela e so de navegacao: nao busca dado nenhum. Quando a tela de
- * uma secao chegar, a linha dela ganha o `href`, e a pagina da secao chama
- * `exigirPermissao` com a permissao que ela exerce -- a guarda desta pagina
- * NAO a protege (D3).
+ * **A que ainda nao existe diz isso** (D5 do desenho, decisao de
+ * 26/09/2026); a primeira a existir foi a fila do titular (TEC-340). A pagina
+ * e so de navegacao: nao busca dado nenhum. Quando a tela de uma secao chega,
+ * a linha dela ganha o `href`, e a pagina da secao chama `exigirPermissao` com
+ * a permissao que ela exerce -- a guarda desta pagina NAO a protege (D3).
  */
 const SECOES: ReadonlyArray<{ nome: string; card: string; href?: string }> = [
   { nome: 'Prompts do agente', card: 'TEC-338' },
@@ -23,6 +23,7 @@ const SECOES: ReadonlyArray<{ nome: string; card: string; href?: string }> = [
   { nome: 'Corretores', card: 'TEC-332' },
   { nome: 'Imóveis', card: 'TEC-333' },
   { nome: 'Trilha de auditoria', card: 'TEC-343' },
+  { nome: 'Pedidos do titular', card: 'TEC-340', href: '/admin/titular' },
 ]
 
 export default async function PaginaDeAdministracao() {

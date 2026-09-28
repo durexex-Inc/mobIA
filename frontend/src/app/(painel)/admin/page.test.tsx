@@ -58,6 +58,8 @@ describe('PaginaDeAdministracao', () => {
     expect(screen.getByRole('heading', { name: 'Administração' })).toBeInTheDocument()
     expect(screen.getByText('Prompts do agente')).toBeInTheDocument()
     expect(screen.getAllByText('ainda não disponível')).toHaveLength(5)
+    // A primeira secao com tela (TEC-340).
+    expect(screen.getByRole('link', { name: 'Pedidos do titular' })).toHaveAttribute('href', '/admin/titular')
   })
 
   describe('cenario: corretor acessa a area administrativa pela URL', () => {
