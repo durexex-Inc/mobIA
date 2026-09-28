@@ -63,6 +63,15 @@ export type FiltrosDaLista = {
 }
 
 /**
+ * A origem de uma etapa do funil (TEC-318, D6): `de`/`ate`/`intencao` sao a
+ * coorte, `etapa` e o que foi clicado. Separada de `FiltrosDaLista` de
+ * proposito -- os quatro campos nao tem controle nenhum em `FiltrosDeLeads`,
+ * so chegam pelo link que `Funil.tsx` monta, e misturar os dois tipos
+ * confundiria "o que a gerente escolhe na tela" com "de onde ela veio".
+ */
+export type OrigemDoFunil = { de?: string; ate?: string; intencao?: string; etapa?: string }
+
+/**
  * Onde a lista esta (TEC-322, D2 e D3). A pagina 1 nao tem cursor;
  * `anteriores` sao os cursores das paginas 2 a N-1, na ordem; `acumular` e o
  * "carregar mais", que desenha todas as paginas ate a atual.
@@ -74,6 +83,7 @@ export type EstadoDaLista = {
   ordem: Ordem
   filtros?: FiltrosDaLista
   posicao?: PosicaoNaLista
+  origemDoFunil?: OrigemDoFunil
 }
 
 export const PRIMEIRA_PAGINA: PosicaoNaLista = { anteriores: [], acumular: false }
@@ -86,7 +96,13 @@ export const PRIMEIRA_PAGINA: PosicaoNaLista = { anteriores: [], acumular: false
  * Quem muda busca, ordem ou filtro chama sem `posicao`: o cursor e de uma
  * consulta, e continua-lo noutra devolveria uma pagina plausivel e errada.
  */
-export function urlDaLista({ busca, ordem, filtros = {}, posicao }: EstadoDaLista): string {
+export function urlDaLista({
+  busca,
+  ordem,
+  filtros = {},
+  posicao,
+  origemDoFunil,
+}: EstadoDaLista): string {
   const parametros = new URLSearchParams()
   if (busca) {
     parametros.set('busca', busca)
@@ -96,6 +112,15 @@ export function urlDaLista({ busca, ordem, filtros = {}, posicao }: EstadoDaList
   }
   for (const chave of ['status', 'temperatura', 'canal', 'corretorId'] as const) {
     const valor = filtros[chave]
+    if (valor) {
+      parametros.set(chave, valor)
+    }
+  }
+  // A origem do funil sobrevive a paginacao e a ordenacao (TEC-318, D6): sem
+  // isto, "Proxima pagina" ou reordenar por score enquanto se ve a etapa
+  // "Recomendado" devolveria silenciosamente a lista INTEIRA.
+  for (const chave of ['de', 'ate', 'intencao', 'etapa'] as const) {
+    const valor = origemDoFunil?.[chave]
     if (valor) {
       parametros.set(chave, valor)
     }
@@ -143,6 +168,23 @@ export function filtrosDaUrl(parametros: ParametrosDaUrl): FiltrosDaLista {
     canal: dentro(um(parametros.canal), CANAIS),
     corretorId: corretorId && FORMA_DE_UUID.test(corretorId) ? corretorId : undefined,
   }
+}
+
+/**
+ * A origem do funil que a URL pede, ou `undefined` sem nenhum dos quatro
+ * campos (TEC-318). Ao contrario de `filtrosDaUrl`, nao ha vocabulario para
+ * validar aqui -- `de`/`ate`/`intencao`/`etapa` sao conferidos pelo backend
+ * (o mesmo `montar_recorte` do funil), e a tela so precisa saber se algum
+ * deles veio, para preservar os quatro juntos (D6).
+ */
+export function origemDoFunilDaUrl(parametros: ParametrosDaUrl): OrigemDoFunil | undefined {
+  const origem: OrigemDoFunil = {
+    de: um(parametros.de),
+    ate: um(parametros.ate),
+    intencao: um(parametros.intencao),
+    etapa: um(parametros.etapa),
+  }
+  return Object.values(origem).some(Boolean) ? origem : undefined
 }
 
 /** A posicao que a URL pede. Sem `cursor`, e a primeira pagina. */

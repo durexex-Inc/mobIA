@@ -60,7 +60,7 @@ from mobia.domain.handoff.models import Handoff
 from mobia.domain.messages.enums import MessageDirection
 from mobia.domain.messages.models import Message
 from mobia.domain.metricas.filtros import Recorte
-from mobia.domain.metricas.vocabulario import Etapa
+from mobia.domain.metricas.vocabulario import ETAPAS, Etapa
 
 # O status de handoff que conta como aceito. Nao e enum importado porque
 # `handoff/vocabulario.py` nomeia o ciclo inteiro e so este valor interessa
@@ -164,13 +164,12 @@ async def _quantos_na_uniao(session: AsyncSession, consultas: Sequence[Select[An
     return int((await session.execute(select(func.count()).select_from(alvo))).scalar_one())
 
 
-async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etapa, int]:
-    """Quantos da coorte alcancaram cada etapa. As SEIS, desde a TEC-376.
-
-    **Cada etapa conta quem a alcancou OU alcancou uma POSTERIOR** (TEC-367,
-    D4), e e isso que torna o funil monotono. Ver a docstring do modulo: as
-    contagens cruas sao conjuntos independentes, e dividir um pelo outro
-    produzia taxa acima de 100%.
+def _condicoes_das_etapas(coorte: Any) -> list[tuple[Etapa, Select[Any]]]:
+    """As seis condicoes CRUAS da RN-17.2, sem acumulacao -- so o conjunto da
+    propria etapa. Compartilhada por `contar_etapas` (que as acumula para
+    CONTAR) e por `selecionar_etapa` (TEC-318, que as acumula para LISTAR):
+    escrever a mesma condicao duas vezes seria a segunda copia de uma regra
+    de negocio que este repo evita.
 
     **`AGENDADO` ficou de fora ate a TEC-376**, quando a etapa saia
     `null`/`disponivel: false` por nao haver caminho de producao que criasse
@@ -181,10 +180,6 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
     `Agendado` contido em `Recomendado` por construcao, sem depender de os
     dados colaborarem.
     """
-    coorte = _coorte(recorte).subquery()
-
-    # As seis condicoes, cada uma o conjunto CRU da sua etapa -- sem
-    # acumulacao ainda. Em ordem do funil, que e o que o `UNION` abaixo usa.
     novos = select(coorte.c.channel, coorte.c.conversation_key)
 
     # "Em conversa" e o lead que falou mais de uma vez: uma fala so e o
@@ -236,8 +231,9 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
         & (Handoff.status == _ACEITO),
     )
 
-    # A acumulacao, na ordem do funil.
-    cruas: list[tuple[Etapa, Select[Any]]] = [
+    # A ordem do funil -- e a ordem em que `contar_etapas` e `selecionar_etapa`
+    # acumulam "esta etapa OU uma posterior" (TEC-367, D4).
+    return [
         (Etapa.NOVO, novos),
         (Etapa.EM_CONVERSA, em_conversa),
         (Etapa.QUALIFICADO, qualificados),
@@ -246,12 +242,52 @@ async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etap
         (Etapa.HANDOFF_ACEITO, aceitos),
     ]
 
+
+async def contar_etapas(session: AsyncSession, *, recorte: Recorte) -> dict[Etapa, int]:
+    """Quantos da coorte alcancaram cada etapa. As SEIS, desde a TEC-376.
+
+    **Cada etapa conta quem a alcancou OU alcancou uma POSTERIOR** (TEC-367,
+    D4), e e isso que torna o funil monotono. Ver a docstring do modulo: as
+    contagens cruas sao conjuntos independentes, e dividir um pelo outro
+    produzia taxa acima de 100%.
+    """
+    coorte = _coorte(recorte).subquery()
+    cruas = _condicoes_das_etapas(coorte)
+
     contagens: dict[Etapa, int] = {}
     for indice, (etapa, _) in enumerate(cruas):
         desta_para_frente = [consulta for _, consulta in cruas[indice:]]
         contagens[etapa] = await _quantos_na_uniao(session, desta_para_frente)
 
     return contagens
+
+
+def selecionar_coorte(recorte: Recorte) -> Select[Any]:
+    """Os pares `(channel, conversation_key)` da coorte, sem etapa nenhuma.
+
+    Para quem precisa da LISTA de leads (TEC-318), e nao so da contagem: o
+    mesmo `_coorte` que `contar_etapas` ja usa, exposto para a lista de leads
+    filtrar por periodo/canal/intencao/temperatura sem clicar numa etapa.
+    """
+    return _coorte(recorte)
+
+
+def selecionar_etapa(recorte: Recorte, etapa: Etapa) -> Any:
+    """Os pares que alcancaram esta etapa OU uma POSTERIOR (TEC-318).
+
+    Mesma acumulacao de `contar_etapas` (TEC-367, D4), exposta como SELECAO --
+    quem sao os leads -- e nao CONTAGEM. E o que torna uma etapa do funil
+    clicavel: abrir a lista de leads daquela etapa e a mesma coorte e a mesma
+    acumulacao de `contar_etapas`, so que devolvendo as linhas em vez do
+    `COUNT`.
+    """
+    coorte = _coorte(recorte).subquery()
+    cruas = _condicoes_das_etapas(coorte)
+    indice = ETAPAS.index(etapa)
+    desta_para_frente = [consulta for _, consulta in cruas[indice:]]
+    if len(desta_para_frente) == 1:
+        return desta_para_frente[0]
+    return desta_para_frente[0].union(*desta_para_frente[1:])
 
 
 @dataclass(frozen=True)

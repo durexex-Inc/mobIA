@@ -1,7 +1,7 @@
 import 'server-only'
 
 import type { DetalheDoLead } from '@/lib/detalhe'
-import type { FiltrosDaLista, Ordem, PaginaDeLeads, PosicaoNaLista } from '@/lib/leads'
+import type { FiltrosDaLista, OrigemDoFunil, Ordem, PaginaDeLeads, PosicaoNaLista } from '@/lib/leads'
 import type { PaginaDaTranscricao } from '@/lib/transcricao'
 import { detalheDe } from '@/lib/metricas'
 import { chamarApi } from '@/lib/servidor/api'
@@ -38,7 +38,14 @@ export async function buscarLeads(
     ordem,
     filtros = {},
     cursor,
-  }: { busca?: string; ordem: Ordem; filtros?: FiltrosDaLista; cursor?: string },
+    origemDoFunil,
+  }: {
+    busca?: string
+    ordem: Ordem
+    filtros?: FiltrosDaLista
+    cursor?: string
+    origemDoFunil?: OrigemDoFunil
+  },
   acesso: string,
 ): Promise<PaginaDeLeads> {
   const parametros = new URLSearchParams({ ordenar: ordem })
@@ -47,6 +54,14 @@ export async function buscarLeads(
   }
   for (const chave of ['status', 'temperatura', 'canal', 'corretorId'] as const) {
     const valor = filtros[chave]
+    if (valor) {
+      parametros.set(chave, valor)
+    }
+  }
+  // A origem do funil (TEC-318): os mesmos `de`/`ate`/`intencao`/`etapa` que
+  // `GET /api/v1/leads` passou a aceitar (D2 do desenho).
+  for (const chave of ['de', 'ate', 'intencao', 'etapa'] as const) {
+    const valor = origemDoFunil?.[chave]
     if (valor) {
       parametros.set(chave, valor)
     }
@@ -74,7 +89,12 @@ export async function buscarLeads(
  * chamadas para a pagina N, e so o "carregar mais" o paga.
  */
 export async function buscarPaginas(
-  consulta: { busca?: string; ordem: Ordem; filtros?: FiltrosDaLista },
+  consulta: {
+    busca?: string
+    ordem: Ordem
+    filtros?: FiltrosDaLista
+    origemDoFunil?: OrigemDoFunil
+  },
   posicao: PosicaoNaLista,
   acesso: string,
 ): Promise<Array<PaginaDeLeads & { numero: number }>> {

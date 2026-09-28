@@ -164,7 +164,7 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
       {funil && atualizadoEm ? (
         <>
           <AtualizacaoAutomatica atualizadoEm={atualizadoEm} />
-          <Funil etapas={funil.etapas} />
+          <Funil etapas={funil.etapas} filtros={filtros} />
           <Indicadores indicadores={funil.indicadores} indisponiveis={funil.indisponiveis} />
         </>
       ) : null}

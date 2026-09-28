@@ -13,6 +13,7 @@ import {
   buscaEfetiva,
   filtrosDaUrl,
   ordemDaUrl,
+  origemDoFunilDaUrl,
   type PaginaDeLeads,
   posicaoDaUrl,
   urlDaLista,
@@ -49,8 +50,9 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
   const busca = buscaEfetiva(textoDaBusca)
   const ordem = ordemDaUrl(um(parametros.ordenar))
   const filtros = filtrosDaUrl(parametros)
+  const origemDoFunil = origemDoFunilDaUrl(parametros)
   const posicao = posicaoDaUrl(parametros)
-  const endereco = urlDaLista({ busca, ordem, filtros, posicao })
+  const endereco = urlDaLista({ busca, ordem, filtros, posicao, origemDoFunil })
 
   // Antes de qualquer busca, como toda pagina do painel (D3 da TEC-312).
   const { sessao, quem, permitido } = await exigirPermissao(endereco, (p) => p.has('VER_LEADS'))
@@ -71,7 +73,7 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
   let paginas: Array<PaginaDeLeads & { numero: number }> | null = null
   let erro: ErroDeLeads | null = null
   try {
-    paginas = await buscarPaginas({ busca, ordem, filtros }, posicao, sessao.acesso)
+    paginas = await buscarPaginas({ busca, ordem, filtros, origemDoFunil }, posicao, sessao.acesso)
   } catch (falha) {
     // Backend fora do ar faz o `fetch` LANCAR, e nao responder: sem resposta
     // nao ha status nem codigo para o suporte, e a tela diz so que falhou --
@@ -97,11 +99,25 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
   const ultima = paginas?.at(-1) ?? null
   // Com "carregar mais", as linhas das paginas anteriores a atual (D3).
   const quantasAnteriores = paginas ? itens.length - (ultima?.itens.length ?? 0) : 0
-  const primeiraComFiltros = urlDaLista({ busca, ordem, filtros })
+  const primeiraComFiltros = urlDaLista({ busca, ordem, filtros, origemDoFunil })
 
   return (
     <main className="painel">
       <h1>Leads</h1>
+      {origemDoFunil?.etapa && (
+        // A origem do funil (TEC-318): sem isto, a lista parece menor do que
+        // a gerente esperava, sem dizer por que. `BuscaDeLeads` e
+        // `FiltrosDeLeads` NAO preservam isto ao mudar busca/filtro (D6) --
+        // por isso o link volta para `/leads` limpo, e nao so remove a etapa.
+        <p className="leads-origem-do-funil">
+          Etapa do funil: <strong>{origemDoFunil.etapa}</strong>
+          {origemDoFunil.de && origemDoFunil.ate && (
+            <> — período de {origemDoFunil.de} a {origemDoFunil.ate}</>
+          )}
+          {' · '}
+          <a href={urlDaLista({ busca, ordem, filtros })}>Ver todos os leads</a>
+        </p>
+      )}
       <BuscaDeLeads inicial={textoDaBusca} ordem={ordem} filtros={filtros} />
       <FiltrosDeLeads busca={busca} ordem={ordem} filtros={filtros} corretor={corretor} />
       {erro && <Falha erro={erro} endereco={endereco} primeiraPagina={primeiraComFiltros} />}
@@ -125,13 +141,14 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
             ordem={ordem}
             busca={busca}
             filtros={filtros}
+            origemDoFunil={origemDoFunil}
             agora={new Date()}
             abreDetalhe={quem.permissoes.has('VER_DETALHE_DO_LEAD')}
             podeRevelar={quem.permissoes.has('VER_DADOS_COMPLETOS')}
             quantasAnteriores={quantasAnteriores}
           />
           <PaginacaoDeLeads
-            estado={{ busca, ordem, filtros }}
+            estado={{ busca, ordem, filtros, origemDoFunil }}
             posicao={posicao}
             proximoCursor={ultima?.proximoCursor ?? null}
           />

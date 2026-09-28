@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import type { Etapa } from '@/lib/metricas'
+import type { Etapa, Filtros } from '@/lib/metricas'
 
 import { Funil } from './Funil'
 
@@ -14,9 +14,11 @@ const ETAPAS: Etapa[] = [
   { nome: 'Handoff aceito', quantidade: 39, disponivel: true, conversaoDaAnterior: null },
 ]
 
+const FILTROS: Filtros = { de: '2026-08-01', ate: '2026-08-31' }
+
 describe('Funil', () => {
   it('mostra as seis etapas', () => {
-    render(<Funil etapas={ETAPAS} />)
+    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
     for (const nome of [
       'Novo',
       'Em conversa',
@@ -30,33 +32,33 @@ describe('Funil', () => {
   })
 
   it('escreve a conversao entre etapas consecutivas', () => {
-    render(<Funil etapas={ETAPAS} />)
+    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
     expect(screen.getByText('83,8%')).toBeInTheDocument()
   })
 
   it('a etapa sem fonte nao mostra zero', () => {
-    render(<Funil etapas={ETAPAS} />)
+    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
     const agendado = screen.getByTestId('etapa-Agendado')
     expect(agendado).toHaveTextContent('Ainda não medido')
     expect(agendado).not.toHaveTextContent(/\b0\b/)
   })
 
   it('a etapa com zero real mostra zero, e nao "sem fonte"', () => {
-    render(<Funil etapas={ETAPAS} />)
+    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
     const qualificado = screen.getByTestId('etapa-Qualificado')
     expect(qualificado).toHaveTextContent('0')
     expect(qualificado).not.toHaveTextContent('Ainda não medido')
   })
 
   it('renderiza travessao nas quatro etapas sem conversao calculavel', () => {
-    render(<Funil etapas={ETAPAS} />)
+    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
     // Novo (primeira etapa), Recomendado (anterior em zero), Agendado (sem
     // fonte propria) e Handoff aceito (anterior indisponivel).
     expect(screen.getAllByText('—')).toHaveLength(4)
   })
 
   it('a barra da etapa sem fonte tem largura zero, e nao NaN', () => {
-    render(<Funil etapas={ETAPAS} />)
+    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
     const barra = screen.getByTestId('barra-Agendado')
     expect(barra.getAttribute('style')).not.toContain('NaN')
   })
@@ -68,7 +70,7 @@ describe('Funil -- coorte incompleta (TEC-315)', () => {
       { nome: 'Qualificado', quantidade: 1, disponivel: true, conversaoDaAnterior: null },
       { nome: 'Recomendado', quantidade: 40, disponivel: true, conversaoDaAnterior: 40.0 },
     ]
-    render(<Funil etapas={etapas} />)
+    render(<Funil etapas={etapas} filtros={FILTROS} />)
 
     const recomendado = screen.getByTestId('etapa-Recomendado')
     expect(recomendado).toHaveTextContent('4.000,0%')
@@ -84,7 +86,7 @@ describe('Funil -- coorte incompleta (TEC-315)', () => {
       { nome: 'Qualificado', quantidade: 100, disponivel: true, conversaoDaAnterior: null },
       { nome: 'Recomendado', quantidade: 40, disponivel: true, conversaoDaAnterior: 0.4 },
     ]
-    render(<Funil etapas={etapas} />)
+    render(<Funil etapas={etapas} filtros={FILTROS} />)
 
     expect(screen.queryByText('Coorte incompleta')).toBeNull()
   })
@@ -98,9 +100,42 @@ describe('Funil -- coorte incompleta (TEC-315)', () => {
       { nome: 'Agendado', quantidade: null, disponivel: false, conversaoDaAnterior: 0.5 },
       { nome: 'Handoff aceito', quantidade: 3, disponivel: true, conversaoDaAnterior: 0.3 },
     ]
-    render(<Funil etapas={etapas} />)
+    render(<Funil etapas={etapas} filtros={FILTROS} />)
 
     expect(within(screen.getByTestId('etapa-Agendado')).getByText('—')).toBeInTheDocument()
     expect(within(screen.getByTestId('etapa-Handoff aceito')).getByText('—')).toBeInTheDocument()
+  })
+})
+
+describe('Funil -- abrir os leads da etapa (TEC-318)', () => {
+  it('etapa disponivel vira link para a lista de leads, com os filtros do funil', () => {
+    const filtros: Filtros = { de: '2026-08-01', ate: '2026-08-31', canal: 'web', temperatura: 'QUENTE' }
+    render(<Funil etapas={ETAPAS} filtros={filtros} />)
+
+    const link = within(screen.getByTestId('etapa-Recomendado')).getByRole('link')
+    const url = new URL(link.getAttribute('href')!, 'http://localhost')
+    expect(url.pathname).toBe('/leads')
+    expect(url.searchParams.get('de')).toBe('2026-08-01')
+    expect(url.searchParams.get('ate')).toBe('2026-08-31')
+    expect(url.searchParams.get('canal')).toBe('web')
+    expect(url.searchParams.get('temperatura')).toBe('QUENTE')
+    expect(url.searchParams.get('etapa')).toBe('Recomendado')
+  })
+
+  it('etapa sem fonte nao e um link', () => {
+    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
+
+    expect(within(screen.getByTestId('etapa-Agendado')).queryByRole('link')).toBeNull()
+  })
+
+  it('o link nao esconde "Coorte incompleta" do leitor de tela', () => {
+    const etapas: Etapa[] = [
+      { nome: 'Qualificado', quantidade: 1, disponivel: true, conversaoDaAnterior: null },
+      { nome: 'Recomendado', quantidade: 40, disponivel: true, conversaoDaAnterior: 40.0 },
+    ]
+    render(<Funil etapas={etapas} filtros={FILTROS} />)
+
+    const link = within(screen.getByTestId('etapa-Recomendado')).getByRole('link')
+    expect(link).toHaveTextContent('Coorte incompleta')
   })
 })
