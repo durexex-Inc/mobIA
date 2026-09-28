@@ -1793,3 +1793,122 @@ describe('Conversa -- aviso de privacidade e consentimento (TEC-352)', () => {
     expect(marketing()).not.toBeChecked()
   })
 })
+
+describe('Conversa -- telefone e corretor pelo menu (TEC-353)', () => {
+  function escolherNoMenu(item: string) {
+    fireEvent.click(screen.getByRole('button', { name: 'Opções da conversa' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: item }))
+  }
+
+  function mensagensDe(socket: SocketFalso) {
+    return socket.frames().filter((f) => f.tipo === 'mensagem')
+  }
+
+  function campoDeTelefone() {
+    return screen.getByRole('textbox', { name: 'Seu telefone, com DDD' })
+  }
+
+  it('o menu tem os tres itens, e abrir foca o primeiro', () => {
+    montarAberto()
+    fireEvent.click(screen.getByRole('button', { name: 'Opções da conversa' }))
+
+    const itens = screen.getAllByRole('menuitem')
+    expect(itens.map((item) => item.textContent)).toEqual([
+      'Falar com um corretor',
+      'Informar meu telefone',
+      'Encerrar conversa',
+    ])
+    expect(document.activeElement).toBe(itens[0])
+  })
+
+  it('setas andam entre os itens e dao a volta nas pontas', () => {
+    montarAberto()
+    fireEvent.click(screen.getByRole('button', { name: 'Opções da conversa' }))
+    const itens = screen.getAllByRole('menuitem')
+
+    fireEvent.keyDown(itens[0], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(itens[1])
+    fireEvent.keyDown(itens[1], { key: 'ArrowUp' })
+    fireEvent.keyDown(itens[0], { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(itens[2])
+    fireEvent.keyDown(itens[2], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(itens[0])
+  })
+
+  it('cenario 3: "Falar com um corretor" manda o pedido explicito de humano', () => {
+    const socket = montarAberto()
+
+    escolherNoMenu('Falar com um corretor')
+
+    expect(mensagensDe(socket).map((f) => f.texto)).toEqual(['Quero falar com uma pessoa da equipe de corretores.'])
+    expect(screen.getByText('Quero falar com uma pessoa da equipe de corretores.').closest('li')).toHaveClass(
+      'conversa__balao--visitante',
+    )
+  })
+
+  it('cenario 1: "(48) 99999-0021" no campo com mascara sai como "+55 48 99999-0021"', () => {
+    const socket = montarAberto()
+    escolherNoMenu('Informar meu telefone')
+
+    expect(document.activeElement).toBe(campoDeTelefone())
+    fireEvent.change(campoDeTelefone(), { target: { value: '(48) 99999-0021' } })
+    expect(campoDeTelefone()).toHaveValue('(48) 99999-0021')
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar telefone' }))
+
+    expect(mensagensDe(socket).map((f) => f.texto)).toEqual(['+55 48 99999-0021'])
+    // Enviado, o campo de texto volta.
+    expect(screen.queryByRole('textbox', { name: 'Seu telefone, com DDD' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Mensagem' }))
+  })
+
+  it('a mascara aparece enquanto a visitante digita so os digitos', () => {
+    montarAberto()
+    escolherNoMenu('Informar meu telefone')
+
+    fireEvent.change(campoDeTelefone(), { target: { value: '4833330021' } })
+    expect(campoDeTelefone()).toHaveValue('(48) 3333-0021')
+  })
+
+  it('cenario 2: "9999-002" nao sai, e o campo mostra o formato esperado', () => {
+    const socket = montarAberto()
+    escolherNoMenu('Informar meu telefone')
+
+    fireEvent.change(campoDeTelefone(), { target: { value: '9999-002' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar telefone' }))
+
+    expect(mensagensDe(socket)).toEqual([])
+    expect(campoDeTelefone()).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Informe DDD e número: (48) 99999-0021 para celular ou (48) 3333-0021 para fixo.',
+    )
+    expect(campoDeTelefone()).toHaveAccessibleDescription(/Informe DDD e número/)
+
+    // Corrigir tira o aviso.
+    fireEvent.change(campoDeTelefone(), { target: { value: '48999990021' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('"Cancelar" volta ao campo de texto sem mandar nada', () => {
+    const socket = montarAberto()
+    escolherNoMenu('Informar meu telefone')
+    fireEvent.change(campoDeTelefone(), { target: { value: '48999990021' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(mensagensDe(socket)).toEqual([])
+    expect(screen.getByRole('textbox', { name: 'Mensagem' })).toBeInTheDocument()
+  })
+
+  it('cenario 4: "parar" sai como mensagem comum, e a confirmacao do servidor aparece como fala do agente', () => {
+    const socket = montarAberto()
+
+    enviar('parar')
+    socket.receber({ tipo: 'ack', messageId: frameDeMensagem(socket).id })
+    socket.receber({ tipo: 'mensagem', texto: 'Pronto, você não vai mais receber mensagens.', kind: 'optout' })
+
+    expect(mensagensDe(socket).map((f) => f.texto)).toEqual(['parar'])
+    expect(screen.getByText('Pronto, você não vai mais receber mensagens.').closest('li')).toHaveClass(
+      'conversa__balao--agente',
+    )
+  })
+})

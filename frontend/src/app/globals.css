@@ -690,6 +690,40 @@ a {
   margin-top: 2px;
 }
 
+/* O campo de telefone com mascara (TEC-353): o +55 fixo ao lado do numero. */
+.conversa__telefone label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.conversa__campo-de-telefone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conversa__campo-de-telefone input {
+  flex: 1;
+  padding: 8px;
+  font: inherit;
+  border: 1px solid color-mix(in srgb, var(--foreground) 30%, transparent);
+  border-radius: 6px;
+}
+
+.conversa__campo-de-telefone input[aria-invalid="true"] {
+  border-color: #b91c1c;
+}
+
+.conversa__formato {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: #525252;
+}
+
+.conversa__formato--recusado {
+  color: #b91c1c;
+}
+
 .chat-embutido__indisponivel {
   margin: 0;
   padding: 24px 16px;
