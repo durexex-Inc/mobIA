@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { percentual, quantidadeLegivel } from './formato'
+import { coorteIncompleta, percentual, quantidadeLegivel } from './formato'
 
 describe('percentual', () => {
   it('formata em pt-BR com uma casa', () => {
@@ -37,5 +37,23 @@ describe('quantidadeLegivel', () => {
         conversaoDaAnterior: null,
       }),
     ).toBe('0')
+  })
+})
+
+describe('coorteIncompleta', () => {
+  it('nulo nao e coorte incompleta', () => {
+    expect(coorteIncompleta(null)).toBe(false)
+  })
+
+  it('100% exato nao e coorte incompleta', () => {
+    expect(coorteIncompleta(1.0)).toBe(false)
+  })
+
+  it('um pouco acima de 100% ja e', () => {
+    expect(coorteIncompleta(1.0001)).toBe(true)
+  })
+
+  it('4000% (o exemplo da card) e', () => {
+    expect(coorteIncompleta(40.0)).toBe(true)
   })
 })

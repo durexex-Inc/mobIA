@@ -114,6 +114,14 @@ a {
   min-width: 0;
 }
 
+/* A coorte incompleta (TEC-315): o destaque esta no texto, nao so na cor,
+   no molde de `.fila-do-titular__aviso`. */
+.funil-conversao-aviso {
+  font-weight: 600;
+  color: #92400e;
+  opacity: 1;
+}
+
 .indicadores-lista {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));

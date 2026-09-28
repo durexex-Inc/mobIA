@@ -33,9 +33,20 @@ export function quantidadeLegivel(etapa: Etapa): string {
     // da RN-FE-04.2. A etapa do funil entra junto com os indicadores de
     // proposito -- deixar so os indicadores mudarem poria dois idiomas para a
     // mesma ausencia na MESMA tela, que e pior que tocar tres linhas de uma
-    // card vizinha. O COMPORTAMENTO da etapa (nao calcular conversao para quem
-    // nao tem fonte) continua sendo da TEC-315. Ver a D1 do desenho.
+    // card vizinha. O comportamento da etapa (nao calcular conversao para quem
+    // nao tem fonte) e o de `Funil.tsx::conversaoConfiavel` (TEC-315).
     return TEXTO_SEM_FONTE
   }
   return INTEIRO.format(etapa.quantidade)
+}
+
+/**
+ * Acima de 100% e "coorte incompleta" (TEC-315, RT-FE-02): nao e erro de
+ * consulta, e etapas medidas por periodos diferentes -- ver a D10 do desenho
+ * da TEC-190. So `Funil.tsx` chama isto: `Indicadores.tsx` tambem usa
+ * `percentual` para fracoes sem essa semantica (taxa de qualificacao, SLA), e
+ * nao devem ganhar este aviso.
+ */
+export function coorteIncompleta(valor: number | null): boolean {
+  return valor !== null && valor > 1
 }
