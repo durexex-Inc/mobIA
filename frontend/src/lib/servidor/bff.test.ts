@@ -20,9 +20,10 @@ describe('caminhoPermitido', () => {
 
   it('recusa rota que nao esta na tabela', () => {
     // `corretores` entrou na tabela na TEC-332 e `imoveis` na TEC-333 -- ver
-    // os describes dedicados abaixo. `importacoes` continua fora: a D7 do
-    // desenho da TEC-333 recusou de proposito, o relatorio de importacao nao
-    // e desta card.
+    // os describes dedicados abaixo. `importacoes` SEM id continua fora: a
+    // D7 do desenho da TEC-333 recusou de proposito, e a D6 da TEC-334 (ver
+    // o describe "importacao de imoveis" abaixo) so acrescenta `importacoes/*`
+    // -- a listagem SEM id continua so acessivel direto do servidor (D4).
     expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', 'importacoes'])).toBeNull()
     expect(caminhoPermitido('GET', ['health'])).toBeNull()
   })
@@ -153,6 +154,36 @@ describe('caminhoPermitido', () => {
 
     it('POST com id e GET/PATCH/DELETE sem id nao casam -- a entrada da tabela e o par', () => {
       expect(caminhoPermitido('POST', ['api', 'v1', 'imoveis', IMOVEL])).toBeNull()
+    })
+  })
+
+  describe('importacao de imoveis (TEC-334)', () => {
+    const IMPORTACAO = '6f1c2a4e-0000-4000-8000-000000000004'
+
+    it('o envio do arquivo entra como POST em `importar`, segmento LITERAL', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'imoveis', 'importar'])).toBe(
+        '/api/v1/imoveis/importar',
+      )
+    })
+
+    it('`importar` nao casa com metodo diferente de POST', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', 'importar'])).toBeNull()
+    })
+
+    it('o acompanhamento entra como GET em `importacoes/*`, com o `*` casando o id', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', 'importacoes', IMPORTACAO])).toBe(
+        `/api/v1/imoveis/importacoes/${IMPORTACAO}`,
+      )
+    })
+
+    it('`importacoes/*` nao casa com metodo diferente de GET', () => {
+      expect(
+        caminhoPermitido('POST', ['api', 'v1', 'imoveis', 'importacoes', IMPORTACAO]),
+      ).toBeNull()
+    })
+
+    it('a listagem sem id continua fora do alcance do navegador -- so a mais recente do servidor (D4)', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', 'importacoes'])).toBeNull()
     })
   })
 

@@ -64,13 +64,31 @@ function imovel(sobrescreve: Record<string, unknown> = {}) {
   }
 }
 
-/** `/auth/me` com o papel, e a listagem com o corpo e o status pedidos. */
-function api(papel: string, listagem: { corpo: unknown; status?: number; cabecalhos?: Record<string, string> }) {
+/**
+ * `/auth/me` com o papel, a listagem de imoveis e a listagem de importacoes,
+ * roteadas por caminho -- `importacoes` sem sobrescrita devolve nenhuma
+ * importacao (D4), como a maioria dos testes desta pagina nao se importa
+ * com ela.
+ */
+function api(
+  papel: string,
+  listagem: { corpo: unknown; status?: number; cabecalhos?: Record<string, string> },
+  importacoes: { corpo: unknown; status?: number; cabecalhos?: Record<string, string> } = {
+    corpo: { itens: [] },
+  },
+) {
   const chamadas = vi.fn<(url: URL | string) => Promise<Response>>(async (url) => {
-    if (new URL(String(url)).pathname === '/api/v1/auth/me') {
+    const caminho = new URL(String(url)).pathname
+    if (caminho === '/api/v1/auth/me') {
       return new Response(
         JSON.stringify({ usuarioId: 'u-1', papel, corretorId: null, permissoes: PERMISSOES[papel] }),
       )
+    }
+    if (caminho === '/api/v1/imoveis/importacoes') {
+      return new Response(JSON.stringify(importacoes.corpo), {
+        status: importacoes.status ?? 200,
+        headers: importacoes.cabecalhos,
+      })
     }
     return new Response(JSON.stringify(listagem.corpo), {
       status: listagem.status ?? 200,
@@ -164,5 +182,59 @@ describe('PaginaDeImoveis (TEC-333)', () => {
     api('ADMIN', { corpo: { itens: [], proximoCursor: null } })
 
     await expect(PaginaDeImoveis()).rejects.toThrow('REDIRECT:/login?returnTo=%2Fadmin%2Fimoveis')
+  })
+
+  describe('a importacao em lote (TEC-334, D4)', () => {
+    it('sem nenhuma importacao anterior, a tela de importar abre sem acompanhamento', async () => {
+      api('ADMIN', { corpo: { itens: [], proximoCursor: null } }, { corpo: { itens: [] } })
+
+      render(await PaginaDeImoveis())
+
+      expect(screen.getByRole('heading', { name: 'Importar imóveis' })).toBeInTheDocument()
+      expect(screen.queryByText(/Processando|Concluído|Falhou/)).toBeNull()
+    })
+
+    it('com uma importacao recente, a tela abre ja mostrando o relatorio (D4)', async () => {
+      api(
+        'ADMIN',
+        { corpo: { itens: [], proximoCursor: null } },
+        {
+          corpo: {
+            itens: [
+              {
+                importacaoId: 'imp-1',
+                status: 'CONCLUIDO',
+                nomeArquivo: 'lote.csv',
+                processados: 10,
+                inseridos: 10,
+                atualizados: 0,
+                inalterados: 0,
+                rejeitados: 0,
+                erros: [],
+              },
+            ],
+          },
+        },
+      )
+
+      render(await PaginaDeImoveis())
+
+      expect(screen.getByText(/lote\.csv/)).toBeInTheDocument()
+      expect(screen.getByText(/Concluído/)).toBeInTheDocument()
+    })
+
+    it('falha ao buscar a importacao mais recente nao derruba a pagina (a listagem de imoveis e o essencial)', async () => {
+      api(
+        'ADMIN',
+        { corpo: { itens: [], proximoCursor: null } },
+        { corpo: { detail: 'boom' }, status: 500 },
+      )
+
+      render(await PaginaDeImoveis())
+
+      expect(screen.getByRole('heading', { name: 'Imóveis' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Importar imóveis' })).toBeInTheDocument()
+      expect(screen.queryByText(/Processando|Concluído|Falhou/)).toBeNull()
+    })
   })
 })

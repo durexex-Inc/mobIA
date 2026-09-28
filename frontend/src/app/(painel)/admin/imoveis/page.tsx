@@ -4,13 +4,16 @@ import { redirect } from 'next/navigation'
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { Vazio } from '@/components/estado/Vazio'
 import { FormularioDeImovel } from '@/components/FormularioDeImovel'
+import { ImportarImoveis } from '@/components/ImportarImoveis'
 import { ListaDeImoveis } from '@/components/ListaDeImoveis'
 import { SemPermissao } from '@/components/SemPermissao'
 import type { Imovel } from '@/lib/imoveis'
+import type { Importacao } from '@/lib/importacaoDeImoveis'
 import { urlDoLogin } from '@/lib/destino'
 import { paginaInicialDe } from '@/lib/navegacao'
 import { exigirPermissao } from '@/lib/servidor/quemSou'
 import { apagarSessaoDaRequisicao } from '@/lib/servidor/sessao'
+import { buscarImportacaoMaisRecente } from '@/lib/servidor/importacaoDeImoveis'
 import { buscarImoveis, ErroDeImoveis } from '@/lib/servidor/imoveis'
 
 export const metadata: Metadata = {
@@ -29,6 +32,13 @@ const ENDERECO = '/admin/imoveis'
  * **A listagem inicial usa `buscarImoveis` direto do servidor** (D7 do
  * desenho): so as mutacoes que o `'use client'` dispara depois de montado
  * (`FormularioDeImovel`, `RetirarImovel`) passam pelo `/bff/*`.
+ *
+ * **A importacao em lote (TEC-334) busca a mais recente do mesmo jeito**
+ * (D4) -- `buscarImportacaoMaisRecente`, direto do servidor. Uma falha nessa
+ * busca NAO derruba a pagina: ao contrario da listagem de imoveis, que e o
+ * proposito central desta tela, a importacao e um extra -- `ImportarImoveis`
+ * recebe `null` e a tela funciona igual, so sem a importacao mais recente
+ * pre-carregada.
  */
 export default async function PaginaDeImoveis() {
   const { sessao, quem, permitido } = await exigirPermissao(ENDERECO, (p) => p.has('GERIR_CATALOGO'))
@@ -58,10 +68,20 @@ export default async function PaginaDeImoveis() {
     return <SemPermissao papel={quem.papel} paginaInicial={null} />
   }
 
+  let importacaoRecente: Importacao | null = null
+  try {
+    importacaoRecente = await buscarImportacaoMaisRecente(sessao.acesso)
+  } catch {
+    // Ver a docstring acima: a importacao e um extra, sem pagina de erro
+    // propria -- `null` faz `ImportarImoveis` abrir sem nenhuma em curso.
+    importacaoRecente = null
+  }
+
   return (
     <main className="painel">
       <h1>Imóveis</h1>
       <FormularioDeImovel imovel={null} />
+      <ImportarImoveis importacaoInicial={importacaoRecente} />
       {erro ? (
         <ErroDeCarga
           mensagem="Não foi possível carregar os imóveis."

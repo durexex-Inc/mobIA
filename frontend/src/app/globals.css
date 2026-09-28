@@ -1812,3 +1812,95 @@ a {
   border-radius: 4px;
   background: color-mix(in srgb, var(--foreground) 12%, transparent);
 }
+
+/* --- Importacao de imoveis em lote (TEC-334) -------------------------------- */
+
+.importar-imoveis {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.importar-imoveis__campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.importar-imoveis__campo label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.importar-imoveis__aviso {
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.importar-imoveis__previa {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.importar-imoveis__previa table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.importar-imoveis__previa th,
+.importar-imoveis__previa td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.acompanhar-importacao {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.acompanhar-importacao__totais {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.acompanhar-importacao__totais div {
+  display: flex;
+  flex-direction: column;
+}
+
+.acompanhar-importacao__totais dt {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.acompanhar-importacao__totais dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.acompanhar-importacao__aviso {
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.acompanhar-importacao__erros ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
