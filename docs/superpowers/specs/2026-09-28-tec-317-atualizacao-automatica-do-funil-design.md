@@ -51,9 +51,16 @@ Tempo real por SSE/WebSocket (Won't, já escrito na card) — o `GET /api/v1/eve
 - **`components/AtualizacaoAutomatica.test.tsx`** (novo, com `vi.useFakeTimers`): não chama `refresh` antes de 30 s; chama exatamente uma vez aos 30 s, com a aba visível; nenhuma chamada em 2 minutos com `document.visibilityState = 'hidden'`; ao voltar a ficar visível depois de ficar oculta por mais de 30 s, chama `refresh` uma única vez (não em rajada); o texto exibido soma segundos corretamente entre atualizações.
 - **`app/(painel)/page.test.tsx`**: o mock de `next/navigation` ganha `useRouter`; um teste novo confirma que "Atualizado há" aparece quando o funil carrega e não aparece na tela de erro.
 
-## Verificação no navegador
+## Verificação no navegador (28/09/2026)
 
-Edge headless por CDP, `next dev` e API locais — ver o comentário da card para os passos e o que cada um confirmou.
+Edge headless por CDP, `next dev` e API locais, sessão GERENTE sem MFA.
+
+| passo | resultado |
+| --- | --- |
+| Funil aberto, aba visível, log do backend amostrado a cada 10s por ~80s | contagem sobe exatamente em `t≈30s` e `t≈61s` — o resto das amostras (10s, 20s, 40s, 50s, 71s) não muda, confirmando o intervalo de 30s e que a janela seguinte cai dentro do cache |
+| `document.visibilityState` forçado para `'hidden'` por 80s (amostrado a cada 10s) | contagem não muda nenhuma vez — zero chamadas ao funil com a aba oculta |
+| `visibilityState` de volta a `'visible'` | uma chamada nova ao funil imediatamente (sem esperar o próximo segundo cheio); mais 5s depois, a contagem não mudou de novo — não é rajada |
+| `/?canal=web`, aguardando o ciclo de refresh seguinte | a chamada do ciclo seguinte ainda traz `canal=web` — o filtro sobrevive ao `router.refresh()` |
 
 ## Critérios de aceite
 
