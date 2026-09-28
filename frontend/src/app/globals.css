@@ -809,6 +809,43 @@ a {
   color: #404040;
 }
 
+/* "Gostei" e "Não é pra mim" (TEC-350): acima do `::after` do titulo, que
+   cobre o card inteiro -- sem o `z-index`, o toque expandiria a ficha. */
+.card-imovel__reacoes {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: auto 12px 10px;
+  padding-top: 6px;
+}
+
+.card-imovel__reacoes button {
+  flex: 1 1 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--cor-primaria, #1d4ed8);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.card-imovel__reacoes button[aria-pressed="true"] {
+  background: var(--cor-primaria, #1d4ed8);
+  color: #fff;
+}
+
+.card-imovel__reacoes button:disabled {
+  cursor: default;
+}
+
+.card-imovel__reacoes button:disabled:not([aria-pressed="true"]) {
+  opacity: 0.5;
+}
+
 .card-imovel--expandido .card-imovel__diferencial {
   display: block;
 }

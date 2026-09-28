@@ -100,3 +100,18 @@ export function contagem(quantidade: number, singular: string, plural: string): 
 export function textoAlternativo(imovel: Pick<ImovelCard, 'titulo' | 'bairro'>): string {
   return `Foto de ${imovel.titulo} em ${imovel.bairro}`
 }
+
+/** O toque rapido num card (TEC-350): "Gostei" ou "Não é pra mim". */
+export type Reacao = 'gostei' | 'nao_e_pra_mim'
+
+/**
+ * A mensagem que o toque manda como fala da visitante (TEC-350, D1). Titulo
+ * e bairro sao o que `classificador.reagir` le de cada imovel apresentado
+ * (`N. {titulo} -- {bairro}`, em `domain/agente/turno.py`): com os dois, o
+ * modelo acha o ordinal certo mesmo entre dois cards de titulo igual. O `id`
+ * fica de fora -- o modelo nunca o ve (D7 da TEC-163).
+ */
+export function textoDaReacao(reacao: Reacao, imovel: Pick<ImovelCard, 'titulo' | 'bairro'>): string {
+  const nome = `"${imovel.titulo}" (${imovel.bairro})`
+  return reacao === 'gostei' ? `Gostei do imóvel ${nome}.` : `O imóvel ${nome} não é pra mim.`
+}

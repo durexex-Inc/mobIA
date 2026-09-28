@@ -28,6 +28,7 @@ import {
   PRAZO_SEM_CONEXAO_MS,
   reduzir,
 } from '@/lib/conversa'
+import { type ImovelCard, type Reacao, textoDaReacao } from '@/lib/imovel'
 import { apagarSessao, armazemDoNavegador, gravarSessao, lerSessao } from '@/lib/sessaoGuardada'
 
 const ROTULO_DO_ESTADO: Record<EstadoDaMensagem, string> = {
@@ -202,6 +203,8 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   const [conversa, despachar] = useReducer(reduzir, INICIAL)
   const [rascunho, setRascunho] = useState('')
   const [confirmando, setConfirmando] = useState(false)
+  // O toque de cada card, por `id` do imovel (TEC-350, D2). Some no encerramento.
+  const [reacoes, setReacoes] = useState<Record<string, Reacao>>({})
   const socketRef = useRef<WebSocket | null>(null)
   // Mensagens que esperam o `open` do socket atual para sair. O `open` manda
   // tambem toda `enviando` de `mensagensRef` (TEC-348, D4); a fila so garante
@@ -551,15 +554,30 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
     conectar()
   }
 
+  // O caminho de toda fala da visitante: o campo e o toque num card (TEC-350).
+  function enviarTexto(texto: string) {
+    const id = novoMessageId()
+    despachar({ tipo: 'enviou', messageId: id, texto })
+    transmitir({ id, texto })
+  }
+
   function enviarRascunho() {
     const texto = rascunho.trim()
     if (!texto) {
       return
     }
-    const id = novoMessageId()
-    despachar({ tipo: 'enviou', messageId: id, texto })
-    transmitir({ id, texto })
+    enviarTexto(texto)
     setRascunho('')
+  }
+
+  // TEC-350, D1 e D2: o toque vira fala comum da visitante, e o card guarda
+  // qual foi para nao mandar uma segunda que contradiz a primeira.
+  function reagir(imovel: ImovelCard, reacao: Reacao) {
+    if (reacoes[imovel.id]) {
+      return
+    }
+    setReacoes((atuais) => ({ ...atuais, [imovel.id]: reacao }))
+    enviarTexto(textoDaReacao(reacao, imovel))
   }
 
   function aoEnviar(evento: FormEvent<HTMLFormElement>) {
@@ -583,6 +601,7 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
 
   function encerrar() {
     setConfirmando(false)
+    setReacoes({})
     apagarSessao(armazemDoNavegador())
     sessaoRef.current = null
     const aguardando = conversa.conexao.tipo === 'aguardando'
@@ -689,7 +708,12 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
                   <ul className="conversa__fileira" aria-label="Imóveis sugeridos">
                     {mensagem.imoveis.map((imovel) => (
                       <li key={imovel.id}>
-                        <CardDeImovel imovel={imovel} />
+                        <CardDeImovel
+                          imovel={imovel}
+                          aoReagir={(reacao) => reagir(imovel, reacao)}
+                          reacao={reacoes[imovel.id] ?? null}
+                          bloqueado={espera !== null}
+                        />
                       </li>
                     ))}
                   </ul>
