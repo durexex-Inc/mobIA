@@ -14,6 +14,7 @@ import {
 } from 'react'
 
 import { CabecalhoDoChat } from '@/components/CabecalhoDoChat'
+import { CardDeImovel } from '@/components/CardDeImovel'
 import {
   CODIGO_OCIOSA,
   type Conexao,
@@ -584,6 +585,18 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
                       </button>
                     ) : null}
                   </div>
+                </li>
+              ) : mensagem.autor === 'imoveis' ? (
+                // A fileira de cards do turno (TEC-349): uma lista dentro do
+                // item, para o leitor de tela anunciar "lista, 3 itens".
+                <li key={mensagem.chave} className="conversa__imoveis">
+                  <ul className="conversa__fileira" aria-label="Imóveis sugeridos">
+                    {mensagem.imoveis.map((imovel) => (
+                      <li key={imovel.id}>
+                        <CardDeImovel imovel={imovel} />
+                      </li>
+                    ))}
+                  </ul>
                 </li>
               ) : (
                 <li key={mensagem.chave} className="conversa__balao conversa__balao--agente">

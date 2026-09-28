@@ -19,16 +19,22 @@
  * `aplicarHistorico`.
  *
  * **Frames do servidor que esta card ainda ignora, e quem trata cada um:**
- * `digitando` (TEC-351), `imagem` (TEC-349) e `consentimento_registrado`
- * (TEC-352). `imovel` sem `texto` tambem fica sem balao aqui -- o card do
- * imovel e da TEC-349.
+ * `digitando` (TEC-351), `imagem` e `consentimento_registrado` (TEC-352).
+ *
+ * **`imovel` vira card desde a TEC-349** (`aplicarImovel`): a prosa do
+ * primeiro frame, quando vem, e um balao do agente, e o imovel entra numa
+ * fileira de cards (`autor: 'imoveis'`) que agrupa os frames do mesmo turno.
  */
+
+import { type ImovelCard, imovelDe } from '@/lib/imovel'
 
 export type EstadoDaMensagem = 'enviando' | 'recebida' | 'falhou'
 
 export type Mensagem =
   | { autor: 'visitante'; messageId: string; texto: string; estado: EstadoDaMensagem }
   | { autor: 'agente'; chave: string; texto: string }
+  // A fileira de cards de um turno (TEC-349): ate `MAXIMO_DE_CARDS`.
+  | { autor: 'imoveis'; chave: string; imoveis: ImovelCard[] }
 
 export type Conexao =
   | { tipo: 'conectando' }
@@ -68,6 +74,12 @@ export const CODIGO_OCIOSA = 4000
 /** Teto do campo de texto (D5). A rede continua com o teto de 4096 do servidor. */
 export const LIMITE_DE_CARACTERES = 1000
 
+/**
+ * Cards por fileira (RN-FE-18.1). O servidor ja limita a apresentacao a tres
+ * (TEC-162); o teto aqui e o que impede um quarto frame de alongar a fileira.
+ */
+export const MAXIMO_DE_CARDS = 3
+
 /** Quanto tempo sem `ack` marca uma mensagem enviada como `falhou` (D3). */
 export const PRAZO_DO_ACK_MS = 10_000
 
@@ -85,10 +97,11 @@ function segundosValidos(valor: unknown): valor is number {
   return typeof valor === 'number' && Number.isInteger(valor) && valor >= 1
 }
 
-// As chaves que este modulo inventa: `agente-N` para o balao do agente e
-// `historico-N` para a fala da visitante que so o historico trouxe. O
-// `messageId` de um envio da visitante e UUID e nunca casa com este padrao.
-const CHAVE_INVENTADA = /^(?:agente|historico)-(\d+)$/
+// As chaves que este modulo inventa: `agente-N` para o balao do agente,
+// `historico-N` para a fala da visitante que so o historico trouxe, e
+// `imoveis-N` para a fileira de cards (TEC-349). O `messageId` de um envio da
+// visitante e UUID e nunca casa com este padrao.
+const CHAVE_INVENTADA = /^(?:agente|historico|imoveis)-(\d+)$/
 
 function chaveDe(mensagem: Mensagem): string {
   return mensagem.autor === 'visitante' ? mensagem.messageId : mensagem.chave
@@ -163,8 +176,34 @@ function aplicarMensagemDoAgente(estado: Conversa, dado: FrameBruto): Conversa {
   return typeof dado.texto === 'string' ? adicionarBalaoDoAgente(estado, dado.texto) : estado
 }
 
+/**
+ * O frame `imovel` (TEC-364, D2): a prosa do agente, so no primeiro frame do
+ * turno, e o imovel. A prosa vira balao ANTES do card, que e a ordem em que o
+ * agente fala; o imovel entra na fileira.
+ *
+ * **`kind: 'ficha_1'` abre fileira nova; os seguintes entram na ultima**, se
+ * ela for a mensagem mais nova da lista e ainda couber (`MAXIMO_DE_CARDS`).
+ * Nao basta "o frame anterior foi imovel": dois turnos seguidos, o segundo sem
+ * prosa, juntariam os cards dos dois numa fileira so. O `kind` e o que o
+ * servidor diz de fato sobre a ordem.
+ *
+ * Imovel que nao passa por `imovelDe` nao vira card -- e a prosa, se veio,
+ * continua valendo.
+ */
 function aplicarImovel(estado: Conversa, dado: FrameBruto): Conversa {
-  return typeof dado.texto === 'string' && dado.texto !== '' ? adicionarBalaoDoAgente(estado, dado.texto) : estado
+  const comProsa =
+    typeof dado.texto === 'string' && dado.texto !== '' ? adicionarBalaoDoAgente(estado, dado.texto) : estado
+  const imovel = imovelDe(dado.imovel)
+  if (!imovel) {
+    return comProsa
+  }
+  const ultima = comProsa.mensagens.at(-1)
+  if (dado.kind !== 'ficha_1' && ultima?.autor === 'imoveis' && ultima.imoveis.length < MAXIMO_DE_CARDS) {
+    const fileira = { ...ultima, imoveis: [...ultima.imoveis, imovel] }
+    return { ...comProsa, mensagens: [...comProsa.mensagens.slice(0, -1), fileira] }
+  }
+  const chave = `imoveis-${proximoNumero(comProsa.mensagens)}`
+  return { ...comProsa, mensagens: [...comProsa.mensagens, { autor: 'imoveis', chave, imoveis: [imovel] }] }
 }
 
 function aplicarAck(estado: Conversa, dado: FrameBruto): Conversa {
@@ -237,8 +276,15 @@ function aplicarHistorico(estado: Conversa, dado: FrameBruto): Conversa {
     if (!fala) {
       continue
     }
+    // A fileira de cards nunca casa: o historico traz a ficha como texto (L2
+    // da TEC-364), e a fileira sai da tela na reconexao, trocada pelos baloes
+    // com a legenda.
     const achada = confirmadas.findIndex(
-      (mensagem, posicao) => posicao >= naTela && mensagem.autor === fala.autor && mensagem.texto === fala.texto,
+      (mensagem, posicao) =>
+        posicao >= naTela &&
+        mensagem.autor !== 'imoveis' &&
+        mensagem.autor === fala.autor &&
+        mensagem.texto === fala.texto,
     )
     if (achada >= 0) {
       mensagens.push(confirmadas[achada])

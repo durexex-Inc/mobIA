@@ -211,6 +211,32 @@ describe('Conversa', () => {
     }
   })
 
+  it('tres frames imovel viram a prosa e uma fileira de tres cards (TEC-349, cenario 1)', () => {
+    const socket = montarAberto()
+    const imovel = (id: string, titulo: string) => ({
+      id,
+      titulo,
+      bairro: 'Campeche',
+      precoCentavos: 51_646_430,
+      condominioCentavos: 85_000,
+      quartos: 3,
+      vagas: 2,
+      areaUtilM2: 98,
+      diferencial: 'piscina',
+      foto: null,
+      url: null,
+    })
+
+    socket.receber({ tipo: 'imovel', kind: 'ficha_1', texto: 'Separei três opções:', imovel: imovel('a', 'Casa A') })
+    socket.receber({ tipo: 'imovel', kind: 'ficha_2', texto: null, imovel: imovel('b', 'Casa B') })
+    socket.receber({ tipo: 'imovel', kind: 'ficha_3', texto: null, imovel: imovel('c', 'Casa C') })
+
+    expect(screen.getByText('Separei três opções:')).toHaveClass('conversa__balao--agente')
+    const fileira = screen.getByRole('list', { name: 'Imóveis sugeridos' })
+    const cards = within(fileira).getAllByRole('article')
+    expect(cards.map((card) => within(card).getByRole('heading').textContent)).toEqual(['Casa A', 'Casa B', 'Casa C'])
+  })
+
   it('muitas_tentativas troca o campo pela mensagem e reabre depois da espera (cenario 3)', () => {
     vi.useFakeTimers()
     const socket = montarAberto()
