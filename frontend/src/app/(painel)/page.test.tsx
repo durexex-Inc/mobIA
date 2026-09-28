@@ -22,6 +22,9 @@ vi.mock('next/navigation', () => ({
   redirect: (destino: string) => {
     throw new Error(`REDIRECT:${destino}`)
   },
+  // `AtualizacaoAutomatica` (TEC-317) chama `useRouter()`; o `refresh` em si
+  // nao e exercitado aqui -- isso e `AtualizacaoAutomatica.test.tsx`.
+  useRouter: () => ({ refresh: () => undefined }),
 }))
 
 /**
@@ -111,6 +114,8 @@ describe('Pagina', () => {
 
     expect(screen.getByLabelText('Funil de leads')).toBeInTheDocument()
     expect(screen.getByTestId('etapa-Novo')).toHaveTextContent('320')
+    // A atualizacao automatica (TEC-317) so existe junto com o funil de verdade.
+    expect(screen.getByText(/Atualizado há/)).toBeInTheDocument()
   })
 
   it('backend fora do ar vira aviso, e nao funil de zeros', async () => {
@@ -120,6 +125,9 @@ describe('Pagina', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent(/não foi possível carregar/i)
     expect(screen.queryByLabelText('Funil de leads')).not.toBeInTheDocument()
+    // Sem funil, o polling nao existe: nao ha o que atualizar, e um retry
+    // automatico aqui divergiria do "tentar de novo" explicito (D6).
+    expect(screen.queryByText(/Atualizado há/)).not.toBeInTheDocument()
   })
 
   it('cenario: o 403 do backend vence o menu, e vira "Sem permissao"', async () => {

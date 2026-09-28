@@ -29,7 +29,7 @@ describe('buscarFunil', () => {
     expect(String(url)).toContain('/api/v1/metricas/funil')
     expect(String(url)).toContain('de=2026-08-01')
     expect(init.headers.Authorization).toBe('Bearer jwt')
-    expect(init.next).toEqual({ revalidate: 60 })
+    expect(init.next).toEqual({ revalidate: 30 })
   })
 
   it('NAO leva `X-Request-Id`, porque header entra na chave do Data Cache', async () => {
@@ -46,7 +46,7 @@ describe('buscarFunil', () => {
 
     const [, init] = fetchFalso.mock.calls[0]
     expect(init.headers['X-Request-Id']).toBeUndefined()
-    expect(init.next).toEqual({ revalidate: 60 })
+    expect(init.next).toEqual({ revalidate: 30 })
   })
 
   it('omite da query o filtro que nao foi informado', async () => {

@@ -1,5 +1,6 @@
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { SemPermissao } from '@/components/SemPermissao'
+import { AtualizacaoAutomatica } from '@/components/AtualizacaoAutomatica'
 import { Filtros } from '@/components/Filtros'
 import { Funil } from '@/components/Funil'
 import { Indicadores } from '@/components/Indicadores'
@@ -94,9 +95,13 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
   let funil: FunilTipo | null = null
   let erroDeCarga: ErroDeMetricas | null = null
   let aviso: string | null = null
+  // Quando `buscarFunil` teve sucesso -- so entao, para o polling nao tentar
+  // se recuperar sozinho de um erro (D6 do desenho da TEC-317).
+  let atualizadoEm: string | null = null
 
   try {
     funil = await buscarFunil(filtros, sessao.acesso)
+    atualizadoEm = new Date().toISOString()
   } catch (erro) {
     // O funil NAO e renderizado quando a busca falha. Um funil de zeros e
     // indistinguivel de um periodo sem lead, e a gerente leria a queda como
@@ -156,8 +161,9 @@ export default async function Pagina({ searchParams }: { searchParams: Promise<B
           urlParaTentarDeNovo={recorte}
         />
       )}
-      {funil ? (
+      {funil && atualizadoEm ? (
         <>
+          <AtualizacaoAutomatica atualizadoEm={atualizadoEm} />
           <Funil etapas={funil.etapas} />
           <Indicadores indicadores={funil.indicadores} indisponiveis={funil.indisponiveis} />
         </>
