@@ -85,6 +85,13 @@ a {
   opacity: 0.75;
 }
 
+/* O relogio da atualizacao automatica (TEC-317). */
+.funil-atualizacao {
+  font-size: 0.8rem;
+  opacity: 0.75;
+  margin: 0 0 0.5rem;
+}
+
 .funil {
   list-style: none;
   padding: 0;

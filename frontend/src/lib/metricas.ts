@@ -123,17 +123,21 @@ export async function detalheDe(resposta: Response): Promise<{ mensagem: string;
  * cliente. Ate a TEC-302 a leitura de `MOBIA_ADMIN_TOKEN` era aqui, e nada
  * impedia que um `'use client'` a levasse para o bundle do navegador.
  *
- * `revalidate: 60` e o teto de defasagem da RN-17.3, e nao um numero escolhido
- * a esmo. Ele tambem e o que faz as abas de uma pessoa com o painel aberto
- * virarem UMA chamada por minuto ao FastAPI -- que ve o IP deste servidor, e
- * nao o de cada navegador, e aplica 100 requisicoes por minuto por IP.
+ * `revalidate: 30` e o intervalo de polling da TEC-317 (RN-FE-05.4), dentro do
+ * teto de defasagem de 60s da RN-17.3 -- nao um numero escolhido a esmo. Ele
+ * tambem e o que faz as abas de uma pessoa com o painel aberto virarem UMA
+ * chamada a cada 30s ao FastAPI -- que ve o IP deste servidor, e nao o de cada
+ * navegador, e aplica 100 requisicoes por minuto por IP.
  *
- * **Uma por minuto POR PESSOA, desde a TEC-309, e nao uma no total.** O
- * `acesso` vai no `Authorization`, cabecalho entra na chave do Data Cache, e
- * entao cada token tem a sua entrada -- que e o que impede o funil de um
- * usuario ser servido a outro. Com K pessoas olhando, sao K chamadas por
- * minuto: a folga ate 100 continua larga para uma imobiliaria, e deixa de ser
- * infinita. Ver a D7 do desenho.
+ * **Uma a cada 30s POR PESSOA, desde a TEC-309 (numero atualizado na TEC-317),
+ * e nao uma no total.** O `acesso` vai no `Authorization`, cabecalho entra na
+ * chave do Data Cache, e entao cada token tem a sua entrada -- que e o que
+ * impede o funil de um usuario ser servido a outro, e tambem o que faz
+ * `AtualizacaoAutomatica.tsx` (TEC-317) chamar `router.refresh()` a cada 30s
+ * sem dobrar a carga quando a mesma pessoa tem duas abas abertas. Com K
+ * pessoas olhando, sao no maximo K chamadas a cada 30s -- 30 pessoas dao 1
+ * req/s, o teto do cenario de carga da TEC-317. Ver a D7 do desenho da TEC-309
+ * e a D2 do desenho da TEC-317.
  *
  * **E por ser cacheada que esta chamada NAO leva `X-Request-Id`.** Header entra
  * na chave do Data Cache, entao um id por requisicao zeraria a taxa de acerto e
@@ -151,7 +155,7 @@ export async function buscarFunil(filtros: Filtros, acesso: string): Promise<Fun
   const resposta = await chamarApi('/api/v1/metricas/funil', {
     acesso,
     busca,
-    revalidarEmSegundos: 60,
+    revalidarEmSegundos: 30,
   })
 
   if (!resposta.ok) {
