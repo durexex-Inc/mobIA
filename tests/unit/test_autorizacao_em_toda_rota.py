@@ -148,6 +148,10 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/imoveis"): "GERIR_CATALOGO",
     ("PATCH", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
     ("DELETE", "/api/v1/imoveis/{imovel_id}"): "GERIR_CATALOGO",
+    # TEC-335, D2: a leitura da foto e guardada como o resto do catalogo, e
+    # nao publica -- o unico consumidor de hoje e a propria tela de admin.
+    ("POST", "/api/v1/imoveis/{imovel_id}/fotos"): "GERIR_CATALOGO",
+    ("GET", "/api/v1/imoveis/{imovel_id}/fotos/{foto_id}"): "GERIR_CATALOGO",
     ("POST", "/api/v1/corretores"): "GERIR_CORRETORES",
     ("GET", "/api/v1/corretores"): "GERIR_CORRETORES",
     ("GET", "/api/v1/corretores/{corretor_id}"): "GERIR_CORRETORES",
