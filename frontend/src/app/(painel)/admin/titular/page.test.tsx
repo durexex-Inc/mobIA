@@ -22,6 +22,9 @@ vi.mock('next/navigation', () => ({
   redirect: (destino: string) => {
     throw new Error(`REDIRECT:${destino}`)
   },
+  // `EliminarDadosDoTitular` (TEC-342) e Client Component e chama `useRouter`
+  // ao montar, mesmo sem clicar em nada.
+  useRouter: () => ({ refresh: () => {} }),
 }))
 
 /** O que `/auth/me` devolve, pela matriz da TEC-202: so o ADMIN atende o titular. */
@@ -209,5 +212,31 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
     )
     const linhaDaEliminacao = linhaDe('Eliminação dos dados')
     expect(within(linhaDaEliminacao).queryByRole('link', { name: 'Baixar dados do titular' })).toBeNull()
+  })
+
+  it('"Eliminar dados do titular" so aparece na linha ELIMINACAO com leadId (TEC-342, D4)', async () => {
+    api('ADMIN', {
+      corpo: {
+        itens: [
+          pedido(1, { id: 'acesso-1' }),
+          pedido(2, { id: 'elim-1', tipo: 'ELIMINACAO' }),
+          pedido(3, { id: 'elim-2', tipo: 'ELIMINACAO', leadId: null }),
+        ],
+      },
+    })
+
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
+
+    const linhaDoAcesso = linhaDe('Acesso aos dados')
+    expect(within(linhaDoAcesso).queryByRole('button', { name: 'Eliminar dados do titular' })).toBeNull()
+
+    const [linhaComLead, linhaSemLead] = screen
+      .getAllByText('Eliminação dos dados')
+      .map((celula) => celula.closest('tr'))
+    if (!linhaComLead || !linhaSemLead) {
+      throw new Error('linhas de eliminacao nao encontradas')
+    }
+    expect(within(linhaComLead).getByRole('button', { name: 'Eliminar dados do titular' })).toBeInTheDocument()
+    expect(within(linhaSemLead).queryByRole('button', { name: 'Eliminar dados do titular' })).toBeNull()
   })
 })

@@ -7,6 +7,7 @@ import {
   textoDoPrazo,
   tipoLegivel,
 } from '@/lib/titular'
+import { EliminarDadosDoTitular } from '@/components/EliminarDadosDoTitular'
 
 /**
  * A tabela da fila de pedidos do titular (TEC-340, D3 e D4). Server
@@ -17,11 +18,24 @@ import {
  * curto" -- "Prazo vencido" quando passou --, que e o que um leitor de tela
  * anuncia.
  *
- * **"Baixar dados do titular" so nas linhas ACESSO** (TEC-341, D1):
- * portabilidade e a exportacao do pedido de acesso, e a coluna independe de
- * `abreLead` -- baixar nao pede `VER_DETALHE_DO_LEAD`, so a permissao que ja
- * guarda a pagina inteira.
+ * **A coluna "Acao" decide por tipo** (TEC-341 D1, TEC-342 D4): `ACESSO`
+ * mostra "Baixar dados do titular" (a coluna independe de `abreLead` --
+ * baixar nao pede `VER_DETALHE_DO_LEAD`, so a permissao que ja guarda a
+ * pagina inteira); `ELIMINACAO` com `leadId` mostra o botao de eliminar; sem
+ * `leadId` (o apelido sumiu por fora, lacuna da TEC-340) ou qualquer outro
+ * tipo, `'-'` -- nao ha como montar a chamada sem o `leadId`.
  */
+/** A celula de "Acao": baixar (ACESSO), eliminar (ELIMINACAO com leadId) ou '-' (D4). */
+function acaoDoPedido(pedido: PedidoDoTitular) {
+  if (pedido.tipo === 'ACESSO') {
+    return <a href={`/admin/titular/${pedido.id}/baixar`}>Baixar dados do titular</a>
+  }
+  if (pedido.tipo === 'ELIMINACAO' && pedido.leadId) {
+    return <EliminarDadosDoTitular leadId={pedido.leadId} />
+  }
+  return '—'
+}
+
 export function FilaDoTitular({
   pedidos,
   agora,
@@ -40,7 +54,7 @@ export function FilaDoTitular({
           <th scope="col">Aberto em</th>
           <th scope="col">Prazo</th>
           {abreLead ? <th scope="col">Lead</th> : null}
-          <th scope="col">Portabilidade</th>
+          <th scope="col">Ação</th>
         </tr>
       </thead>
       <tbody>
@@ -64,13 +78,7 @@ export function FilaDoTitular({
               {abreLead ? (
                 <td>{pedido.leadId ? <a href={`/leads/${pedido.leadId}`}>Ver lead</a> : '—'}</td>
               ) : null}
-              <td>
-                {pedido.tipo === 'ACESSO' ? (
-                  <a href={`/admin/titular/${pedido.id}/baixar`}>Baixar dados do titular</a>
-                ) : (
-                  '—'
-                )}
-              </td>
+              <td>{acaoDoPedido(pedido)}</td>
             </tr>
           )
         })}
