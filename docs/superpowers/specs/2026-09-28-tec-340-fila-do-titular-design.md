@@ -97,4 +97,5 @@ Edge headless por CDP, `next dev` e API locais. A base de dev foi semeada com um
 - **L1 — O SRS do frontend não está no repo.** As regras vêm do texto da card.
 - **L2 — Correção e portabilidade não existem como tipo no servidor** (TEC-207). A fila mostra os dois tipos que ele registra. A portabilidade é a exportação do `ACESSO` (TEC-341).
 - **L3 — A fila não atende nada.** Exportar e eliminar são a TEC-341 e a TEC-342.
+  - **Nota (TEC-341, 28/09/2026):** exportar está feito. O link "Baixar dados do titular" entra em cada linha `ACESSO`. Ver `docs/superpowers/specs/2026-09-28-tec-341-portabilidade-do-titular-design.md`.
 - **L4 — Sem paginação.** A API devolve a fila inteira. É uma fila de pedidos abertos de uma imobiliária, e não uma lista de leads.
