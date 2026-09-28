@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { INICIAL, novoMessageId, reduzir, type Conversa, type Mensagem } from './conversa'
+import { INICIAL, MAXIMO_DE_CARDS, novoMessageId, reduzir, type Conversa, type Mensagem } from './conversa'
 
 const REGEX_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -76,7 +76,7 @@ describe('reduzir', () => {
     expect(depois.mensagens).toEqual([{ autor: 'agente', chave: 'agente-0', texto: 'Apto 2 quartos' }])
   })
 
-  it('imovel sem texto mantem o estado, mesma referencia', () => {
+  it('imovel incompleto sem texto mantem o estado, mesma referencia', () => {
     const antes = INICIAL
     const depois = reduzir(antes, {
       tipo: 'frame',
@@ -546,5 +546,90 @@ describe('novoMessageId', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+})
+
+// --- TEC-349: a fileira de cards de imovel ---
+
+function imovel(id: string) {
+  return {
+    id,
+    titulo: `Apto ${id}`,
+    bairro: 'Campeche',
+    precoCentavos: 51_646_430,
+    condominioCentavos: null,
+    quartos: 2,
+    vagas: 1,
+    areaUtilM2: 70,
+    diferencial: null,
+    foto: null,
+    url: null,
+  }
+}
+
+function comFicha(estado: Conversa, id: string, kind: string, texto: string | null = null): Conversa {
+  return reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'imovel', kind, texto, imovel: imovel(id) }) })
+}
+
+function fileiras(estado: Conversa): string[][] {
+  return estado.mensagens
+    .filter((m): m is Extract<Mensagem, { autor: 'imoveis' }> => m.autor === 'imoveis')
+    .map((m) => m.imoveis.map((i) => i.id))
+}
+
+describe('reduzir -- cards de imovel (TEC-349)', () => {
+  it('os tres frames do turno viram uma fileira, com a prosa antes', () => {
+    let estado = comFicha(INICIAL, 'a', 'ficha_1', 'Separei tres opcoes')
+    estado = comFicha(estado, 'b', 'ficha_2')
+    estado = comFicha(estado, 'c', 'ficha_3')
+
+    expect(estado.mensagens.map((m) => m.autor)).toEqual(['agente', 'imoveis'])
+    expect(fileiras(estado)).toEqual([['a', 'b', 'c']])
+  })
+
+  it('ficha_1 abre fileira nova mesmo logo depois de outra', () => {
+    // Dois turnos seguidos, o segundo sem prosa: sem o kind, os cards dos dois
+    // se juntariam numa fileira so.
+    let estado = comFicha(INICIAL, 'a', 'ficha_1')
+    estado = comFicha(estado, 'b', 'ficha_1')
+
+    expect(fileiras(estado)).toEqual([['a'], ['b']])
+  })
+
+  it('a fileira nao passa do teto', () => {
+    let estado = comFicha(INICIAL, 'a', 'ficha_1')
+    for (const id of ['b', 'c', 'd']) {
+      estado = comFicha(estado, id, 'ficha_2')
+    }
+
+    expect(MAXIMO_DE_CARDS).toBe(3)
+    expect(fileiras(estado)).toEqual([['a', 'b', 'c'], ['d']])
+  })
+
+  it('a fileira ganha chave propria, que nao repete a de ninguem', () => {
+    let estado = reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'oi' }) })
+    estado = comFicha(estado, 'a', 'ficha_1', 'veja')
+
+    const chaves = estado.mensagens.map((m) => (m.autor === 'visitante' ? m.messageId : m.chave))
+    expect(chaves).toEqual(['agente-0', 'agente-1', 'imoveis-2'])
+  })
+
+  it('frame que nao e ficha_1 depois de um balao abre fileira nova', () => {
+    let estado = comFicha(INICIAL, 'a', 'ficha_1')
+    estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'mais uma coisa' }) })
+    estado = comFicha(estado, 'b', 'ficha_2')
+
+    expect(fileiras(estado)).toEqual([['a'], ['b']])
+  })
+
+  it('o historico da reconexao troca a fileira pelos baloes que ele traz', () => {
+    // L2 da TEC-364: o historico guarda a legenda, nao o card.
+    const estado = comFicha(INICIAL, 'a', 'ficha_1')
+    const depois = reduzir(estado, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'historico', mensagens: [{ papel: 'agente', texto: 'Apto a em Campeche' }] }),
+    })
+
+    expect(depois.mensagens).toEqual([{ autor: 'agente', chave: 'agente-1', texto: 'Apto a em Campeche' }])
   })
 })
