@@ -1904,3 +1904,24 @@ a {
   padding: 0;
   list-style: none;
 }
+
+/* --- Pre-visualizar o card do imovel (TEC-336) ------------------------------ */
+
+/* Largura fixa perto da foto do card (`LARGURA_DA_FOTO` em
+   `CardDeImovel.tsx`): sem isso o `<dialog>` esticaria o card pela largura
+   toda da tela, que nao e a proporcao que o visitante ve no chat. */
+.preview-do-card {
+  width: 320px;
+  max-width: calc(100vw - 2rem);
+  padding: 1rem;
+  border: none;
+  border-radius: 12px;
+}
+
+.preview-do-card__fechar {
+  display: block;
+  margin: 0 0 0.75rem auto;
+  padding: 0.3rem 0.75rem;
+  font: inherit;
+  cursor: pointer;
+}

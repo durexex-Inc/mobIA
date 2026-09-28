@@ -158,8 +158,13 @@ function centavosParaReais(centavos: number | null): string {
   return centavos == null ? '' : String(centavos / 100)
 }
 
-/** Reais digitados de volta para centavos, ou `null` quando o campo esta vazio. */
-function reaisParaCentavos(reais: string): number | null {
+/**
+ * Reais digitados de volta para centavos, ou `null` quando o campo esta
+ * vazio. Exportada para `PreviewDoCard.tsx` (TEC-336) reusar a mesma
+ * conversao numerica em vez de duplica-la -- nao ha validacao aqui para
+ * divergir, so aritmetica.
+ */
+export function reaisParaCentavos(reais: string): number | null {
   const valor = reais.trim()
   if (!valor) {
     return null
