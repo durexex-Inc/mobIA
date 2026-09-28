@@ -137,11 +137,11 @@ describe('proxy /bff/*', () => {
 
     it('sem sessao, rota fora da allowlist tambem e 401, e nao 404', async () => {
       // Quem nao esta logado nao aprende pela diferenca de status quais rotas
-      // existem. `imoveis` continua fora da allowlist -- `corretores` entrou
-      // na TEC-332.
+      // existem. `importacoes` de imoveis continua fora da allowlist (D7 da
+      // TEC-333) -- `corretores` entrou na TEC-332 e `imoveis` na TEC-333.
       const resposta = await GET(
-        requisicao('/bff/api/v1/imoveis', { sessao: null }),
-        contexto(['api', 'v1', 'imoveis']),
+        requisicao('/bff/api/v1/imoveis/importacoes', { sessao: null }),
+        contexto(['api', 'v1', 'imoveis', 'importacoes']),
       )
 
       expect(resposta.status).toBe(401)
@@ -154,8 +154,8 @@ describe('proxy /bff/*', () => {
       vi.stubGlobal('fetch', api)
 
       const resposta = await GET(
-        requisicao('/bff/api/v1/imoveis', { origem: PAINEL }),
-        contexto(['api', 'v1', 'imoveis']),
+        requisicao('/bff/api/v1/imoveis/importacoes', { origem: PAINEL }),
+        contexto(['api', 'v1', 'imoveis', 'importacoes']),
       )
 
       expect(resposta.status).toBe(404)

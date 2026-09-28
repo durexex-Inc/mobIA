@@ -1703,3 +1703,112 @@ a {
   border-radius: 4px;
   background: color-mix(in srgb, var(--foreground) 12%, transparent);
 }
+
+/* --- Imoveis (TEC-333) ------------------------------------------------------ */
+
+.formulario-de-imovel {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.formulario-de-imovel button {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.formulario-de-imovel__campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.formulario-de-imovel__campo label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.formulario-de-imovel__campo input,
+.formulario-de-imovel__campo select {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.formulario-de-imovel__caracteristicas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  grid-column: span 1;
+}
+
+.formulario-de-imovel__caracteristicas ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.formulario-de-imovel__erro {
+  font-size: 0.85rem;
+  color: #b23c17;
+}
+
+.formulario-de-imovel__aviso {
+  grid-column: 1 / -1;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.formulario-de-imovel__reindexacao {
+  grid-column: 1 / -1;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #2f7a3d;
+  background: color-mix(in srgb, #2f7a3d 12%, transparent);
+}
+
+.formulario-de-imovel__acoes {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.retirar-imovel__aviso {
+  font-size: 0.85rem;
+  color: #b23c17;
+}
+
+.lista-de-imoveis {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  margin-top: 1rem;
+  border-collapse: collapse;
+}
+
+.lista-de-imoveis th,
+.lista-de-imoveis td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+}
+
+.lista-de-imoveis__inativo {
+  opacity: 0.7;
+}
+
+.lista-de-imoveis__rotulo {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+}

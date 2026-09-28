@@ -79,6 +79,15 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   { metodo: 'POST', padrao: ['api', 'v1', 'corretores'] },
   { metodo: 'GET', padrao: ['api', 'v1', 'corretores', '*'] },
   { metodo: 'PATCH', padrao: ['api', 'v1', 'corretores', '*'] },
+  // Cadastrar, editar e retirar imoveis (TEC-333, D7). A listagem inicial da
+  // pagina usa `chamarApi` direto do Server Component, como a de corretores --
+  // so as mutacoes do `'use client'` (criar, editar, retirar) passam por aqui.
+  // Retirar e o `DELETE` de verdade (`imoveis.py::excluir`), ao contrario de
+  // desativar corretor: o backend do catalogo tem rota DELETE propria.
+  { metodo: 'GET', padrao: ['api', 'v1', 'imoveis'] },
+  { metodo: 'POST', padrao: ['api', 'v1', 'imoveis'] },
+  { metodo: 'PATCH', padrao: ['api', 'v1', 'imoveis', '*'] },
+  { metodo: 'DELETE', padrao: ['api', 'v1', 'imoveis', '*'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

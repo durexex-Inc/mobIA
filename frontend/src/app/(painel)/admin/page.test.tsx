@@ -29,6 +29,7 @@ const PERMISSOES: Record<string, string[]> = {
   CORRETOR: ['ATENDER_LEAD', 'BUSCAR_IMOVEIS', 'VER_DETALHE_DO_LEAD', 'VER_LEADS'],
 }
 
+
 /** Todo `fetch` que a pagina fizer, para o teste afirmar que so `/auth/me` saiu. */
 function apiComPapel(papel: string) {
   const chamadas = vi.fn<(url: URL | string) => Promise<Response>>(
@@ -57,13 +58,15 @@ describe('PaginaDeAdministracao', () => {
 
     expect(screen.getByRole('heading', { name: 'Administração' })).toBeInTheDocument()
     expect(screen.getByText('Prompts do agente')).toBeInTheDocument()
-    expect(screen.getAllByText('ainda não disponível')).toHaveLength(3)
+    expect(screen.getAllByText('ainda não disponível')).toHaveLength(2)
     // A primeira secao com tela (TEC-340).
     expect(screen.getByRole('link', { name: 'Pedidos do titular' })).toHaveAttribute('href', '/admin/titular')
     // A segunda (TEC-343).
     expect(screen.getByRole('link', { name: 'Trilha de auditoria' })).toHaveAttribute('href', '/admin/auditoria')
     // A terceira (TEC-332).
     expect(screen.getByRole('link', { name: 'Corretores' })).toHaveAttribute('href', '/admin/corretores')
+    // A quarta (TEC-333).
+    expect(screen.getByRole('link', { name: 'Imóveis' })).toHaveAttribute('href', '/admin/imoveis')
   })
 
   describe('cenario: corretor acessa a area administrativa pela URL', () => {

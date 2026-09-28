@@ -19,9 +19,11 @@ describe('caminhoPermitido', () => {
   })
 
   it('recusa rota que nao esta na tabela', () => {
-    // `corretores` entrou na tabela na TEC-332 -- ver o describe dedicado
-    // abaixo. `imoveis` continua fora: nenhuma card ate hoje pediu.
-    expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis'])).toBeNull()
+    // `corretores` entrou na tabela na TEC-332 e `imoveis` na TEC-333 -- ver
+    // os describes dedicados abaixo. `importacoes` continua fora: a D7 do
+    // desenho da TEC-333 recusou de proposito, o relatorio de importacao nao
+    // e desta card.
+    expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', 'importacoes'])).toBeNull()
     expect(caminhoPermitido('GET', ['health'])).toBeNull()
   })
 
@@ -123,6 +125,34 @@ describe('caminhoPermitido', () => {
 
     it('POST com id e GET/PATCH sem id nao casam -- a entrada da tabela e o par', () => {
       expect(caminhoPermitido('POST', ['api', 'v1', 'corretores', CORRETOR])).toBeNull()
+    })
+  })
+
+  describe('imoveis (TEC-333)', () => {
+    const IMOVEL = '6f1c2a4e-0000-4000-8000-000000000003'
+
+    it('listar e cadastrar entram no caminho sem id', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis'])).toBe('/api/v1/imoveis')
+      expect(caminhoPermitido('POST', ['api', 'v1', 'imoveis'])).toBe('/api/v1/imoveis')
+      expect(caminhoPermitido('PATCH', ['api', 'v1', 'imoveis'])).toBeNull()
+      expect(caminhoPermitido('DELETE', ['api', 'v1', 'imoveis'])).toBeNull()
+    })
+
+    it('editar e retirar entram no caminho com id, com o `*` casando', () => {
+      expect(caminhoPermitido('PATCH', ['api', 'v1', 'imoveis', IMOVEL])).toBe(
+        `/api/v1/imoveis/${IMOVEL}`,
+      )
+      expect(caminhoPermitido('DELETE', ['api', 'v1', 'imoveis', IMOVEL])).toBe(
+        `/api/v1/imoveis/${IMOVEL}`,
+      )
+    })
+
+    it('nao ha GET com id -- a edicao parte do que a listagem ja carregou (D7)', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', IMOVEL])).toBeNull()
+    })
+
+    it('POST com id e GET/PATCH/DELETE sem id nao casam -- a entrada da tabela e o par', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'imoveis', IMOVEL])).toBeNull()
     })
   })
 
