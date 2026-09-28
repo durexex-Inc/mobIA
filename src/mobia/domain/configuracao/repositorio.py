@@ -91,6 +91,21 @@ async def configuracao_vigente(session: AsyncSession) -> ConfiguracaoDoAgente:
     return _da_linha(linha) if linha is not None else padrao()
 
 
+async def id_da_vigente(session: AsyncSession) -> uuid.UUID | None:
+    """O `id` da linha vigente, ou `None` sem nenhuma edicao ainda. TEC-337, D1.
+
+    Mesma consulta de `configuracao_vigente`, so que sem montar a dataclass
+    inteira -- e o token de concorrencia que `GET /agente` expoe e que
+    `PATCH /agente` confere antes de gravar."""
+    return (
+        await session.execute(
+            select(VersaoDaConfiguracao.id)
+            .order_by(VersaoDaConfiguracao.criado_em.desc(), VersaoDaConfiguracao.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def gravar_versao(
     session: AsyncSession, *, config: ConfiguracaoDoAgente, autor: str
 ) -> VersaoDaConfiguracao:

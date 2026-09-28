@@ -105,6 +105,15 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // e por isso `<img>` usa este proxy como qualquer outra leitura autenticada.
   { metodo: 'POST', padrao: ['api', 'v1', 'imoveis', '*', 'fotos'] },
   { metodo: 'GET', padrao: ['api', 'v1', 'imoveis', '*', 'fotos', '*'] },
+  // Ler e alterar a configuracao do agente, com o historico de alteracoes
+  // (TEC-337, D1/D4/D5). A leitura inicial da pagina e do historico usam
+  // `chamarApi` direto do Server Component, como corretores e imoveis -- so o
+  // `PATCH` que o `'use client'` dispara depois de confirmado o diff precisa
+  // do proxy de verdade. O par de `GET` entra pela mesma simetria de
+  // leitura/escrita que as outras telas de administracao ja tem na tabela.
+  { metodo: 'GET', padrao: ['api', 'v1', 'configuracao', 'agente'] },
+  { metodo: 'PATCH', padrao: ['api', 'v1', 'configuracao', 'agente'] },
+  { metodo: 'GET', padrao: ['api', 'v1', 'configuracao', 'agente', 'historico'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

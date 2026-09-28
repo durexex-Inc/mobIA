@@ -1925,3 +1925,159 @@ a {
   font: inherit;
   cursor: pointer;
 }
+
+/* --- Configuracao do agente (TEC-337) --------------------------------------- */
+
+.formulario-de-configuracao {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.formulario-de-configuracao button {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.formulario-de-configuracao__campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.formulario-de-configuracao__campo label {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.formulario-de-configuracao__campo input,
+.formulario-de-configuracao__campo select {
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.formulario-de-configuracao__pesos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.75rem 1rem;
+  grid-column: 1 / -1;
+}
+
+.formulario-de-configuracao__nota {
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  margin: 0;
+}
+
+.formulario-de-configuracao__cadencia {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.formulario-de-configuracao__cadencia-linha {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.formulario-de-configuracao__cadencia-linha input {
+  width: 5rem;
+  padding: 0.3rem 0.4rem;
+  font: inherit;
+}
+
+.formulario-de-configuracao__cadencia-rotulo {
+  min-width: 5rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.formulario-de-configuracao__erro {
+  font-size: 0.85rem;
+  color: #b23c17;
+}
+
+.formulario-de-configuracao__aviso {
+  grid-column: 1 / -1;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.formulario-de-configuracao__acoes {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.confirmar-configuracao {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 28rem;
+  max-width: calc(100vw - 2rem);
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent);
+  border-radius: 8px;
+}
+
+.confirmar-configuracao__linhas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.confirmar-configuracao__acoes {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.confirmar-configuracao__acoes button {
+  padding: 0.4rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.historico-da-configuracao {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historico-da-configuracao__entrada {
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+}
+
+.historico-da-configuracao__cabecalho {
+  margin: 0 0 0.3rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.historico-da-configuracao__mudancas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.historico-da-configuracao__vazio {
+  opacity: 0.7;
+}

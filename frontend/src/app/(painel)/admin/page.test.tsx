@@ -58,7 +58,12 @@ describe('PaginaDeAdministracao', () => {
 
     expect(screen.getByRole('heading', { name: 'Administração' })).toBeInTheDocument()
     expect(screen.getByText('Prompts do agente')).toBeInTheDocument()
-    expect(screen.getAllByText('ainda não disponível')).toHaveLength(2)
+    expect(screen.getAllByText('ainda não disponível')).toHaveLength(1)
+    // A configuracao do agente (TEC-337).
+    expect(screen.getByRole('link', { name: 'Configuração do agente' })).toHaveAttribute(
+      'href',
+      '/admin/configuracao',
+    )
     // A primeira secao com tela (TEC-340).
     expect(screen.getByRole('link', { name: 'Pedidos do titular' })).toHaveAttribute('href', '/admin/titular')
     // A segunda (TEC-343).
