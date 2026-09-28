@@ -42,6 +42,17 @@ A card escreve a referência como "alvo: US\$ 0,12 por conversa qualificada", ma
 - **`components/CustoDeIA.test.tsx`** (novo): custo total sempre numérico (nunca "Ainda não medido"); médias nulas mostram "sem dados no período"; alerta aparece só com `orcamento.alerta`; sem orçamento, link para `/admin` e nenhum alerta; tokens por modelo renderizam uma linha por modelo.
 - **`app/(painel)/custo-ia/page.test.tsx`** (novo): os quatro cenários do Gherkin, no molde de `page.test.tsx` do funil (duble do `fetch`, não do módulo).
 
+## Verificação no navegador (28/09/2026)
+
+Edge headless por CDP, `next dev` e API locais, sessão GERENTE. `message_telemetry`, `lead_qualification` e a configuração de orçamento semeados diretamente no banco.
+
+| passo | resultado |
+| --- | --- |
+| `/custo-ia?de=2026-09-01&ate=2026-09-30`, orçamento US$100 | custo total US$0,84; custo por conversa e por lead qualificado corretos; "acima do alvo" ao lado do custo por lead; tabela de tokens por modelo; sem alerta (bem abaixo de 80%) |
+| Orçamento reduzido para US$1,00, mesmo período | alerta "⚠ Orçamento em 84,5% do período (US$ 0,84 de US$ 1,00)" |
+| Orçamento removido (`orcamento_mensal_usd = None`) | nenhum alerta; link "Configurar orçamento" → `/admin` |
+| Período sem nenhuma conversa (`2020-01-01` a `2020-01-31`) | custo total "US$ 0,00"; custo por conversa "sem dados no período"; nenhum "Ainda não medido" na tela |
+
 ## Critérios de aceite
 
 | cenário | como é exercitado |
