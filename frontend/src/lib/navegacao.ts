@@ -10,8 +10,9 @@
  *
  * "Qualquer uma de", e nao todas: a area agrupa telas de permissoes diferentes
  * -- prompts e configuracao pedem `CONFIGURAR_AGENTE`, a trilha pede
- * `VER_AUDITORIA`. Hoje as cinco sao so do ADMIN pela matriz da TEC-202, entao
- * ninguem ganha o item por acidente.
+ * `VER_AUDITORIA`, a fila do titular pede `ATENDER_TITULAR` (TEC-340). Hoje as
+ * seis sao so do ADMIN pela matriz da TEC-202, entao ninguem ganha o item por
+ * acidente.
  */
 export const PERMISSOES_DE_ADMIN = [
   'CONFIGURAR_AGENTE',
@@ -19,6 +20,7 @@ export const PERMISSOES_DE_ADMIN = [
   'GERIR_CORRETORES',
   'VER_AUDITORIA',
   'OPERAR_FILA',
+  'ATENDER_TITULAR',
 ] as const
 
 export type ItemDoMenu = { rotulo: string; href: string }
