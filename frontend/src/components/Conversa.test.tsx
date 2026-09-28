@@ -1396,3 +1396,98 @@ describe('Conversa -- reconexao automatica e fila local (TEC-348)', () => {
     expect(SocketFalso.instancias).toHaveLength(2)
   })
 })
+
+describe('Conversa -- reacao rapida ao imovel (TEC-350)', () => {
+  function imovel(id: string, titulo: string, bairro = 'Campeche') {
+    return {
+      id,
+      titulo,
+      bairro,
+      precoCentavos: 51_646_430,
+      condominioCentavos: null,
+      quartos: 3,
+      vagas: 2,
+      areaUtilM2: 98,
+      diferencial: null,
+      foto: null,
+      url: null,
+    }
+  }
+
+  function comDoisCards(): SocketFalso {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'imovel', kind: 'ficha_1', texto: 'Separei duas opções:', imovel: imovel('a', 'Casa 3 quartos') })
+    socket.receber({ tipo: 'imovel', kind: 'ficha_2', texto: null, imovel: imovel('b', 'Apartamento 2 quartos', 'Trindade') })
+    return socket
+  }
+
+  function grupoDe(titulo: string) {
+    return within(screen.getByRole('group', { name: `Reagir a ${titulo}` }))
+  }
+
+  it('cenario 1: "Gostei" manda a fala da visitante com o imovel, e ela aparece na conversa', () => {
+    const socket = comDoisCards()
+
+    fireEvent.click(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' }))
+
+    const texto = 'Gostei do imóvel "Casa 3 quartos" (Campeche).'
+    const { id } = frameDeMensagem(socket)
+    expect(socket.frames().at(-1)).toEqual({ tipo: 'mensagem', id, texto })
+    expect(id).toMatch(UUID_V4)
+    expect(screen.getByText(texto).closest('li')).toHaveClass('conversa__balao--visitante')
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+
+    socket.receber({ tipo: 'ack', messageId: id })
+    expect(screen.getByText('Recebida')).toBeInTheDocument()
+  })
+
+  it('cenario 2: "Não é pra mim" manda a fala descartando aquele imovel', () => {
+    const socket = comDoisCards()
+
+    fireEvent.click(grupoDe('Apartamento 2 quartos').getByRole('button', { name: 'Não é pra mim' }))
+
+    const texto = 'O imóvel "Apartamento 2 quartos" (Trindade) não é pra mim.'
+    expect(frameDeMensagem(socket).texto).toBe(texto)
+    expect(screen.getByText(texto).closest('li')).toHaveClass('conversa__balao--visitante')
+  })
+
+  it('o card tocado fica com os dois botoes desabilitados e o outro card continua livre', () => {
+    const socket = comDoisCards()
+
+    fireEvent.click(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' }))
+
+    expect(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' })).toHaveAttribute('aria-pressed', 'true')
+    expect(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Não é pra mim' })).toBeDisabled()
+    expect(grupoDe('Apartamento 2 quartos').getByRole('button', { name: 'Gostei' })).toBeEnabled()
+    // Um toque, uma mensagem.
+    expect(socket.frames().filter((f) => f.tipo === 'mensagem')).toHaveLength(1)
+  })
+
+  it('com a conexao caida o toque fica na fila e sai na reconexao (TEC-348)', () => {
+    vi.useFakeTimers()
+    const socket = comDoisCards()
+    socket.fechar()
+
+    fireEvent.click(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' }))
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(novo.frames().filter((f) => f.tipo === 'mensagem').map((f) => f.texto)).toEqual([
+      'Gostei do imóvel "Casa 3 quartos" (Campeche).',
+    ])
+  })
+
+  it('durante a espera de muitas_tentativas os botoes ficam desabilitados', () => {
+    const socket = comDoisCards()
+    socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 20 s.', aguardeSegundos: 20 })
+    socket.fechar(1013)
+
+    expect(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' })).toBeDisabled()
+    expect(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' })).toHaveAttribute('aria-pressed', 'false')
+  })
+})

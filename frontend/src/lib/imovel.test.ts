@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { contagem, imovelDe, reais, textoAlternativo, urlSegura } from './imovel'
+import { contagem, imovelDe, reais, textoAlternativo, textoDaReacao, urlSegura } from './imovel'
 
 const COMPLETO = {
   id: 'i1',
@@ -87,5 +87,12 @@ describe('formatacao', () => {
 
   it('o texto alternativo e o da card', () => {
     expect(textoAlternativo(COMPLETO)).toBe('Foto de Casa 3 quartos em Lagoa da Conceição')
+  })
+
+  it('o texto da reacao leva titulo e bairro, que e o que o servidor le de cada imovel (TEC-350, D1)', () => {
+    expect(textoDaReacao('gostei', COMPLETO)).toBe('Gostei do imóvel "Casa 3 quartos" (Lagoa da Conceição).')
+    expect(textoDaReacao('nao_e_pra_mim', COMPLETO)).toBe(
+      'O imóvel "Casa 3 quartos" (Lagoa da Conceição) não é pra mim.',
+    )
   })
 })

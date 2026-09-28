@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 
-import { contagem, type ImovelCard, reais, textoAlternativo } from '@/lib/imovel'
+import { contagem, type ImovelCard, type Reacao, reais, textoAlternativo } from '@/lib/imovel'
 
 // A foto tem a caixa reservada antes de carregar (RN-FE-18.4): `width` e
 // `height` dao ao navegador a proporcao, e o CSS a fixa em 4:3 -- sem isso o
@@ -13,7 +13,8 @@ const ALTURA_DA_FOTO = 240
 /**
  * O card de um imovel recomendado (TEC-349). Reutilizavel de proposito: a
  * pre-visualizacao da administracao (TEC-336) desenha o mesmo componente, e
- * por isso ele so recebe o imovel -- nada de socket nem de estado da conversa.
+ * por isso ele recebe o imovel e, no maximo, um callback de reacao -- nada de
+ * socket nem de estado da conversa.
  *
  * **Clicar abre a pagina do imovel quando ha `url`; sem `url`, expande a
  * ficha no chat** (RN-FE-18.3). Hoje o servidor sempre manda `url` nulo (L1 da
@@ -31,8 +32,25 @@ const ALTURA_DA_FOTO = 240
  * **Sem foto, um placeholder neutro com o bairro** (RN-FE-18.2). Ele e
  * decorativo para leitor de tela (`aria-hidden`): o bairro ja esta no texto do
  * card logo abaixo, e ler duas vezes nao ajuda ninguem.
+ *
+ * **"Gostei" e "Não é pra mim" so aparecem com `aoReagir`** (TEC-350, D3). A
+ * pre-visualizacao nao o passa e continua sem botao. `reacao` e a que a
+ * visitante ja escolheu: com ela, os dois botoes ficam desabilitados e o
+ * escolhido, marcado (D2). `bloqueado` os desabilita sem marcar nada -- a
+ * espera de `muitas_tentativas`. Os botoes ficam num rodape acima da area de
+ * clique esticada do titulo, senao o toque neles expandiria a ficha.
  */
-export function CardDeImovel({ imovel }: { imovel: ImovelCard }) {
+export function CardDeImovel({
+  imovel,
+  aoReagir,
+  reacao = null,
+  bloqueado = false,
+}: {
+  imovel: ImovelCard
+  aoReagir?: (reacao: Reacao) => void
+  reacao?: Reacao | null
+  bloqueado?: boolean
+}) {
   const [expandido, setExpandido] = useState(false)
 
   return (
@@ -85,6 +103,26 @@ export function CardDeImovel({ imovel }: { imovel: ImovelCard }) {
         ) : null}
       </ul>
       {imovel.diferencial ? <p className="card-imovel__diferencial">{imovel.diferencial}</p> : null}
+      {aoReagir ? (
+        <div className="card-imovel__reacoes" role="group" aria-label={`Reagir a ${imovel.titulo}`}>
+          {(
+            [
+              ['gostei', 'Gostei'],
+              ['nao_e_pra_mim', 'Não é pra mim'],
+            ] as const
+          ).map(([valor, rotulo]) => (
+            <button
+              key={valor}
+              type="button"
+              aria-pressed={reacao === valor}
+              disabled={reacao !== null || bloqueado}
+              onClick={() => aoReagir(valor)}
+            >
+              {rotulo}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </article>
   )
 }

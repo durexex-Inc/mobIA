@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { ImovelCard } from '@/lib/imovel'
 
@@ -86,5 +86,47 @@ describe('CardDeImovel', () => {
 
     expect(screen.queryByText(/Condomínio/)).not.toBeInTheDocument()
     expect(screen.getByText('R$ 516.464')).toBeInTheDocument()
+  })
+
+  describe('reacao rapida (TEC-350)', () => {
+    it('sem aoReagir o card nao tem os botoes -- e o da pre-visualizacao', () => {
+      render(<CardDeImovel imovel={BASE} />)
+
+      expect(screen.queryByRole('button', { name: 'Gostei' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Não é pra mim' })).toBeNull()
+    })
+
+    it('com aoReagir, cada botao chama com a sua reacao e nao expande a ficha', () => {
+      const aoReagir = vi.fn()
+      render(<CardDeImovel imovel={BASE} aoReagir={aoReagir} />)
+
+      const grupo = screen.getByRole('group', { name: 'Reagir a Casa 3 quartos' })
+      fireEvent.click(within(grupo).getByRole('button', { name: 'Gostei' }))
+      fireEvent.click(within(grupo).getByRole('button', { name: 'Não é pra mim' }))
+
+      expect(aoReagir.mock.calls).toEqual([['gostei'], ['nao_e_pra_mim']])
+      expect(screen.getByRole('article')).not.toHaveClass('card-imovel--expandido')
+    })
+
+    it('com a reacao escolhida, os dois ficam desabilitados e so o escolhido marcado', () => {
+      render(<CardDeImovel imovel={BASE} aoReagir={() => {}} reacao="nao_e_pra_mim" />)
+
+      const gostei = screen.getByRole('button', { name: 'Gostei' })
+      const nao = screen.getByRole('button', { name: 'Não é pra mim' })
+      expect(gostei).toBeDisabled()
+      expect(nao).toBeDisabled()
+      expect(gostei).toHaveAttribute('aria-pressed', 'false')
+      expect(nao).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('bloqueado desabilita os dois sem marcar nenhum', () => {
+      render(<CardDeImovel imovel={BASE} aoReagir={() => {}} bloqueado />)
+
+      for (const nome of ['Gostei', 'Não é pra mim']) {
+        const botao = screen.getByRole('button', { name: nome })
+        expect(botao).toBeDisabled()
+        expect(botao).toHaveAttribute('aria-pressed', 'false')
+      }
+    })
   })
 })
