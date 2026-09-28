@@ -333,3 +333,74 @@ async def test_dominios_invalidos_sao_recusados_e_nada_se_grava(
     assert resposta.status_code == 422, resposta.text
     historico = (await client.get(f"{ROTA}/historico", headers=_bearer())).json()
     assert historico["itens"] == []
+
+
+# --- TEC-337: o controle de concorrencia (D1) ----------------------------------
+
+
+async def test_versao_aparece_no_get_e_muda_apos_o_patch(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    """Sem edicao nenhuma, `versao` e `null`; apos um PATCH, o `id` gravado."""
+    antes = (await client.get(ROTA, headers=_bearer())).json()
+    assert antes["versao"] is None
+
+    resposta = await client.patch(ROTA, json={"pesoUrgencia": 30}, headers=_bearer())
+    assert resposta.status_code == 200, resposta.text
+
+    depois = (await client.get(ROTA, headers=_bearer())).json()
+    assert depois["versao"] is not None
+    uuid.UUID(depois["versao"])  # nao levanta: e um UUID valido
+
+
+async def test_seversao_desatualizada_e_409_e_nada_se_grava(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    """Cenario 3 do Gherkin: outra pessoa salvou entre a leitura e o envio."""
+    versao_lida = (await client.get(ROTA, headers=_bearer())).json()["versao"]
+    # Outra pessoa altera a configuracao primeiro.
+    assert (
+        await client.patch(ROTA, json={"pesoUrgencia": 30}, headers=_bearer())
+    ).status_code == 200
+
+    resposta = await client.patch(
+        ROTA,
+        json={"pesoUrgencia": 40, "seVersao": versao_lida},
+        headers=_bearer(),
+    )
+
+    assert resposta.status_code == 409, resposta.text
+    assert "alterada por outra pessoa" in resposta.json()["detail"]
+    # Nada foi sobrescrito pelo segundo PATCH: a vigente e a da primeira edicao.
+    vigente = (await client.get(ROTA, headers=_bearer())).json()["configuracao"]
+    assert vigente["pesoUrgencia"] == 30
+
+
+async def test_seversao_ausente_nao_confere_nada(client: AsyncClient, banco_limpo: None) -> None:
+    """Compatibilidade: quem nao manda `seVersao` nunca leva 409."""
+    await client.patch(ROTA, json={"tetoDePerguntas": 5}, headers=_bearer())
+
+    resposta = await client.patch(ROTA, json={"tetoDePerguntas": 6}, headers=_bearer())
+
+    assert resposta.status_code == 200, resposta.text
+
+
+async def test_seversao_nulo_bate_com_nunca_editado(client: AsyncClient, banco_limpo: None) -> None:
+    """`null` e a versao de quem nunca viu a tela editada -- bate com `None`."""
+    resposta = await client.patch(
+        ROTA, json={"pesoUrgencia": 30, "seVersao": None}, headers=_bearer()
+    )
+
+    assert resposta.status_code == 200, resposta.text
+
+
+async def test_seversao_correta_e_aceita_e_muda_a_vigente(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    versao_lida = (await client.get(ROTA, headers=_bearer())).json()["versao"]
+
+    resposta = await client.patch(
+        ROTA, json={"pesoUrgencia": 30, "seVersao": versao_lida}, headers=_bearer()
+    )
+
+    assert resposta.status_code == 200, resposta.text

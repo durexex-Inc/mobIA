@@ -28,6 +28,7 @@ from mobia.domain.configuracao.repositorio import (
     diferencas,
     gravar_versao,
     historico,
+    id_da_vigente,
 )
 from mobia.domain.configuracao.vigente import ConfiguracaoInvalida, PosicaoDoBotao, Tom
 from mobia.domain.usuarios.permissoes import Permissao
@@ -96,10 +97,19 @@ _LIMITES: dict[str, object] = {
 
 @router.get("/agente")
 async def ler(_: IdentidadeDaRequisicao = _ADMIN) -> dict[str, object]:
-    """A vigente e os limites de cada campo -- a tela nao guarda segunda copia deles."""
+    """A vigente, os limites de cada campo e a versao (TEC-337, D1).
+
+    `versao` e o `id` da ultima linha gravada, como string, ou `null` quando
+    ninguem nunca editou -- a tela guarda o valor e o devolve em `seVersao`
+    no `PATCH`, para a rota saber se a vigente mudou desde que a tela leu."""
     async with get_sessionmaker()() as session:
         config = await configuracao_vigente(session)
-    return {"configuracao": _na_api(como_plano(config)), "limites": _LIMITES}
+        versao = await id_da_vigente(session)
+    return {
+        "configuracao": _na_api(como_plano(config)),
+        "limites": _LIMITES,
+        "versao": str(versao) if versao is not None else None,
+    }
 
 
 class PedidoDeAlteracao(BaseModel):
@@ -127,12 +137,19 @@ class PedidoDeAlteracao(BaseModel):
     posicaoDoBotao: PosicaoDoBotao | None = None  # noqa: N815
     # `[]` LIMPA a lista; `null` e recusado, como a cor.
     dominiosDoChat: list[str] | None = None  # noqa: N815
+    # TEC-337, D1. Fora de `_CAMPOS`: nao e um campo da configuracao, e o
+    # token de concorrencia. Ausente = sem checagem (compatibilidade); `null`
+    # bate com "ninguem editou ainda" -- o mesmo `None` que `id_da_vigente`
+    # devolve nesse caso.
+    seVersao: str | None = None  # noqa: N815
 
 
 def _mudancas(pedido: PedidoDeAlteracao) -> dict[str, Any]:
     """O pedido no formato de `vigente.aplicar`. A cadencia vira `timedelta`."""
     mudancas: dict[str, Any] = {}
     for nome in pedido.model_fields_set:
+        if nome == "seVersao":
+            continue
         valor = getattr(pedido, nome)
         coluna = _CAMPOS[nome]
         if coluna == "cadencia" and valor is not None:
@@ -176,8 +193,22 @@ async def alterar(
 
     **Um `CONFIGURACAO_ALTERADA` por campo na trilha, no mesmo commit**, com
     o nome do campo e sem o valor -- o valor fica na tabela de versoes.
+
+    **`seVersao`, quando presente, confere a concorrencia antes de tudo** (D1,
+    TEC-337): em desacordo com `id_da_vigente`, `409` e nada e gravado --
+    nem validado, nem aplicado. Ausente do pedido, pula a checagem inteira
+    (compatibilidade com quem ainda nao acompanha versao).
     """
     async with get_sessionmaker()() as session:
+        if "seVersao" in pedido.model_fields_set:
+            vigente_id = await id_da_vigente(session)
+            esperado = str(vigente_id) if vigente_id is not None else None
+            if pedido.seVersao != esperado:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="a configuracao foi alterada por outra pessoa desde que a tela "
+                    "foi carregada; recarregue antes de salvar",
+                )
         atual = await configuracao_vigente(session)
         try:
             nova = vigente.validar(vigente.aplicar(atual, _mudancas(pedido)))
