@@ -137,10 +137,11 @@ describe('proxy /bff/*', () => {
 
     it('sem sessao, rota fora da allowlist tambem e 401, e nao 404', async () => {
       // Quem nao esta logado nao aprende pela diferenca de status quais rotas
-      // existem.
+      // existem. `imoveis` continua fora da allowlist -- `corretores` entrou
+      // na TEC-332.
       const resposta = await GET(
-        requisicao('/bff/api/v1/corretores', { sessao: null }),
-        contexto(['api', 'v1', 'corretores']),
+        requisicao('/bff/api/v1/imoveis', { sessao: null }),
+        contexto(['api', 'v1', 'imoveis']),
       )
 
       expect(resposta.status).toBe(401)
@@ -153,8 +154,8 @@ describe('proxy /bff/*', () => {
       vi.stubGlobal('fetch', api)
 
       const resposta = await GET(
-        requisicao('/bff/api/v1/corretores', { origem: PAINEL }),
-        contexto(['api', 'v1', 'corretores']),
+        requisicao('/bff/api/v1/imoveis', { origem: PAINEL }),
+        contexto(['api', 'v1', 'imoveis']),
       )
 
       expect(resposta.status).toBe(404)

@@ -19,7 +19,9 @@ describe('caminhoPermitido', () => {
   })
 
   it('recusa rota que nao esta na tabela', () => {
-    expect(caminhoPermitido('GET', ['api', 'v1', 'corretores'])).toBeNull()
+    // `corretores` entrou na tabela na TEC-332 -- ver o describe dedicado
+    // abaixo. `imoveis` continua fora: nenhuma card ate hoje pediu.
+    expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis'])).toBeNull()
     expect(caminhoPermitido('GET', ['health'])).toBeNull()
   })
 
@@ -93,6 +95,34 @@ describe('caminhoPermitido', () => {
     it('o `*` casa um segmento so, e nunca `..`', () => {
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', '..', 'mensagens'])).toBeNull()
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', 'a', 'b', 'mensagens'])).toBeNull()
+    })
+  })
+
+  describe('corretores (TEC-332)', () => {
+    const CORRETOR = '6f1c2a4e-0000-4000-8000-000000000002'
+
+    it('listar e cadastrar entram no caminho sem id', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'corretores'])).toBe('/api/v1/corretores')
+      expect(caminhoPermitido('POST', ['api', 'v1', 'corretores'])).toBe('/api/v1/corretores')
+      expect(caminhoPermitido('PATCH', ['api', 'v1', 'corretores'])).toBeNull()
+      expect(caminhoPermitido('DELETE', ['api', 'v1', 'corretores'])).toBeNull()
+    })
+
+    it('obter e editar entram no caminho com id, com o `*` casando', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'corretores', CORRETOR])).toBe(
+        `/api/v1/corretores/${CORRETOR}`,
+      )
+      expect(caminhoPermitido('PATCH', ['api', 'v1', 'corretores', CORRETOR])).toBe(
+        `/api/v1/corretores/${CORRETOR}`,
+      )
+    })
+
+    it('nao ha DELETE: desativar e PATCH com `{ ativo: false }` (D6 da TEC-196)', () => {
+      expect(caminhoPermitido('DELETE', ['api', 'v1', 'corretores', CORRETOR])).toBeNull()
+    })
+
+    it('POST com id e GET/PATCH sem id nao casam -- a entrada da tabela e o par', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'corretores', CORRETOR])).toBeNull()
     })
   })
 
