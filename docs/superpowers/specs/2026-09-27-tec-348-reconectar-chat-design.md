@@ -64,6 +64,7 @@ Na reconexão, o `historico` chega antes do `ack` da mensagem reenviada — o se
 - **`instavel`:** a linha diz "Nosso atendimento está instável. Deixe sua mensagem que responderemos." — a frase da card, texto que a visitante lê, com acento.
 - **`offline`:** "Sem conexão." (ou a frase de instável) e o botão "Tentar de novo".
 - **O estado da conexão no cabeçalho é da TEC-351** ("Conectado", "Reconectando…", "Offline"). Esta card não mexe no cabeçalho; a linha acima do campo é o indicador que a card pede, e a TEC-351 decide se ele muda de lugar.
+  - **Nota (TEC-351, 28/09/2026):** mudou. "Reconectando…" e "Sem conexão." saíram da linha acima do campo, e o cabeçalho diz o estado ("Reconectando…", "Offline"). A linha ficou só com a frase de instável e o "Tentar de novo". Ver a D3 de `docs/superpowers/specs/2026-09-28-tec-351-digitando-e-conexao-design.md`.
 
 ## Notas de implementação (27/09/2026)
 
