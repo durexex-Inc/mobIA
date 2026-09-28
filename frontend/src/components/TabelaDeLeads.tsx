@@ -6,6 +6,7 @@ import {
   identificacaoDoLead,
   type LeadDaLista,
   type Ordem,
+  type OrigemDoFunil,
   statusLegivel,
   temperaturaLegivel,
   tempoRelativo,
@@ -48,6 +49,7 @@ export function TabelaDeLeads({
   abreDetalhe,
   podeRevelar,
   filtros,
+  origemDoFunil,
   quantasAnteriores = 0,
 }: {
   itens: LeadDaLista[]
@@ -57,6 +59,7 @@ export function TabelaDeLeads({
   abreDetalhe: boolean
   podeRevelar: boolean
   filtros?: FiltrosDaLista
+  origemDoFunil?: OrigemDoFunil
   quantasAnteriores?: number
 }) {
   return (
@@ -65,7 +68,14 @@ export function TabelaDeLeads({
         <tr>
           <th scope="col">Lead</th>
           <th scope="col">Temperatura</th>
-          <CabecalhoOrdenavel rotulo="Score" esta={ordem} ordem="score_desc" busca={busca} filtros={filtros} />
+          <CabecalhoOrdenavel
+            rotulo="Score"
+            esta={ordem}
+            ordem="score_desc"
+            busca={busca}
+            filtros={filtros}
+            origemDoFunil={origemDoFunil}
+          />
           <th scope="col">Status</th>
           <th scope="col">Canal</th>
           <CabecalhoOrdenavel
@@ -74,6 +84,7 @@ export function TabelaDeLeads({
             ordem="ultima_interacao_desc"
             busca={busca}
             filtros={filtros}
+            origemDoFunil={origemDoFunil}
           />
         </tr>
       </thead>
@@ -125,19 +136,26 @@ function CabecalhoOrdenavel({
   ordem,
   busca,
   filtros,
+  origemDoFunil,
 }: {
   rotulo: string
   esta: Ordem
   ordem: Ordem
   busca?: string
   filtros?: FiltrosDaLista
+  origemDoFunil?: OrigemDoFunil
 }) {
   const ativa = esta === ordem
   return (
     <th scope="col" aria-sort={ativa ? 'descending' : undefined}>
-      {/* Trocar a ordem mantem busca e filtros, e volta a primeira pagina: o
-          cursor e da ordem anterior (D1 da TEC-322). */}
-      <a href={urlDaLista({ busca, ordem, filtros })} aria-current={ativa ? 'true' : undefined}>
+      {/* Trocar a ordem mantem busca, filtros e a origem do funil, e volta a
+          primeira pagina: o cursor e da ordem anterior (D1 da TEC-322).
+          Sem `origemDoFunil` aqui, reordenar dentro de uma etapa devolveria a
+          lista inteira (TEC-318, D6). */}
+      <a
+        href={urlDaLista({ busca, ordem, filtros, origemDoFunil })}
+        aria-current={ativa ? 'true' : undefined}
+      >
         {rotulo}
         {ativa ? ' ↓' : ''}
       </a>

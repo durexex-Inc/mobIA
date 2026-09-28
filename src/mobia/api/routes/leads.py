@@ -37,8 +37,9 @@ traz fala, porque poll vazio nao entrega conteudo. Decisao do Eduardo,
 """
 
 import uuid
+from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
@@ -46,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
 from mobia.api.middleware import origem_da_requisicao
+from mobia.app.config import get_settings
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import (
     CAMPO_DETALHE,
@@ -77,6 +79,10 @@ from mobia.domain.leads.transcricao import (
     posteriores_da_transcricao,
     validar_limite_da_transcricao,
 )
+from mobia.domain.metricas.filtros import FiltroInvalido as FiltroDoFunilInvalido
+from mobia.domain.metricas.filtros import montar_recorte
+from mobia.domain.metricas.repositorio import selecionar_coorte, selecionar_etapa
+from mobia.domain.metricas.vocabulario import Etapa
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
@@ -93,6 +99,10 @@ async def listar(
     limite: Annotated[int, Query()] = LIMITE_PADRAO,
     cursor: Annotated[str | None, Query()] = None,
     ordenar: Annotated[str | None, Query()] = None,
+    de: Annotated[date | None, Query()] = None,
+    ate: Annotated[date | None, Query()] = None,
+    intencao: Annotated[str | None, Query()] = None,
+    etapa: Annotated[str | None, Query()] = None,
     identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.VER_LEADS)),
 ) -> dict[str, object]:
     """Os leads em ordem decrescente de score, paginados por cursor.
@@ -109,6 +119,15 @@ async def listar(
 
     **`CORRETOR` sem vinculo recebe lista vazia**, pelo mesmo argumento da D4
     da TEC-202: cadastro incompleto nao e passe livre.
+
+    **`de`, `ate`, `intencao` e `etapa` sao a origem do funil** (TEC-318, D2):
+    quando uma etapa do funil e clicavel, e essa a mesma coorte que
+    `GET /metricas/funil` calcularia, com o MESMO `montar_recorte` -- mesmo
+    teto de 12 meses, mesmo vocabulario de intencao/temperatura. `etapa` e
+    `intencao` exigem `de`+`ate` junto (422 sem eles): uma etapa so faz
+    sentido dentro de uma coorte com periodo. Sem `etapa`, `de`+`ate` sozinhos
+    ja restringem a lista a coorte inteira (sem etapa nenhuma) -- e o que
+    `selecionar_coorte` devolve.
 
     **Sem `total`**, que o exemplo do SRS traz. Conta-lo exigiria repetir a
     agregacao de `messages` inteira numa segunda consulta por requisicao, para
@@ -137,6 +156,39 @@ async def listar(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
         ) from erro
 
+    coorte_do_funil: Any = None
+    if etapa is not None or intencao is not None or de is not None or ate is not None:
+        if de is None or ate is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="de e ate sao obrigatorios junto com etapa/intencao (a origem do funil)",
+            )
+        try:
+            recorte = montar_recorte(
+                de=de,
+                ate=ate,
+                fuso=get_settings().fuso_de_envio,
+                canal=canal,
+                intencao=intencao,
+                temperatura=temperatura,
+            )
+        except FiltroDoFunilInvalido as erro:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
+            ) from erro
+
+        if etapa is not None:
+            try:
+                etapa_enum = Etapa(etapa)
+            except ValueError as erro:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=f"etapa desconhecida: {etapa}",
+                ) from erro
+            coorte_do_funil = selecionar_etapa(recorte, etapa_enum)
+        else:
+            coorte_do_funil = selecionar_coorte(recorte)
+
     async with get_sessionmaker()() as session:
         try:
             itens, proximo = await listar_leads(
@@ -145,6 +197,7 @@ async def listar(
                 recorte=RecorteDoPapel(
                     e_corretor=identidade.e_corretor, corretor_id=identidade.corretor_id
                 ),
+                coorte_do_funil=coorte_do_funil,
             )
         except FiltroInvalido as erro:
             # O segundo `FiltroInvalido` desta rota, e ele nao cabia no

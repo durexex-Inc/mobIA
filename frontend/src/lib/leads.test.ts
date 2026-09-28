@@ -6,6 +6,7 @@ import {
   dataAbsoluta,
   identificacaoDoLead,
   ordemDaUrl,
+  origemDoFunilDaUrl,
   statusLegivel,
   temperaturaLegivel,
   tempoRelativo,
@@ -90,6 +91,45 @@ describe('estado da lista na URL (TEC-322)', () => {
   it('valor fora do vocabulario e "todos"', () => {
     expect(filtrosDaUrl({ status: 'QUALQUER', temperatura: 'quente', corretorId: 'nao-e-uuid' })).toEqual({})
     expect(filtrosDaUrl({ corretorId: UUID }).corretorId).toBe(UUID)
+  })
+})
+
+describe('origem do funil na URL (TEC-318)', () => {
+  it('sem nenhum dos quatro campos, e undefined', () => {
+    expect(origemDoFunilDaUrl({})).toBeUndefined()
+    expect(origemDoFunilDaUrl({ busca: 'x' })).toBeUndefined()
+  })
+
+  it('le os quatro campos quando algum deles vem', () => {
+    expect(origemDoFunilDaUrl({ de: '2026-08-01', ate: '2026-08-31', etapa: 'Recomendado' })).toEqual({
+      de: '2026-08-01',
+      ate: '2026-08-31',
+      intencao: undefined,
+      etapa: 'Recomendado',
+    })
+  })
+
+  it('urlDaLista inclui a origem do funil, e a preserva na paginacao/ordenacao', () => {
+    const url = urlDaLista({
+      ordem: 'score_desc',
+      origemDoFunil: { de: '2026-08-01', ate: '2026-08-31', etapa: 'Recomendado' },
+    })
+    expect(url).toBe('/leads?de=2026-08-01&ate=2026-08-31&etapa=Recomendado')
+  })
+
+  it('cenario: o link lido de volta da a mesma origem do funil', () => {
+    const url = urlDaLista({
+      ordem: 'score_desc',
+      origemDoFunil: { de: '2026-08-01', ate: '2026-08-31', intencao: 'COMPRA', etapa: 'Qualificado' },
+    })
+    const lido = Object.fromEntries(new URL(url, 'http://x').searchParams)
+
+    expect(origemDoFunilDaUrl(lido)).toEqual({
+      de: '2026-08-01',
+      ate: '2026-08-31',
+      intencao: 'COMPRA',
+      etapa: 'Qualificado',
+    })
   })
 
   it('sem cursor e a primeira pagina, e `anterior` repetido vira a lista', () => {

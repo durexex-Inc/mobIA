@@ -107,6 +107,19 @@ a {
   border-bottom: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
 }
 
+/* A etapa clicavel (TEC-318): `display: contents` tira o `<a>` do grid, para
+   os `grid-area` dos filhos continuarem valendo -- ver o comentario em
+   `Funil.tsx`. */
+.funil-etapa-link {
+  display: contents;
+  color: inherit;
+  text-decoration: none;
+}
+
+.funil-etapa-link:hover .funil-nome {
+  text-decoration: underline;
+}
+
 .funil-nome { grid-area: nome; font-weight: 600; }
 .funil-quantidade { grid-area: quantidade; font-variant-numeric: tabular-nums; }
 .funil-conversao { grid-area: conversao; text-align: right; opacity: 0.7; }
@@ -1356,6 +1369,13 @@ a {
 .leads-filtro-corretor {
   flex-basis: 100%;
   margin: 0;
+}
+
+/* A origem do funil (TEC-318): de onde a lista veio, e como sair dali. */
+.leads-origem-do-funil {
+  font-size: 0.9rem;
+  opacity: 0.85;
+  margin: 0 0 0.75rem;
 }
 
 .leads-paginas {

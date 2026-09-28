@@ -528,4 +528,46 @@ describe('PaginaDeLeads', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('Não foi possível carregar a lista de leads.')
   })
+
+  describe('cenario: chegada a partir de uma etapa do funil (TEC-318)', () => {
+    it('de/ate/etapa chegam ao backend', async () => {
+      const chamadas = responde({ itens: [lead(82)], proximoCursor: null })
+
+      await abrir({ de: '2026-08-01', ate: '2026-08-31', etapa: 'Recomendado' })
+
+      const parametros = parametrosDe(chamadas)
+      expect(parametros.get('de')).toBe('2026-08-01')
+      expect(parametros.get('ate')).toBe('2026-08-31')
+      expect(parametros.get('etapa')).toBe('Recomendado')
+    })
+
+    it('mostra o aviso da etapa, com o periodo e um link para a lista inteira', async () => {
+      responde({ itens: [lead(82)], proximoCursor: null })
+
+      await abrir({ de: '2026-08-01', ate: '2026-08-31', etapa: 'Recomendado' })
+
+      expect(screen.getByText(/Recomendado/)).toBeInTheDocument()
+      expect(screen.getByText(/2026-08-01/)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Ver todos os leads' })).toHaveAttribute('href', '/leads')
+    })
+
+    it('sem etapa na URL, o aviso nao aparece', async () => {
+      responde({ itens: [lead(82)], proximoCursor: null })
+
+      await abrir()
+
+      expect(screen.queryByRole('link', { name: 'Ver todos os leads' })).not.toBeInTheDocument()
+    })
+
+    it('a paginacao preserva a origem do funil (D6)', async () => {
+      responde({ itens: [lead(82)], proximoCursor: 'c2' })
+
+      await abrir({ de: '2026-08-01', ate: '2026-08-31', etapa: 'Recomendado' })
+
+      const proxima = screen.getByRole('link', { name: /Próxima/ })
+      const url = new URL(proxima.getAttribute('href')!, 'http://x')
+      expect(url.searchParams.get('etapa')).toBe('Recomendado')
+      expect(url.searchParams.get('de')).toBe('2026-08-01')
+    })
+  })
 })

@@ -1,7 +1,7 @@
 import { useId } from 'react'
 
 import { coorteIncompleta, percentual, quantidadeLegivel } from '@/lib/formato'
-import type { Etapa } from '@/lib/metricas'
+import type { Etapa, Filtros } from '@/lib/metricas'
 
 /**
  * A conversao independe do que o backend mandou em `conversaoDaAnterior`
@@ -37,13 +37,32 @@ function AvisoDeCoorteIncompleta() {
 }
 
 /**
+ * A URL da lista de leads desta etapa, preservando os filtros do funil
+ * (TEC-318). Os NOMES dos filtros aqui (`de`, `ate`, `canal`, `intencao`,
+ * `temperatura`) sao os mesmos que `GET /api/v1/leads` passou a aceitar --
+ * nao ha traducao entre os dois lados. `corretorId` viaja junto por estar em
+ * `Filtros`, mas hoje nunca e truthy (o campo esta desabilitado desde a
+ * TEC-316).
+ */
+function urlDaEtapa(filtros: Filtros, etapa: string): string {
+  const busca = new URLSearchParams()
+  for (const [chave, valor] of Object.entries(filtros)) {
+    if (valor) {
+      busca.set(chave, valor)
+    }
+  }
+  busca.set('etapa', etapa)
+  return `/leads?${busca.toString()}`
+}
+
+/**
  * As seis etapas da RN-17.2, com a conversao entre consecutivas.
  *
  * A largura da barra sai da MAIOR etapa disponivel, e nao da primeira: a
  * primeira pode ser a que nao tem fonte, e dividir por ela daria NaN. O piso
  * de 1 cobre o periodo em que tudo e zero.
  */
-export function Funil({ etapas }: { etapas: Etapa[] }) {
+export function Funil({ etapas, filtros }: { etapas: Etapa[]; filtros: Filtros }) {
   const maior = Math.max(
     1,
     ...etapas.filter((e) => e.disponivel && e.quantidade !== null).map((e) => e.quantidade ?? 0),
@@ -53,8 +72,8 @@ export function Funil({ etapas }: { etapas: Etapa[] }) {
     <ol aria-label="Funil de leads" className="funil">
       {etapas.map((etapa, indice) => {
         const conversao = conversaoConfiavel(etapa, etapas[indice - 1])
-        return (
-          <li key={etapa.nome} data-testid={`etapa-${etapa.nome}`} className="funil-etapa">
+        const conteudo = (
+          <>
             <span className="funil-nome">{etapa.nome}</span>
             <span className="funil-quantidade">{quantidadeLegivel(etapa)}</span>
             <span className="funil-conversao">
@@ -78,6 +97,27 @@ export function Funil({ etapas }: { etapas: Etapa[] }) {
                     : '0%',
               }}
             />
+          </>
+        )
+        return (
+          <li key={etapa.nome} data-testid={`etapa-${etapa.nome}`} className="funil-etapa">
+            {etapa.disponivel ? (
+              // `display: contents` no CSS (`.funil-etapa-link`): sem ele, o
+              // `<a>` viraria o unico item do grid de `.funil-etapa` e os
+              // `grid-area` dos filhos parariam de valer (TEC-318, D4).
+              <a href={urlDaEtapa(filtros, etapa.nome)} className="funil-etapa-link">
+                {/* Sem `aria-label` no link, pela mesma razao do `span` de
+                    conversao acima: apagaria "Coorte incompleta" para quem
+                    usa leitor de tela. O contexto entra como texto oculto. */}
+                <span className="visually-hidden">Ver leads da etapa {etapa.nome}. </span>
+                {conteudo}
+              </a>
+            ) : (
+              // Etapa sem fonte nao e navegavel (Gherkin, cenario 2) -- hoje
+              // inatingivel em producao, ja que `montar_funil` sempre marca
+              // `disponivel: true` desde a TEC-376.
+              conteudo
+            )}
           </li>
         )
       })}

@@ -246,7 +246,11 @@ def _depois_do_cursor(base: Any, score: Any, posicao: _Posicao) -> Any:
 
 
 def _consulta(
-    filtro: Filtro, *, recorte: RecorteDoPapel, posicao: _Posicao | None = None
+    filtro: Filtro,
+    *,
+    recorte: RecorteDoPapel,
+    posicao: _Posicao | None = None,
+    coorte_do_funil: Any = None,
 ) -> Select[Any]:
     base = _ultima_interacao()
     score = _score_corrente()
@@ -302,6 +306,22 @@ def _consulta(
 
     if filtro.busca is not None:
         consulta = consulta.where(_onde_a_busca_bate(base, filtro.busca))
+
+    if coorte_do_funil is not None:
+        # A origem do funil (TEC-318): `selecionar_coorte`/`selecionar_etapa`
+        # de `metricas/repositorio.py`, ja resolvidas pela rota. `.exists()`,
+        # como o filtro por corretor logo abaixo -- e nao `JOIN`, para nao
+        # arriscar duplicar linha se a selecao de origem um dia deixar de ser
+        # distinta por construcao.
+        pares = coorte_do_funil.subquery()
+        consulta = consulta.where(
+            select(pares.c.channel)
+            .where(
+                pares.c.channel == base.c.channel,
+                pares.c.conversation_key == base.c.conversation_key,
+            )
+            .exists()
+        )
 
     if recorte.nao_ve_nada:
         # Fail-CLOSED explicito, e nao "sem filtro". Ver `RecorteDoPapel`.
@@ -439,7 +459,11 @@ async def par_de(session: AsyncSession, lead_id: uuid.UUID) -> tuple[str, str] |
 
 
 async def listar_leads(
-    session: AsyncSession, *, filtro: Filtro, recorte: RecorteDoPapel = SEM_RECORTE
+    session: AsyncSession,
+    *,
+    filtro: Filtro,
+    recorte: RecorteDoPapel = SEM_RECORTE,
+    coorte_do_funil: Any = None,
 ) -> tuple[list[LeadDaLista], Cursor | None]:
     """A pagina pedida e o cursor da proxima, ou `None` quando acabou.
 
@@ -449,6 +473,11 @@ async def listar_leads(
     um numero que o cliente nao usa para nada alem de saber se continua.
 
     `recorte` vem da claim do JWT, nunca da query: ver a D7 e `RecorteDoPapel`.
+
+    **`coorte_do_funil` e a origem de uma etapa do funil** (TEC-318): a rota
+    ja resolveu `de`/`ate`/`etapa` num `Select` de
+    `metricas/repositorio.py::selecionar_coorte`/`selecionar_etapa`, e aqui so
+    se restringe a consulta a ele -- ver `_consulta`.
 
     **O cursor chega com o apelido e e resolvido aqui** (TEC-195, D3). Apelido
     que nao existe e cursor invalido, e nao primeira pagina: quem chamou perdeu
@@ -469,7 +498,9 @@ async def listar_leads(
 
     linhas = (
         await session.execute(
-            _consulta(filtro, recorte=recorte, posicao=posicao).limit(filtro.limite + 1)
+            _consulta(
+                filtro, recorte=recorte, posicao=posicao, coorte_do_funil=coorte_do_funil
+            ).limit(filtro.limite + 1)
         )
     ).all()
 

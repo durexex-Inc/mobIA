@@ -48,6 +48,8 @@ async def _lead(
     score: int | None = None,
     regiao: str | None = None,
     temperatura: str | None = None,
+    intencao: str | None = None,
+    qualificado_em: datetime | None = None,
     canal: str = "whatsapp",
     dono: uuid.UUID | None = None,
     encerrada: bool = False,
@@ -74,13 +76,21 @@ async def _lead(
         )
     )
 
-    if regiao is not None or temperatura is not None:
+    tem_qualificacao = (
+        regiao is not None
+        or temperatura is not None
+        or intencao is not None
+        or qualificado_em is not None
+    )
+    if tem_qualificacao:
         session.add(
             LeadQualification(
                 channel=canal,
                 conversation_key=chave,
                 regiao=regiao,
                 temperatura=temperatura,
+                intencao=intencao,
+                qualificado_em=qualificado_em,
             )
         )
 
@@ -580,3 +590,92 @@ async def test_leitura_le_a_lista_e_ninguem_sem_credencial_le(
 
     assert com_leitura.status_code == 200
     assert sem_nada.status_code == 403
+
+
+class TestOrigemDoFunil:
+    """`de`/`ate`/`intencao`/`etapa`: a origem de uma etapa clicada no funil
+    (TEC-318, D2). Mesmo `montar_recorte` do funil, e a mesma acumulacao de
+    `contar_etapas` -- `selecionar_etapa`/`selecionar_coorte`."""
+
+    async def test_etapa_filtra_a_lista_pela_etapa_do_funil(
+        self, session: AsyncSession, client: AsyncClient, banco_limpo: None
+    ) -> None:
+        await _lead(session, chave="5548990000001", falou_em=datetime(2026, 8, 10, tzinfo=UTC))
+        await _lead(
+            session,
+            chave="5548990000002",
+            falou_em=datetime(2026, 8, 11, tzinfo=UTC),
+            qualificado_em=datetime(2026, 8, 12, tzinfo=UTC),
+        )
+
+        resposta = await client.get(
+            ROTA,
+            params={"de": "2026-08-01", "ate": "2026-08-31", "etapa": "Qualificado"},
+            headers=_bearer("GERENTE"),
+        )
+
+        assert resposta.status_code == 200
+        assert await _chaves(session, resposta) == ["5548990000002"]
+
+    async def test_de_e_ate_sem_etapa_filtra_pela_coorte_inteira(
+        self, session: AsyncSession, client: AsyncClient, banco_limpo: None
+    ) -> None:
+        await _lead(session, chave="5548990000001", falou_em=datetime(2026, 8, 10, tzinfo=UTC))
+        await _lead(session, chave="5548990000002", falou_em=datetime(2026, 7, 1, tzinfo=UTC))
+
+        resposta = await client.get(
+            ROTA, params={"de": "2026-08-01", "ate": "2026-08-31"}, headers=_bearer("GERENTE")
+        )
+
+        assert await _chaves(session, resposta) == ["5548990000001"]
+
+    async def test_etapa_sem_periodo_e_422(self, client: AsyncClient) -> None:
+        resposta = await client.get(
+            ROTA, params={"etapa": "Qualificado"}, headers=_bearer("GERENTE")
+        )
+
+        assert resposta.status_code == 422
+
+    async def test_intencao_sem_periodo_e_422(self, client: AsyncClient) -> None:
+        resposta = await client.get(ROTA, params={"intencao": "COMPRA"}, headers=_bearer("GERENTE"))
+
+        assert resposta.status_code == 422
+
+    async def test_etapa_desconhecida_e_422(self, client: AsyncClient) -> None:
+        resposta = await client.get(
+            ROTA,
+            params={"de": "2026-08-01", "ate": "2026-08-31", "etapa": "Inexistente"},
+            headers=_bearer("GERENTE"),
+        )
+
+        assert resposta.status_code == 422
+
+    async def test_canal_continua_restringindo_dentro_da_etapa(
+        self, session: AsyncSession, client: AsyncClient, banco_limpo: None
+    ) -> None:
+        await _lead(
+            session,
+            chave="5548990000001",
+            falou_em=datetime(2026, 8, 10, tzinfo=UTC),
+            qualificado_em=datetime(2026, 8, 11, tzinfo=UTC),
+        )
+        await _lead(
+            session,
+            chave="site-1",
+            canal="web",
+            falou_em=datetime(2026, 8, 10, tzinfo=UTC),
+            qualificado_em=datetime(2026, 8, 11, tzinfo=UTC),
+        )
+
+        resposta = await client.get(
+            ROTA,
+            params={
+                "de": "2026-08-01",
+                "ate": "2026-08-31",
+                "etapa": "Qualificado",
+                "canal": "web",
+            },
+            headers=_bearer("GERENTE"),
+        )
+
+        assert await _chaves(session, resposta) == ["site-1"]

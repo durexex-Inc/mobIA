@@ -5,10 +5,16 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from conftest import _agendar, _corretor, _handoff_aceito, _lead, _recomendar
+from sqlalchemy import select
 
 from mobia.domain.agente.schemas import Intencao
 from mobia.domain.metricas.filtros import Recorte, montar_recorte
-from mobia.domain.metricas.repositorio import calcular_indicadores, contar_etapas
+from mobia.domain.metricas.repositorio import (
+    calcular_indicadores,
+    contar_etapas,
+    selecionar_coorte,
+    selecionar_etapa,
+)
 from mobia.domain.metricas.vocabulario import Etapa
 
 SAO_PAULO = ZoneInfo("America/Sao_Paulo")
@@ -248,3 +254,43 @@ async def test_a_fronteira_do_dia_e_a_do_fuso(session) -> None:
     etapas = await contar_etapas(session, recorte=_recorte())
 
     assert etapas[Etapa.NOVO] == 1
+
+
+async def _pares(session, consulta) -> set[tuple[str, str]]:
+    linhas = (await session.execute(select(consulta.subquery()))).all()
+    return {(linha.channel, linha.conversation_key) for linha in linhas}
+
+
+async def test_selecionar_etapa_e_a_mesma_contagem_de_contar_etapas(session) -> None:
+    """Regressao do refactor da TEC-318: `_condicoes_das_etapas` compartilhada
+    nao pode mudar o resultado que `contar_etapas` ja dava."""
+    await _lead(session, conversa="5511900000001", falas=3, qualificado_em=DENTRO)
+    await _lead(session, conversa="5511900000002", falas=1)
+    await _recomendar(session, conversa="5511900000001", em=DENTRO)
+
+    recorte = _recorte()
+    etapas = await contar_etapas(session, recorte=recorte)
+
+    for etapa in Etapa:
+        pares = await _pares(session, selecionar_etapa(recorte, etapa))
+        assert len(pares) == etapas[etapa], etapa
+
+
+async def test_selecionar_etapa_devolve_so_quem_alcancou_a_etapa_ou_posterior(session) -> None:
+    """TEC-318: a etapa clicavel devolve os LEADS, nao so a contagem."""
+    await _lead(session, conversa="5511900000001", falas=3, qualificado_em=DENTRO)
+    await _lead(session, conversa="5511900000002", falas=1)
+
+    pares = await _pares(session, selecionar_etapa(_recorte(), Etapa.QUALIFICADO))
+
+    assert pares == {("whatsapp", "5511900000001")}
+
+
+async def test_selecionar_coorte_e_a_coorte_inteira_sem_etapa(session) -> None:
+    """`selecionar_coorte` e o que `GET /leads?de=&ate=` usa sem `etapa` (D2)."""
+    await _lead(session, conversa="5511900000001", nasceu_em=DENTRO)
+    await _lead(session, conversa="5511900000002", nasceu_em=FORA)
+
+    pares = await _pares(session, selecionar_coorte(_recorte()))
+
+    assert pares == {("whatsapp", "5511900000001")}
