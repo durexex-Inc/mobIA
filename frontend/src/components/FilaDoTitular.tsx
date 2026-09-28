@@ -16,6 +16,11 @@ import {
  * menos a linha ganha a classe de destaque, o marcador decorativo e "Prazo
  * curto" -- "Prazo vencido" quando passou --, que e o que um leitor de tela
  * anuncia.
+ *
+ * **"Baixar dados do titular" so nas linhas ACESSO** (TEC-341, D1):
+ * portabilidade e a exportacao do pedido de acesso, e a coluna independe de
+ * `abreLead` -- baixar nao pede `VER_DETALHE_DO_LEAD`, so a permissao que ja
+ * guarda a pagina inteira.
  */
 export function FilaDoTitular({
   pedidos,
@@ -35,6 +40,7 @@ export function FilaDoTitular({
           <th scope="col">Aberto em</th>
           <th scope="col">Prazo</th>
           {abreLead ? <th scope="col">Lead</th> : null}
+          <th scope="col">Portabilidade</th>
         </tr>
       </thead>
       <tbody>
@@ -58,6 +64,13 @@ export function FilaDoTitular({
               {abreLead ? (
                 <td>{pedido.leadId ? <a href={`/leads/${pedido.leadId}`}>Ver lead</a> : '—'}</td>
               ) : null}
+              <td>
+                {pedido.tipo === 'ACESSO' ? (
+                  <a href={`/admin/titular/${pedido.id}/baixar`}>Baixar dados do titular</a>
+                ) : (
+                  '—'
+                )}
+              </td>
             </tr>
           )
         })}
