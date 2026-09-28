@@ -370,6 +370,8 @@ O botão aparecer não basta para a conversa conectar. O `WS /widget/chat` só a
 
 **Os imóveis sugeridos chegam como cards (TEC-349).** Cada frame `imovel` do servidor vira um card com foto, título, bairro, preço, quartos, vagas, área útil, condomínio e diferencial, e os frames de um mesmo turno — `ficha_1` abre a fileira, até três — ficam lado a lado, com rolagem horizontal. Sem foto, o card mostra um placeholder com o bairro. Tocar no card abre a página do imóvel em nova aba quando o servidor manda `url`; hoje ele nunca manda, porque o catálogo não tem essa página (L1 da TEC-364), e o card expande no próprio chat. **Ao recarregar a página, os cards voltam como texto**: o `historico` traz a ficha como legenda, e não o card (L2 da TEC-364). O componente é `src/components/CardDeImovel.tsx`, sem estado da conversa, para a pré-visualização do painel (TEC-336) reusá-lo.
 
+**Cada card tem "Gostei" e "Não é pra mim" (TEC-350).** O toque manda uma fala comum da visitante com o título e o bairro do imóvel — `Gostei do imóvel "Casa 3 quartos" (Campeche).` —, que aparece na conversa, passa pela fila da reconexão e alimenta a reação registrada pelo servidor (TEC-163). Depois do toque, os dois botões daquele card ficam desabilitados. **Só o primeiro toque depois de uma apresentação vira reação registrada**: o turno seguinte às fichas fecha todas as pendentes (D8 da TEC-163), e um segundo toque chega ao agente só como texto. Os botões só aparecem quando `Conversa` passa `aoReagir`: a pré-visualização continua sem eles.
+
 ## Comandos
 
 ```bash
