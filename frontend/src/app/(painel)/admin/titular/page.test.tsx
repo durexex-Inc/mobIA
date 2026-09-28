@@ -65,6 +65,10 @@ function api(papel: string, fila: { corpo: unknown; status?: number; cabecalhos?
   return chamadas
 }
 
+function sp(params: Record<string, string> = {}) {
+  return Promise.resolve(params)
+}
+
 function linhaDe(texto: string) {
   const celula = screen.getAllByText(texto)[0]
   const linha = celula.closest('tr')
@@ -86,7 +90,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('pede so os pedidos abertos', async () => {
     const chamadas = api('ADMIN', { corpo: { itens: [] } })
 
-    await PaginaDaFilaDoTitular()
+    await PaginaDaFilaDoTitular({ searchParams: sp() })
 
     const fila = chamadas.mock.calls.map(([url]) => new URL(String(url))).find((u) => u.pathname.includes('titular'))
     expect(fila?.pathname).toBe('/api/v1/titular/solicitacoes')
@@ -96,7 +100,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('esquema do cenario: o prazo restante e o destaque (2/13 sem, 12/3 e 14/1 com)', async () => {
     api('ADMIN', { corpo: { itens: [pedido(14), pedido(12), pedido(2)] } })
 
-    render(await PaginaDaFilaDoTitular())
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
 
     const linhas = within(screen.getByRole('table')).getAllByRole('row').slice(1)
     expect(linhas.map((linha) => within(linha).getAllByRole('cell')[3].textContent)).toEqual([
@@ -112,7 +116,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('cenario 2: o pedido de eliminacao feito pelo WhatsApp aparece com origem "WhatsApp"', async () => {
     api('ADMIN', { corpo: { itens: [pedido(1, { tipo: 'ELIMINACAO', origem: 'WHATSAPP' })] } })
 
-    render(await PaginaDaFilaDoTitular())
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
 
     const linha = linhaDe('Eliminação dos dados')
     expect(within(linha).getByText('WhatsApp')).toBeInTheDocument()
@@ -124,7 +128,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('pedido vencido e destacado como vencido', async () => {
     api('ADMIN', { corpo: { itens: [pedido(17)] } })
 
-    render(await PaginaDaFilaDoTitular())
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
 
     expect(screen.getByText(/Vencido há 2 dias/)).toBeInTheDocument()
     expect(screen.getByText(/Prazo vencido/)).toBeInTheDocument()
@@ -133,7 +137,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('cenario 3: o GERENTE que abre o endereco direto ve "Sem permissao", e a fila nao e pedida', async () => {
     const chamadas = api('GERENTE', { corpo: { itens: [pedido(2)] } })
 
-    render(await PaginaDaFilaDoTitular())
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
 
     expect(screen.getByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Você entrou como Gerente')
@@ -143,7 +147,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('403 do backend vence a permissao lida: "Sem permissao"', async () => {
     api('ADMIN', { corpo: { detail: 'proibido' }, status: 403 })
 
-    render(await PaginaDaFilaDoTitular())
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
 
     expect(screen.getByRole('heading', { name: 'Sem permissão' })).toBeInTheDocument()
   })
@@ -151,7 +155,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('401 apaga a sessao e volta ao login com o endereco da fila', async () => {
     api('ADMIN', { corpo: { detail: 'nao autenticado' }, status: 401 })
 
-    await expect(PaginaDaFilaDoTitular()).rejects.toThrow(
+    await expect(PaginaDaFilaDoTitular({ searchParams: sp() })).rejects.toThrow(
       'REDIRECT:/login?returnTo=%2Fadmin%2Ftitular&erro=sessao_expirada',
     )
     expect(await lerSessao(cookiesDaRequisicao.get('mobia_sessao') ?? '')).toBeNull()
@@ -160,7 +164,7 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('a falha de carga mostra o erro com o codigo para o suporte', async () => {
     api('ADMIN', { corpo: { detail: 'boom' }, status: 500, cabecalhos: { 'x-request-id': 'req-9' } })
 
-    render(await PaginaDaFilaDoTitular())
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
 
     expect(screen.getByRole('alert')).toHaveTextContent('Não foi possível carregar a fila de pedidos.')
     expect(screen.getByText('req-9')).toBeInTheDocument()
@@ -169,9 +173,41 @@ describe('PaginaDaFilaDoTitular (TEC-340)', () => {
   it('fila vazia diz que nao ha pedido em aberto', async () => {
     api('ADMIN', { corpo: { itens: [] } })
 
-    render(await PaginaDaFilaDoTitular())
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
 
     expect(screen.getByText('Nenhum pedido em aberto.')).toBeInTheDocument()
     expect(screen.queryByRole('table')).toBeNull()
+  })
+
+  it('?concluido=1 avisa que o pedido ja foi concluido (TEC-341, D4)', async () => {
+    api('ADMIN', { corpo: { itens: [] } })
+
+    render(await PaginaDaFilaDoTitular({ searchParams: sp({ concluido: '1' }) }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Este pedido já foi concluído.')
+  })
+
+  it('sem ?concluido, nao ha aviso', async () => {
+    api('ADMIN', { corpo: { itens: [] } })
+
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('"Baixar dados do titular" so aparece na linha ACESSO (TEC-341, D1)', async () => {
+    api('ADMIN', {
+      corpo: { itens: [pedido(1, { id: 'acesso-1' }), pedido(2, { id: 'elim-1', tipo: 'ELIMINACAO' })] },
+    })
+
+    render(await PaginaDaFilaDoTitular({ searchParams: sp() }))
+
+    const linhaDoAcesso = linhaDe('Acesso aos dados')
+    expect(within(linhaDoAcesso).getByRole('link', { name: 'Baixar dados do titular' })).toHaveAttribute(
+      'href',
+      '/admin/titular/acesso-1/baixar',
+    )
+    const linhaDaEliminacao = linhaDe('Eliminação dos dados')
+    expect(within(linhaDaEliminacao).queryByRole('link', { name: 'Baixar dados do titular' })).toBeNull()
   })
 })

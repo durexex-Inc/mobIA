@@ -36,3 +36,19 @@ export async function buscarFilaDoTitular(acesso: string): Promise<PedidoDoTitul
   }
   return ((await resposta.json()) as { itens: PedidoDoTitular[] }).itens
 }
+
+/**
+ * Uma solicitação pelo `id`, em qualquer status (TEC-341, D4). Não há
+ * `GET` por id no backend -- a única forma de saber o status ATUAL é buscar
+ * a lista inteira, sem `?status=`, e procurar nela. `null` quando o `id`
+ * não existe.
+ */
+export async function buscarSolicitacao(id: string, acesso: string): Promise<PedidoDoTitular | null> {
+  const resposta = await chamarApi('/api/v1/titular/solicitacoes', { acesso })
+  if (!resposta.ok) {
+    const { mensagem } = await detalheDe(resposta)
+    throw new ErroDaFilaDoTitular(resposta.status, mensagem, resposta.headers.get('x-request-id'))
+  }
+  const itens = ((await resposta.json()) as { itens: PedidoDoTitular[] }).itens
+  return itens.find((item) => item.id === id) ?? null
+}

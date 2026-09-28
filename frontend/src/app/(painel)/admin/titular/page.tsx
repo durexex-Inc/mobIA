@@ -28,10 +28,18 @@ const ENDERECO = '/admin/titular'
  * permissao a ele. Vem antes de qualquer busca, como em toda pagina do painel
  * (D3 da TEC-312).
  *
- * **Exportar e eliminar sao as cards seguintes** (TEC-341 e TEC-342): esta
- * pagina so mostra o que esta pendente, e o link para o lead leva a quem age.
+ * **Exportar e a TEC-341**: o link "Baixar dados do titular" de cada linha
+ * `ACESSO` leva ao Route Handler de download; `?concluido=1` volta aqui
+ * quando a solicitacao ja nao estava mais aberta na hora do clique (D4 do
+ * desenho da TEC-341) -- so acontece por corrida, porque a fila abaixo so
+ * lista `ABERTA`. **Eliminar e a TEC-342.**
  */
-export default async function PaginaDaFilaDoTitular() {
+export default async function PaginaDaFilaDoTitular({
+  searchParams,
+}: {
+  searchParams: Promise<{ concluido?: string }>
+}) {
+  const { concluido } = await searchParams
   const { sessao, quem, permitido } = await exigirPermissao(ENDERECO, (p) => p.has('ATENDER_TITULAR'))
   if (!permitido) {
     return <SemPermissao papel={quem.papel} paginaInicial={paginaInicialDe(quem.permissoes)} />
@@ -63,6 +71,11 @@ export default async function PaginaDaFilaDoTitular() {
     <main className="painel">
       <h1>Pedidos do titular</h1>
       <p>Pedidos de acesso e de eliminação em aberto. O prazo legal de resposta é de 15 dias.</p>
+      {concluido ? (
+        <p className="fila-do-titular__concluido" role="status">
+          Este pedido já foi concluído.
+        </p>
+      ) : null}
       {erro ? (
         <ErroDeCarga
           mensagem="Não foi possível carregar a fila de pedidos."
