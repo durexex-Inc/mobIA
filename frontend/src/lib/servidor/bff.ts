@@ -88,6 +88,17 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   { metodo: 'POST', padrao: ['api', 'v1', 'imoveis'] },
   { metodo: 'PATCH', padrao: ['api', 'v1', 'imoveis', '*'] },
   { metodo: 'DELETE', padrao: ['api', 'v1', 'imoveis', '*'] },
+  // Importar imoveis em lote e acompanhar o relatorio (TEC-334, D6). A carga
+  // inicial (a mais recente) usa `chamarApi` direto do Server Component, como
+  // a listagem de imoveis -- so o envio do arquivo e o polling do
+  // acompanhamento passam por aqui. `importar` e segmento LITERAL, e nao
+  // `*`: so essa rota, e nao qualquer coisa sob `imoveis/*` que o
+  // `PATCH`/`DELETE` acima ja abrem para o `{id}`. O `POST` do `FormData`
+  // atravessa sem tratamento especial -- `repassar` ja le o corpo como
+  // `ArrayBuffer` e repassa o `Content-Type` (com o `boundary`) para
+  // qualquer metodo.
+  { metodo: 'POST', padrao: ['api', 'v1', 'imoveis', 'importar'] },
+  { metodo: 'GET', padrao: ['api', 'v1', 'imoveis', 'importacoes', '*'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */
