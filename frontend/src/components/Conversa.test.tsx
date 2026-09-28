@@ -9,6 +9,21 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 const SESSAO = '6f1c2c7e-6a0b-4c1f-9d0e-1a2b3c4d5e6f'
 
+const PRIVACIDADE = {
+  avisoUrl: 'https://imobiliaria.com.br/privacidade',
+  encarregadoEmail: 'encarregado@imobiliaria.com.br',
+}
+
+// O frame que a primeira mensagem de cada sessao manda antes dela (TEC-352,
+// D4), com o checkbox desmarcado -- que e como todo teste fora do bloco da
+// TEC-352 o deixa.
+const CONSENTIMENTO_PENDENTE = {
+  tipo: 'consentimento',
+  marketing: false,
+  textoExibido: expect.stringContaining('Aviso de privacidade: https://imobiliaria.com.br/privacidade.'),
+  exibidoEm: expect.any(String),
+}
+
 type Ouvinte = (evento: unknown) => void
 
 /**
@@ -104,7 +119,7 @@ function enviar(texto: string) {
 }
 
 function montarAberto(): SocketFalso {
-  render(<Conversa endereco={ENDERECO} nome={null} />)
+  render(<Conversa endereco={ENDERECO} nome={null} privacidade={PRIVACIDADE} />)
   const socket = ultimoSocket()
   socket.abrir()
   return socket
@@ -370,8 +385,11 @@ describe('Conversa', () => {
     novo.abrir()
     // A reconexao retoma a sessao em memoria: o servidor deduplica o id
     // dentro dela, e o agente nao perde o contexto (D4).
+    // O consentimento da primeira mensagem nunca teve resposta, e sai de
+    // novo antes dela (TEC-352, D4).
     expect(novo.frames()).toEqual([
       { tipo: 'ola', sessao: SESSAO },
+      CONSENTIMENTO_PENDENTE,
       { tipo: 'mensagem', id, texto: 'Qual o valor do condomínio?' },
     ])
     expect(screen.getByText('Enviando…')).toBeInTheDocument()
@@ -390,7 +408,8 @@ describe('Conversa', () => {
     expect(SocketFalso.instancias).toHaveLength(2)
     const novo = ultimoSocket()
     novo.abrir()
-    expect(novo.frames().map((f) => f.tipo === 'mensagem' && f.texto)).toEqual([false, 'Primeira', 'Segunda'])
+    // `ola`, o consentimento pendente (TEC-352) e as duas.
+    expect(novo.frames().map((f) => f.tipo === 'mensagem' && f.texto)).toEqual([false, false, 'Primeira', 'Segunda'])
   })
 
   it('durante a espera de muitas_tentativas o "Reenviar" fica desabilitado', () => {
@@ -549,7 +568,7 @@ describe('Conversa', () => {
 
   it('desmontar fecha o socket e cancela o prazo pendente', () => {
     vi.useFakeTimers()
-    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} />)
+    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} privacidade={PRIVACIDADE} />)
     const socket = ultimoSocket()
     socket.abrir()
     enviar('Oi')
@@ -563,7 +582,7 @@ describe('Conversa', () => {
 
   it('desmontar durante a espera de muitas_tentativas nao reabre depois', () => {
     vi.useFakeTimers()
-    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} />)
+    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} privacidade={PRIVACIDADE} />)
     const socket = ultimoSocket()
     socket.abrir()
     socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 5 s.', aguardeSegundos: 5 })
@@ -580,7 +599,7 @@ describe('Conversa', () => {
   it('em StrictMode, a montagem dupla deixa um socket vivo so', () => {
     render(
       <StrictMode>
-        <Conversa endereco={ENDERECO} nome={null} />
+        <Conversa endereco={ENDERECO} nome={null} privacidade={PRIVACIDADE} />
       </StrictMode>,
     )
 
@@ -597,6 +616,7 @@ describe('Conversa', () => {
     enviar('Oi')
     expect(vivo.frames()).toEqual([
       { tipo: 'ola', sessao: null },
+      CONSENTIMENTO_PENDENTE,
       { tipo: 'mensagem', id: expect.stringMatching(UUID_V4), texto: 'Oi' },
     ])
   })
@@ -709,7 +729,7 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
 
     render(
       <StrictMode>
-        <Conversa endereco={ENDERECO} nome={null} />
+        <Conversa endereco={ENDERECO} nome={null} privacidade={PRIVACIDADE} />
       </StrictMode>,
     )
     const [descartado, vivo] = SocketFalso.instancias
@@ -872,7 +892,9 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
     const novo = ultimoSocket()
     novo.abrir()
     expect(novo.frames()[0]).toEqual({ tipo: 'ola', sessao: SESSAO })
-    expect(novo.frames()[1]).toMatchObject({ tipo: 'mensagem', texto: 'voltei' })
+    // A primeira mensagem da sessao leva o consentimento antes (TEC-352).
+    expect(novo.frames()[1]).toEqual(CONSENTIMENTO_PENDENTE)
+    expect(novo.frames()[2]).toMatchObject({ tipo: 'mensagem', texto: 'voltei' })
   })
 
   it('reabrir antes de dormir nao abre socket novo e cancela o sono', () => {
@@ -946,7 +968,7 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
   })
 
   it('o cabecalho mostra o nome do assistente', () => {
-    render(<Conversa endereco={ENDERECO} nome="Lia" />)
+    render(<Conversa endereco={ENDERECO} nome="Lia" privacidade={PRIVACIDADE} />)
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Lia · Assistente virtual$/)
   })
@@ -1124,7 +1146,7 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
   })
 
   it('desmontar minimizado cancela o sono e para de ouvir os avisos', () => {
-    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} />)
+    const { unmount } = render(<Conversa endereco={ENDERECO} nome={null} privacidade={PRIVACIDADE} />)
     ultimoSocket().abrir()
     avisar({ tipo: 'mobia:visibilidade', aberto: false })
     expect(vi.getTimerCount()).toBe(1)
@@ -1175,6 +1197,7 @@ describe('Conversa -- reconexao automatica e fila local (TEC-348)', () => {
     const [mensagem] = mensagensDe(novo)
     expect(novo.frames()).toEqual([
       { tipo: 'ola', sessao: SESSAO },
+      CONSENTIMENTO_PENDENTE,
       { tipo: 'mensagem', id: mensagem.id, texto: 'Tem vaga de garagem?' },
     ])
     expect(mensagem.id).toMatch(UUID_V4)
@@ -1510,7 +1533,7 @@ describe('Conversa -- digitando e estado da conexao (TEC-351)', () => {
   }
 
   function montarAbertoCom(nome: string | null): SocketFalso {
-    render(<Conversa endereco={ENDERECO} nome={nome} />)
+    render(<Conversa endereco={ENDERECO} nome={nome} privacidade={PRIVACIDADE} />)
     const socket = ultimoSocket()
     socket.abrir()
     return socket
@@ -1600,7 +1623,7 @@ describe('Conversa -- digitando e estado da conexao (TEC-351)', () => {
   })
 
   it('cenario 3: o cabecalho mostra Conectado, Reconectando… e Offline', () => {
-    render(<Conversa endereco={ENDERECO} nome="Lia" />)
+    render(<Conversa endereco={ENDERECO} nome="Lia" privacidade={PRIVACIDADE} />)
     expect(cabecalho()).toHaveTextContent('Conectando…')
 
     const socket = ultimoSocket()
@@ -1622,5 +1645,151 @@ describe('Conversa -- digitando e estado da conexao (TEC-351)', () => {
     socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 20 s.', aguardeSegundos: 20 })
     socket.fechar(1013)
     expect(cabecalho()).toHaveTextContent('Offline')
+  })
+})
+
+describe('Conversa -- aviso de privacidade e consentimento (TEC-352)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(AGORA)
+  })
+
+  const FINALIDADE = /Usamos os dados que você informar nesta conversa/
+
+  function marketing() {
+    return screen.getByRole('checkbox', { name: /Aceito receber ofertas de imóveis/ })
+  }
+
+  function consentimentos(socket: SocketFalso) {
+    return socket.frames().filter((f) => f.tipo === 'consentimento')
+  }
+
+  it('cenario 1: a faixa aparece antes do campo, com os links do aviso e do encarregado', () => {
+    montarAberto()
+
+    const faixa = screen.getByText(FINALIDADE)
+    const campo = screen.getByRole('textbox', { name: 'Mensagem' })
+    // "Antes do campo": na ordem do documento, que e a ordem de leitura.
+    expect(faixa.compareDocumentPosition(campo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const aviso = screen.getByRole('link', { name: 'Aviso de privacidade' })
+    expect(aviso).toHaveAttribute('href', 'https://imobiliaria.com.br/privacidade')
+    expect(aviso).toHaveAttribute('target', '_blank')
+    expect(screen.getByRole('link', { name: 'Contato do encarregado' })).toHaveAttribute(
+      'href',
+      'mailto:encarregado@imobiliaria.com.br',
+    )
+  })
+
+  it('cenario 2: a opcao de receber ofertas comeca desmarcada', () => {
+    montarAberto()
+    expect(marketing()).not.toBeChecked()
+  })
+
+  it('cenario 3: marcada, a primeira mensagem manda o aceite antes dela, com o texto exibido e o instante', () => {
+    const socket = montarAberto()
+    fireEvent.click(marketing())
+
+    enviar('Oi, quero um apartamento')
+
+    const tipos = socket.frames().map((f) => f.tipo)
+    expect(tipos).toEqual(['ola', 'consentimento', 'mensagem'])
+    const [consentimento] = consentimentos(socket)
+    expect(consentimento).toEqual({
+      tipo: 'consentimento',
+      marketing: true,
+      textoExibido: expect.stringMatching(FINALIDADE),
+      exibidoEm: new Date(AGORA).toISOString(),
+    })
+    // O texto exibido leva os destinos dos links e o texto do checkbox.
+    expect(consentimento.textoExibido).toContain('https://imobiliaria.com.br/privacidade')
+    expect(consentimento.textoExibido).toContain('encarregado@imobiliaria.com.br')
+    expect(consentimento.textoExibido).toContain('Aceito receber ofertas de imóveis')
+  })
+
+  it('cenario 4: desmarcada, a conversa segue e o frame leva a recusa, que o servidor grava como nao-consentimento', () => {
+    const socket = montarAberto()
+
+    enviar('Oi')
+
+    expect(consentimentos(socket)).toEqual([CONSENTIMENTO_PENDENTE])
+    expect(socket.frames().at(-1)).toMatchObject({ tipo: 'mensagem', texto: 'Oi' })
+    expect(screen.getByText('Oi').closest('li')).toHaveClass('conversa__balao--visitante')
+  })
+
+  it('depois da primeira mensagem, a faixa fica so com os links, e o consentimento nao sai de novo', () => {
+    const socket = montarAberto()
+    enviar('Oi')
+
+    expect(screen.queryByText(FINALIDADE)).toBeNull()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Aviso de privacidade' })).toBeInTheDocument()
+
+    enviar('Tem garagem?')
+    expect(consentimentos(socket)).toHaveLength(1)
+  })
+
+  it('retomando uma conversa em que a visitante ja escreveu, a faixa nao volta', () => {
+    guardarSessao(SESSAO, AGORA - UM_DIA_MS)
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.receber({ tipo: 'historico', mensagens: doze() })
+
+    expect(screen.queryByText(FINALIDADE)).toBeNull()
+    enviar('Voltei')
+    expect(consentimentos(socket)).toEqual([])
+  })
+
+  it('sem socket aberto, o consentimento espera o open e sai antes da mensagem', () => {
+    render(<Conversa endereco={ENDERECO} nome={null} privacidade={PRIVACIDADE} />)
+    const socket = ultimoSocket()
+
+    enviar('Oi')
+    expect(socket.enviados).toEqual([])
+    socket.abrir()
+
+    expect(socket.frames().map((f) => f.tipo)).toEqual(['ola', 'consentimento', 'mensagem'])
+  })
+
+  it('registrado, o consentimento nao sai no socket seguinte', () => {
+    const socket = montarAberto()
+    enviar('Oi')
+    socket.receber({ tipo: 'consentimento_registrado' })
+
+    socket.fechar()
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
+    const novo = ultimoSocket()
+    novo.abrir()
+
+    expect(consentimentos(novo)).toEqual([])
+  })
+
+  it('o banco recusou (consentimento_nao_registrado): o socket seguinte manda de novo', () => {
+    const socket = montarAberto()
+    enviar('Oi')
+    socket.receber({ tipo: 'erro', codigo: 'consentimento_nao_registrado', mensagem: 'x' })
+
+    socket.fechar()
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
+    const novo = ultimoSocket()
+    novo.abrir()
+
+    expect(consentimentos(novo)).toEqual([CONSENTIMENTO_PENDENTE])
+  })
+
+  it('encerrar a conversa volta a faixa, com o checkbox desmarcado', () => {
+    montarAberto()
+    fireEvent.click(marketing())
+    enviar('Oi')
+
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+    ultimoSocket().abrir()
+
+    expect(screen.getByText(FINALIDADE)).toBeInTheDocument()
+    expect(marketing()).not.toBeChecked()
   })
 })

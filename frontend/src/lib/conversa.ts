@@ -19,9 +19,13 @@
  * mesmo objeto -- e a mesma chave --, e so a que falta ganha chave nova: ver
  * `aplicarHistorico`.
  *
- * **Frames do servidor que esta tela ainda ignora, e quem trata cada um:**
- * `imagem` e `consentimento_registrado` (TEC-352). A `imagem` ja apaga o
- * indicador de digitacao, porque e fala do agente.
+ * **O frame do servidor que esta tela ainda ignora e a `imagem`**, que so
+ * apaga o indicador de digitacao, porque e fala do agente.
+ *
+ * **O consentimento da TEC-352** (`consentimento` da `Conversa`): a primeira
+ * mensagem da visitante despacha `deuCiencia` antes de `enviou`, e o
+ * componente manda o frame; `consentimento_registrado` e os erros de
+ * consentimento decidem se ele ainda precisa sair. Ver `aplicarErro`.
  *
  * **`digitando` liga o indicador desde a TEC-351** (`digitando` da
  * `Conversa`): a proxima fala do agente, o socket que fecha e o encerramento
@@ -74,7 +78,26 @@ export type Conexao =
  */
 export type Digitando = { ate: number | null }
 
-export type Conversa = { mensagens: Mensagem[]; conexao: Conexao; sessao: string | null; digitando: Digitando | null }
+/**
+ * O consentimento da primeira mensagem (TEC-352, D4): o que o frame
+ * `consentimento` leva, e se ele ainda precisa sair. `pendente` sai no socket
+ * aberto e em todo `open` ate o servidor responder; `registrado` e `recusado`
+ * (frame mal formado, que mandar de novo recusaria igual) nao saem mais.
+ */
+export type Consentimento = {
+  marketing: boolean
+  textoExibido: string
+  exibidoEm: string
+  estado: 'pendente' | 'registrado' | 'recusado'
+}
+
+export type Conversa = {
+  mensagens: Mensagem[]
+  conexao: Conexao
+  sessao: string | null
+  digitando: Digitando | null
+  consentimento: Consentimento | null
+}
 
 export type Evento =
   | { tipo: 'abriu' }
@@ -94,6 +117,8 @@ export type Evento =
   | { tipo: 'adormeceu' }
   // Cinco minutos desde a primeira queda venceram (TEC-348, D3).
   | { tipo: 'desistiu' }
+  // A primeira mensagem vale como ciencia do aviso (TEC-352, D4).
+  | { tipo: 'deuCiencia'; marketing: boolean; textoExibido: string; exibidoEm: string }
   // O prazo do indicador `indicador` venceu (TEC-351, D2).
   | { tipo: 'digitacaoVenceu'; indicador: Digitando }
 
@@ -146,7 +171,24 @@ export const MAXIMO_DE_CARDS = 3
 /** Quanto tempo sem `ack` marca uma mensagem enviada como `falhou` (D3). */
 export const PRAZO_DO_ACK_MS = 10_000
 
-export const INICIAL: Conversa = { mensagens: [], conexao: { tipo: 'conectando' }, sessao: null, digitando: null }
+export const INICIAL: Conversa = {
+  mensagens: [],
+  conexao: { tipo: 'conectando' },
+  sessao: null,
+  digitando: null,
+  consentimento: null,
+}
+
+// Os erros de um frame `consentimento` mal formado (`MENSAGEM_DO_ERRO`, em
+// `src/mobia/api/routes/widget.py`): mandar de novo o mesmo frame daria o
+// mesmo erro. `consentimento_nao_registrado` fica de fora -- e o banco, e o
+// proximo socket tenta de novo.
+const ERROS_DO_CONSENTIMENTO_MAL_FORMADO = new Set(['consentimento_invalido', 'aviso_ausente', 'aviso_longo_demais'])
+
+function encerrarConsentimento(estado: Conversa, final: 'registrado' | 'recusado'): Conversa {
+  const atual = estado.consentimento
+  return atual?.estado === 'pendente' ? { ...estado, consentimento: { ...atual, estado: final } } : estado
+}
 
 /** Devolve a MESMA `Conversa` quando o indicador ja esta apagado. */
 function semDigitando(estado: Conversa): Conversa {
@@ -396,6 +438,9 @@ function aplicarErro(estado: Conversa, dado: FrameBruto): Conversa {
   if (dado.codigo === 'muitas_tentativas') {
     return aplicarMuitasTentativas(estado, dado)
   }
+  if (typeof dado.codigo === 'string' && ERROS_DO_CONSENTIMENTO_MAL_FORMADO.has(dado.codigo)) {
+    return encerrarConsentimento(estado, 'recusado')
+  }
   return typeof dado.messageId === 'string' ? marcarFalhouSeEnviando(estado, dado.messageId) : estado
 }
 
@@ -428,9 +473,11 @@ function aplicarFrame(estado: Conversa, bruto: string): Conversa {
       return aplicarErro(estado, objeto)
     case 'historico':
       return aplicarHistorico(estado, objeto)
+    case 'consentimento_registrado':
+      return encerrarConsentimento(estado, 'registrado')
     default:
-      // consentimento_registrado, e qualquer tipo que o servidor venha a
-      // mandar e esta tela ainda nao conheca.
+      // Qualquer tipo que o servidor venha a mandar e esta tela ainda nao
+      // conheca.
       return estado
   }
 }
@@ -505,6 +552,19 @@ export function reduzir(estado: Conversa, evento: Evento): Conversa {
       // O indicador era do socket que caiu (TEC-351, D2): o que o agente disse
       // enquanto isso volta pelo `historico` da reconexao.
       return semDigitando(aplicarFechou(estado, evento.codigo, evento.agora))
+    case 'deuCiencia':
+      // Uma vez por sessao: o `encerrou` zera, e a sessao nova pergunta de novo.
+      return estado.consentimento !== null
+        ? estado
+        : {
+            ...estado,
+            consentimento: {
+              marketing: evento.marketing,
+              textoExibido: evento.textoExibido,
+              exibidoEm: evento.exibidoEm,
+              estado: 'pendente',
+            },
+          }
     case 'digitacaoVenceu':
       // So o indicador daquele frame: um `digitando` mais novo tem prazo proprio.
       return estado.digitando === evento.indicador ? { ...estado, digitando: null } : estado

@@ -872,6 +872,50 @@ def test_tenant_slug_fora_do_formato_nao_sobe(slug: str) -> None:
         Settings(_env_file=None, tenant_slug=slug)
 
 
+def test_privacidade_do_chat_nula_por_padrao_e_vazia_vira_nula() -> None:
+    """TEC-352, D2: nulo e o lado seguro -- o chat nao abre conversa."""
+    padrao = Settings(_env_file=None)
+    assert padrao.aviso_de_privacidade_url is None
+    assert padrao.encarregado_email is None
+
+    vazia = Settings(_env_file=None, aviso_de_privacidade_url="", encarregado_email="")
+    assert vazia.aviso_de_privacidade_url is None
+    assert vazia.encarregado_email is None
+
+
+def test_privacidade_do_chat_no_formato_sobe() -> None:
+    settings = Settings(
+        _env_file=None,
+        aviso_de_privacidade_url="https://imobiliaria.com.br/privacidade?v=2",
+        encarregado_email="encarregado@imobiliaria.com.br",
+    )
+    assert settings.aviso_de_privacidade_url == "https://imobiliaria.com.br/privacidade?v=2"
+    assert settings.encarregado_email == "encarregado@imobiliaria.com.br"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "imobiliaria.com.br/privacidade",
+        "javascript:alert(1)",
+        "ftp://x.com/a",
+        "https://",
+        "https://a b",
+    ],
+)
+def test_aviso_de_privacidade_fora_do_formato_nao_sobe(url: str) -> None:
+    """TEC-352, D1: o Next so aceita `http(s)` no `href`; aceitar aqui um valor
+    que ele recusa deixaria o chat indisponivel em todo site, sem dizer por que."""
+    with pytest.raises(ValidationError, match="AVISO_DE_PRIVACIDADE_URL"):
+        Settings(_env_file=None, aviso_de_privacidade_url=url)
+
+
+@pytest.mark.parametrize("email", ["encarregado", "encarregado@", "@imob.com", "a@b", "a b@c.com"])
+def test_encarregado_fora_do_formato_nao_sobe(email: str) -> None:
+    with pytest.raises(ValidationError, match="ENCARREGADO_EMAIL"):
+        Settings(_env_file=None, encarregado_email=email)
+
+
 def test_origens_do_widget_vazia_nao_permite_nada() -> None:
     """TEC-365, D2: o padrao e o lado seguro -- nenhum handshake passa."""
     assert Settings(_env_file=None).origens_permitidas_do_widget == frozenset()

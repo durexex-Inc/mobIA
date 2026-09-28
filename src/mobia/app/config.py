@@ -55,6 +55,12 @@ _FORMATO_DO_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 # nada depois.
 _FORMATO_DA_ORIGEM = re.compile(r"(https?)://[a-z0-9.-]+(?::(\d{1,5}))?")
 
+# TEC-352, D1. O aviso de privacidade: `http(s)://`, um host e o que vier
+# depois, sem espaco. O e-mail do encarregado: algo antes e depois do `@`, com
+# um ponto no dominio -- forma, e nao entrega.
+_FORMATO_DO_AVISO = re.compile(r"https?://[^\s/?#]+[^\s]*")
+_FORMATO_DO_EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
+
 # O navegador omite a porta padrao do `Origin`, entao uma entrada que a escreve
 # nunca casaria.
 _PORTA_PADRAO = {"http": "80", "https": "443"}
@@ -389,6 +395,16 @@ class Settings(BaseSettings):
     # recusa todo handshake**, pelo mesmo lado seguro do `tenant_slug`. Cada
     # entrada e conferida na subida: ver `_origens_do_widget_sao_origens`.
     origens_do_widget: str = ""
+
+    # TEC-352, D1. O aviso de privacidade que a faixa do chat web linka, e o
+    # e-mail do encarregado (RNF-24). **Nulos por padrao, e nulo fecha o chat**:
+    # sem os dois, a pagina `/embed/chat` diz que o atendimento esta
+    # indisponivel e nao abre conversa nenhuma (D2) -- nenhum dado coletado
+    # sem o aviso. Configuracao de implantacao, como o `tenant_slug`, e nao da
+    # imobiliaria no painel: tenant unico na POC (PR-03). Fora do formato, nao
+    # sobe -- ver `_aviso_de_privacidade_e_url` e `_encarregado_e_email`.
+    aviso_de_privacidade_url: str | None = None
+    encarregado_email: str | None = None
 
     # A base do dashboard (E8), para o link da RN-15.5 e para o da RN-16.2.
     # Vazia em desenvolvimento: o dashboard nao existe ainda, e o link
@@ -990,6 +1006,40 @@ class Settings(BaseSettings):
                 "(^[a-z0-9][a-z0-9-]{0,63}$) -- o Next recusa qualquer outro, e o botao "
                 "sumiria de todo site sem aviso."
             )
+        return valor
+
+    @field_validator("aviso_de_privacidade_url", mode="before")
+    @classmethod
+    def _aviso_de_privacidade_e_url(cls, valor: object) -> object:
+        """Endereco `http` ou `https` com host, e nada mais.
+
+        Ele vira `href` na faixa do chat, e o Next so aceita esses dois
+        esquemas (`urlSegura`, em `frontend/src/lib/imovel.ts`): um valor fora
+        disso deixaria o chat indisponivel em todo site sem dizer por que.
+        Mesmo argumento de `_tenant_slug_no_formato_do_next`. Vazio vira nulo.
+        """
+        if valor is None or valor == "":
+            return None
+        if not isinstance(valor, str) or not _FORMATO_DO_AVISO.fullmatch(valor):
+            raise ValueError(
+                f"AVISO_DE_PRIVACIDADE_URL nao e um endereco http(s); recebi {valor!r}. "
+                "Use o endereco completo do aviso, como https://imobiliaria.com.br/privacidade."
+            )
+        return valor
+
+    @field_validator("encarregado_email", mode="before")
+    @classmethod
+    def _encarregado_e_email(cls, valor: object) -> object:
+        """Um e-mail, porque vira `mailto:` na faixa. Vazio vira nulo.
+
+        A checagem e de forma, e nao de entrega: ninguem aqui sabe se a caixa
+        existe. O que ela pega e o erro de digitacao que faria o link de
+        contato do encarregado abrir um destinatario invalido.
+        """
+        if valor is None or valor == "":
+            return None
+        if not isinstance(valor, str) or not _FORMATO_DO_EMAIL.fullmatch(valor):
+            raise ValueError(f"ENCARREGADO_EMAIL nao e um e-mail; recebi {valor!r}.")
         return valor
 
     @field_validator("origens_do_widget")

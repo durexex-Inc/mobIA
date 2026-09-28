@@ -2,6 +2,7 @@ import 'server-only'
 
 import { type Aparencia, lerAparencia } from '@/lib/aparencia'
 import { lerDominios } from '@/lib/dominios'
+import { lerPrivacidade, type Privacidade } from '@/lib/privacidade'
 
 import { chamarApi } from './api'
 
@@ -38,10 +39,14 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/
  * **Os `dominios` vem junto (TEC-345, D3)**, porque sao do mesmo corpo e do
  * mesmo cache: `/embed/aparencia` os usa para negar a aparencia a quem pede de
  * outro site. Nao vao ao loader -- a rota os tira antes de responder.
+ *
+ * **A `privacidade` tambem (TEC-352, D1)**: o aviso e o encarregado que a
+ * faixa do chat mostra, ou `null` se falta um dos dois. Tambem nao vai ao
+ * loader.
  */
 export async function buscarAparencia(
   tenant: string,
-): Promise<(Aparencia & { dominios: string[] }) | null> {
+): Promise<(Aparencia & { dominios: string[]; privacidade: Privacidade | null }) | null> {
   if (!SLUG.test(tenant)) {
     return null
   }
@@ -60,5 +65,7 @@ export async function buscarAparencia(
   if (configurado !== tenant) {
     return null
   }
-  return { ...aparencia, dominios }
+  // `null` quando falta o aviso ou o encarregado, e nao erro: e configuracao
+  // ausente, e a pagina do chat diz que esta indisponivel (TEC-352, D2).
+  return { ...aparencia, dominios, privacidade: lerPrivacidade(corpo) }
 }

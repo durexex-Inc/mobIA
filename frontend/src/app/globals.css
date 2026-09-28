@@ -659,6 +659,42 @@ a {
   background: #facc15;
 }
 
+/* A faixa de privacidade (TEC-352): antes do campo. A finalidade e o checkbox
+   so ate a primeira mensagem; os links ficam. */
+.conversa__privacidade {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  font-size: 0.8125rem;
+}
+
+.conversa__finalidade,
+.conversa__links-de-privacidade {
+  margin: 0;
+}
+
+.conversa__links-de-privacidade a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.conversa__marketing {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.conversa__marketing input {
+  margin-top: 2px;
+}
+
+.chat-embutido__indisponivel {
+  margin: 0;
+  padding: 24px 16px;
+}
+
 /* O "está digitando…" (TEC-351): fora do `log`, acima do campo. */
 .conversa__digitando {
   margin: 0;

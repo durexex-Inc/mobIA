@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { notFound } from 'next/navigation'
 
 import { AvisoDePronto } from '@/components/AvisoDePronto'
+import { CabecalhoDoChat } from '@/components/CabecalhoDoChat'
 import { Conversa } from '@/components/Conversa'
 import { buscarAparencia } from '@/lib/servidor/aparencia'
 import { enderecoDoChat } from '@/lib/servidor/enderecoDoChat'
@@ -27,6 +28,10 @@ export const metadata: Metadata = {
  * interpolacao e segura porque `buscarAparencia` so devolve cor que casa com
  * `#RRGGBB`.
  *
+ * **Sem aviso de privacidade e encarregado, a conversa nao abre** (TEC-352,
+ * D2): o cabecalho e um aviso de indisponivel, sem socket. O `mobia:pronto`
+ * sai mesmo assim, para o painel do loader abrir e mostrar o aviso.
+ *
  * Tenant inexistente e 404, e a pagina nao manda `mobia:pronto`: o loader so
  * chega aqui depois de a aparencia responder 200, entao isto e a configuracao
  * mudando entre um pedido e outro, e o botao sumir e o desfecho certo.
@@ -42,7 +47,23 @@ export default async function ChatEmbutido({ searchParams }: PageProps<'/embed/c
   return (
     <main className="chat-embutido">
       <style nonce={nonce}>{`.chat-embutido { --cor-primaria: ${aparencia.corPrimaria}; }`}</style>
-      <Conversa endereco={enderecoDoChat()} nome={aparencia.nomeDoAssistente} />
+      {aparencia.privacidade ? (
+        <Conversa
+          endereco={enderecoDoChat()}
+          nome={aparencia.nomeDoAssistente}
+          privacidade={aparencia.privacidade}
+        />
+      ) : (
+        // TEC-352, D2: sem aviso de privacidade e encarregado configurados,
+        // nenhuma conversa abre -- nem socket, nem campo. O cabecalho fica,
+        // para a visitante saber de quem e o chat.
+        <>
+          <CabecalhoDoChat nome={aparencia.nomeDoAssistente} />
+          <p className="chat-embutido__indisponivel" role="status">
+            O chat está indisponível no momento.
+          </p>
+        </>
+      )}
       <AvisoDePronto />
     </main>
   )
