@@ -333,11 +333,12 @@ describe('Conversa', () => {
     enviar('Aceita pet?')
     const { id } = frameDeMensagem(socket)
 
-    // A queda marca a mensagem como falhou antes dos 10 s.
+    // O 1002 -- o unico fechamento que nao reconecta sozinho (TEC-348, D2) --
+    // marca a mensagem como falhou antes dos 10 s.
     act(() => {
       vi.advanceTimersByTime(3_000)
     })
-    socket.fechar()
+    socket.fechar(1002)
     fireEvent.click(screen.getByRole('button', { name: 'Reenviar' }))
     ultimoSocket().abrir()
 
@@ -351,13 +352,13 @@ describe('Conversa', () => {
     expect(screen.getByText('Recebida')).toBeInTheDocument()
   })
 
-  it('queda com mensagem pendente marca "Não enviada"; "Reenviar" abre socket novo, manda ola com a sessao e depois a mensagem', () => {
+  it('fechamento 1002 com mensagem pendente marca "Não enviada"; "Reenviar" abre socket novo, manda ola com a sessao e depois a mensagem', () => {
     const socket = montarAberto()
     socket.receber({ tipo: 'sessao', sessao: SESSAO })
     enviar('Qual o valor do condomínio?')
     const { id } = frameDeMensagem(socket)
 
-    socket.fechar()
+    socket.fechar(1002)
 
     expect(screen.getByText('Não enviada')).toBeInTheDocument()
 
@@ -376,11 +377,11 @@ describe('Conversa', () => {
     expect(screen.getByText('Enviando…')).toBeInTheDocument()
   })
 
-  it('reenviar duas mensagens com o socket fechado abre um socket so', () => {
+  it('reenviar duas mensagens depois de um 1002 abre um socket so', () => {
     const socket = montarAberto()
     enviar('Primeira')
     enviar('Segunda')
-    socket.fechar()
+    socket.fechar(1002)
 
     for (const botao of screen.getAllByRole('button', { name: 'Reenviar' })) {
       fireEvent.click(botao)
@@ -404,7 +405,7 @@ describe('Conversa', () => {
   it('evento do socket antigo nao chega a tela depois da troca', () => {
     const antigo = montarAberto()
     enviar('Oi')
-    antigo.fechar()
+    antigo.fechar(1002)
     fireEvent.click(screen.getByRole('button', { name: 'Reenviar' }))
     ultimoSocket().abrir()
 
@@ -848,8 +849,8 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
   })
 
   it('TEC-366: uma queda comum nao vira sono, e reabrir o painel nao reconecta sozinho', () => {
-    // O contraste que prova que o codigo 4000 e o que decide: a reconexao
-    // automatica depois de uma queda e da TEC-348.
+    // O contraste que prova que o codigo 4000 e o que decide: depois de uma
+    // queda quem reconecta e o timer da TEC-348, e nao o painel reaberto.
     const socket = montarAberto()
     socket.receber({ tipo: 'sessao', sessao: SESSAO })
     avisar({ tipo: 'mobia:visibilidade', aberto: false })
@@ -1058,11 +1059,16 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
     const antes = within(screen.getByRole('list')).getAllByRole('listitem')
     expect(antes).toHaveLength(14)
 
-    // Queda; a proxima mensagem abre socket novo, que retoma e recebe o
-    // historico -- o mesmo que a tela ja tinha, mais uma fala nova.
+    // Queda; a mensagem escrita nela espera a reconexao automatica (TEC-348),
+    // e o socket novo retoma e recebe o historico -- o mesmo que a tela ja
+    // tinha, mais uma fala nova.
     socket.fechar()
     enviar('E piscina?')
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
     const novo = ultimoSocket()
+    expect(novo).not.toBe(socket)
     novo.abrir()
     novo.receber({ tipo: 'sessao', sessao: SESSAO })
     novo.receber({
@@ -1128,5 +1134,265 @@ describe('Conversa -- retomada, encerramento e sono (TEC-347)', () => {
 
     avisar({ tipo: 'mobia:visibilidade', aberto: true })
     expect(SocketFalso.instancias).toHaveLength(1)
+  })
+})
+
+const AVISO_DE_INSTAVEL = 'Nosso atendimento está instável. Deixe sua mensagem que responderemos.'
+
+describe('Conversa -- reconexao automatica e fila local (TEC-348)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(AGORA)
+  })
+
+  function avancar(ms: number) {
+    act(() => {
+      vi.advanceTimersByTime(ms)
+    })
+  }
+
+  function mensagensDe(socket: SocketFalso) {
+    return socket.frames().filter((f) => f.tipo === 'mensagem')
+  }
+
+  it('cenario 1: a mensagem enviada durante a queda sai uma vez, depois do ola, e vai a "Recebida"', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+
+    socket.fechar()
+    expect(screen.getByText('Reconectando…')).toBeInTheDocument()
+    // O campo continua de pe durante a queda.
+    enviar('Tem vaga de garagem?')
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+    // Enviar na queda nao fura a espera da tentativa.
+    expect(SocketFalso.instancias).toHaveLength(1)
+
+    avancar(1_000)
+    expect(SocketFalso.instancias).toHaveLength(2)
+    const novo = ultimoSocket()
+    novo.abrir()
+
+    const [mensagem] = mensagensDe(novo)
+    expect(novo.frames()).toEqual([
+      { tipo: 'ola', sessao: SESSAO },
+      { tipo: 'mensagem', id: mensagem.id, texto: 'Tem vaga de garagem?' },
+    ])
+    expect(mensagem.id).toMatch(UUID_V4)
+    expect(screen.queryByText('Reconectando…')).toBeNull()
+
+    novo.receber({ tipo: 'ack', messageId: mensagem.id })
+    expect(screen.getByText('Recebida')).toBeInTheDocument()
+    expect(screen.getAllByText('Tem vaga de garagem?')).toHaveLength(1)
+  })
+
+  it('a mensagem que saiu pelo socket que caiu sem ack sai de novo, com o mesmo id, uma vez', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    enviar('Aceita pet?')
+    const { id } = frameDeMensagem(socket)
+
+    socket.fechar()
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+    avancar(1_000)
+    const novo = ultimoSocket()
+    novo.abrir()
+
+    expect(mensagensDe(novo)).toEqual([{ tipo: 'mensagem', id, texto: 'Aceita pet?' }])
+  })
+
+  it('o prazo do ack nao corre durante a queda, e volta a correr quando a mensagem sai', () => {
+    const socket = montarAberto()
+    socket.fechar()
+    enviar('Tem piscina?')
+
+    // Tres tentativas que nao abrem: 1 + 2 + 4 s, e mais uns segundos.
+    avancar(1_000)
+    ultimoSocket().fechar()
+    avancar(2_000)
+    ultimoSocket().fechar()
+    avancar(4_000)
+    ultimoSocket().fechar()
+    avancar(5_000)
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+    expect(screen.queryByText('Não enviada')).toBeNull()
+
+    // A quarta tentativa abre; a mensagem sai e o prazo de 10 s comeca.
+    avancar(3_000)
+    ultimoSocket().abrir()
+    avancar(9_999)
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+    avancar(1)
+    expect(screen.getByText('Não enviada')).toBeInTheDocument()
+  })
+
+  it('cenario 2: as esperas antes das tentativas sao 1, 2, 4, 8, 16, 30 e 30 s', () => {
+    const socket = montarAberto()
+    socket.fechar()
+
+    for (const [tentativa, espera] of [
+      [1, 1],
+      [2, 2],
+      [3, 4],
+      [4, 8],
+      [5, 16],
+      [6, 30],
+      [7, 30],
+    ]) {
+      avancar(espera * 1000 - 1)
+      expect(SocketFalso.instancias, `antes da tentativa ${tentativa}`).toHaveLength(tentativa)
+      avancar(1)
+      expect(SocketFalso.instancias, `tentativa ${tentativa}`).toHaveLength(tentativa + 1)
+      ultimoSocket().fechar()
+    }
+  })
+
+  it('a tentativa que abre zera a contagem: a proxima queda volta a esperar 1 s', () => {
+    const socket = montarAberto()
+    socket.fechar()
+    avancar(1_000)
+    ultimoSocket().fechar()
+    avancar(2_000)
+    ultimoSocket().abrir()
+
+    ultimoSocket().fechar()
+    avancar(1_000)
+    expect(SocketFalso.instancias).toHaveLength(4)
+  })
+
+  it('cenario 3: cinco minutos sem conexao param as tentativas e oferecem "Tentar de novo"', () => {
+    const socket = montarAberto()
+    socket.fechar()
+
+    // Cada tentativa fecha sem abrir, ate um segundo antes dos cinco minutos.
+    const cincoMinutos = 5 * 60 * 1000
+    let passou = 0
+    while (passou < cincoMinutos - 1_000) {
+      const antes = SocketFalso.instancias.length
+      avancar(1_000)
+      passou += 1_000
+      if (SocketFalso.instancias.length > antes) {
+        ultimoSocket().fechar()
+      }
+    }
+    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
+    avancar(cincoMinutos - passou)
+
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeInTheDocument()
+    expect(screen.getByText('Sem conexão.')).toBeInTheDocument()
+    expect(screen.queryByText('Reconectando…')).toBeNull()
+
+    const tentativas = SocketFalso.instancias.length
+    avancar(10 * 60 * 1000)
+    expect(SocketFalso.instancias).toHaveLength(tentativas)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+    expect(SocketFalso.instancias).toHaveLength(tentativas + 1)
+    expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
+    ultimoSocket().abrir()
+    expect(screen.queryByText('Sem conexão.')).toBeNull()
+  })
+
+  it('"Tentar de novo" que falha recomeca a reconexao automatica em 1 s', () => {
+    const socket = montarAberto()
+    socket.fechar()
+    avancar(5 * 60 * 1000)
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+    const tentativas = SocketFalso.instancias.length
+
+    ultimoSocket().fechar()
+    expect(screen.getByText('Reconectando…')).toBeInTheDocument()
+    avancar(1_000)
+    expect(SocketFalso.instancias).toHaveLength(tentativas + 1)
+  })
+
+  it('em offline, a mensagem mantida na fila sai no socket que "Tentar de novo" abre', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.fechar()
+    enviar('Ainda estão aí?')
+    avancar(5 * 60 * 1000)
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }))
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(mensagensDe(novo).map((f) => f.texto)).toEqual(['Ainda estão aí?'])
+  })
+
+  it('em offline, enviar uma mensagem reconecta na hora', () => {
+    const socket = montarAberto()
+    socket.fechar()
+    avancar(5 * 60 * 1000)
+    const tentativas = SocketFalso.instancias.length
+
+    enviar('Oi?')
+
+    expect(SocketFalso.instancias).toHaveLength(tentativas + 1)
+    ultimoSocket().abrir()
+    expect(mensagensDe(ultimoSocket()).map((f) => f.texto)).toEqual(['Oi?'])
+  })
+
+  it('cenario 4: fechamento 1011 diz que o atendimento esta instavel e mantem a mensagem na fila', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    socket.fechar(1011)
+
+    expect(screen.getByText(AVISO_DE_INSTAVEL)).toBeInTheDocument()
+    expect(screen.getByText('Reconectando…')).toBeInTheDocument()
+
+    enviar('Tem vaga de garagem?')
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+
+    // A tentativa seguinte tambem nao abre: a frase continua, e a mensagem tambem.
+    avancar(1_000)
+    ultimoSocket().fechar()
+    expect(screen.getByText(AVISO_DE_INSTAVEL)).toBeInTheDocument()
+    expect(screen.getByText('Enviando…')).toBeInTheDocument()
+
+    avancar(2_000)
+    const novo = ultimoSocket()
+    novo.abrir()
+    expect(mensagensDe(novo).map((f) => f.texto)).toEqual(['Tem vaga de garagem?'])
+    expect(screen.queryByText(AVISO_DE_INSTAVEL)).toBeNull()
+  })
+
+  it('fechamento 1002 nao reconecta sozinho', () => {
+    const socket = montarAberto()
+    socket.fechar(1002)
+    avancar(60_000)
+    expect(SocketFalso.instancias).toHaveLength(1)
+    expect(screen.queryByText('Reconectando…')).toBeNull()
+  })
+
+  it('a mensagem que o servidor gravou antes da queda nao aparece duas vezes quando o historico a traz', () => {
+    const socket = montarAberto()
+    socket.receber({ tipo: 'sessao', sessao: SESSAO })
+    enviar('Tem vaga de garagem?')
+    const { id } = frameDeMensagem(socket)
+
+    // O servidor gravou; o `ack` se perdeu na queda.
+    socket.fechar()
+    avancar(1_000)
+    const novo = ultimoSocket()
+    novo.abrir()
+    novo.receber({ tipo: 'sessao', sessao: SESSAO })
+    novo.receber({ tipo: 'historico', mensagens: [{ papel: 'lead', texto: 'Tem vaga de garagem?' }] })
+    novo.receber({ tipo: 'ack', messageId: id })
+
+    expect(screen.getAllByText('Tem vaga de garagem?')).toHaveLength(1)
+    expect(screen.getByText('Recebida')).toBeInTheDocument()
+  })
+
+  it('encerrar durante a queda abre a conversa nova na hora, sem esperar a tentativa', () => {
+    const socket = montarAberto()
+    socket.fechar()
+    abrirMenuEEscolherEncerrar()
+    fireEvent.click(screen.getByRole('button', { name: 'Encerrar' }))
+
+    expect(SocketFalso.instancias).toHaveLength(2)
+    expect(screen.queryByText('Reconectando…')).toBeNull()
+    // A tentativa que estava marcada morreu com a queda.
+    avancar(60_000)
+    expect(SocketFalso.instancias).toHaveLength(2)
   })
 })

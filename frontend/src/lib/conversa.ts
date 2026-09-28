@@ -14,7 +14,8 @@
  * **`historico` e a verdade do servidor (D2):** troca as mensagens
  * confirmadas (recebida da visitante, baloes do agente) pelas que o servidor
  * mandou, e mantem no fim, na ordem, as pendentes da visitante que ainda nao
- * foram confirmadas. A fala do historico que ja estava na tela fica com o
+ * foram confirmadas -- menos a que o historico ja traz, que ele confirma no
+ * lugar dela (D5 da TEC-348). A fala do historico que ja estava na tela fica com o
  * mesmo objeto -- e a mesma chave --, e so a que falta ganha chave nova: ver
  * `aplicarHistorico`.
  *
@@ -24,6 +25,13 @@
  * **`imovel` vira card desde a TEC-349** (`aplicarImovel`): a prosa do
  * primeiro frame, quando vem, e um balao do agente, e o imovel entra numa
  * fileira de cards (`autor: 'imoveis'`) que agrupa os frames do mesmo turno.
+ *
+ * **Queda de socket reconecta sozinha desde a TEC-348** (`aplicarFechou`): a
+ * conexao vai a `reconectando`, as pendentes continuam `enviando` -- sao a
+ * fila local, que sai de novo no `open` do socket seguinte -- e, cinco
+ * minutos depois da primeira queda, `desistiu` a leva a `offline`. Quanto
+ * esperar antes de cada tentativa e `esperaDaTentativa`; os timers sao de
+ * `components/Conversa.tsx`.
  */
 
 import { type ImovelCard, imovelDe } from '@/lib/imovel'
@@ -44,6 +52,13 @@ export type Conexao =
   // Minimizado sem atividade por 30 min (D4): o socket fechou de proposito,
   // nao e falha nenhuma.
   | { tipo: 'adormecida' }
+  // A queda da TEC-348 (D2): `tentativa` e o numero da proxima, `desde` o
+  // instante da primeira queda -- nao muda entre as tentativas --, e
+  // `instavel` diz que o servidor fechou com 1011 em algum momento dela.
+  | { tipo: 'reconectando'; tentativa: number; desde: number; instavel: boolean }
+  // Cinco minutos de queda sem conexao (D3): parou de tentar, e a tela
+  // oferece "Tentar de novo".
+  | { tipo: 'offline'; instavel: boolean }
 
 export type Conversa = { mensagens: Mensagem[]; conexao: Conexao; sessao: string | null }
 
@@ -51,7 +66,9 @@ export type Evento =
   | { tipo: 'abriu' }
   | { tipo: 'enviou'; messageId: string; texto: string }
   | { tipo: 'frame'; bruto: string }
-  | { tipo: 'fechou' }
+  // `codigo` e o do `CloseEvent`; `agora`, o relogio de quem despacha -- o
+  // redutor nao le relogio.
+  | { tipo: 'fechou'; codigo: number; agora: number }
   | { tipo: 'prazoDoAck'; messageId: string }
   | { tipo: 'reenviou'; messageId: string }
   // Um socket novo esta abrindo depois de uma pausa deliberada: o fim da
@@ -61,6 +78,8 @@ export type Evento =
   | { tipo: 'encerrou' }
   // 30 min minimizado sem atividade venceram (D4).
   | { tipo: 'adormeceu' }
+  // Cinco minutos desde a primeira queda venceram (TEC-348, D3).
+  | { tipo: 'desistiu' }
 
 /**
  * O codigo com que o SERVIDOR fecha o socket ocioso (TEC-366): 30 minutos sem
@@ -70,6 +89,34 @@ export type Evento =
  * reaberto, reconecta com a sessao.
  */
 export const CODIGO_OCIOSA = 4000
+
+/**
+ * Violacao de protocolo (RFC 6455), com que o servidor fecha frame que nao
+ * entende -- `CODIGO_PROTOCOLO` em `src/mobia/api/routes/widget.py`. E o unico
+ * fechamento que nao reconecta sozinho (TEC-348, D2): o cliente mandaria de
+ * novo o mesmo frame e levaria o mesmo 1002.
+ */
+export const CODIGO_PROTOCOLO = 1002
+
+/**
+ * Banco ou Redis fora do ar -- `CODIGO_INDISPONIVEL` no servidor. A tela diz
+ * que o atendimento esta instavel (TEC-348, D6), e a reconexao segue.
+ */
+export const CODIGO_INDISPONIVEL = 1011
+
+/** Quanto tempo de queda ate parar de tentar e oferecer "Tentar de novo" (TEC-348, D3). */
+export const PRAZO_SEM_CONEXAO_MS = 5 * 60 * 1000
+
+/** Teto da espera entre tentativas de reconexao (TEC-348, D1). */
+const ESPERA_MAXIMA_S = 30
+
+/**
+ * Os segundos de espera antes da tentativa de reconexao `tentativa` (1, 2,
+ * ...): 1, 2, 4, 8, 16, e 30 dali em diante (TEC-348, D1).
+ */
+export function esperaDaTentativa(tentativa: number): number {
+  return Math.min(2 ** (Math.max(1, tentativa) - 1), ESPERA_MAXIMA_S)
+}
 
 /** Teto do campo de texto (D5). A rede continua com o teto de 4096 do servidor. */
 export const LIMITE_DE_CARACTERES = 1000
@@ -238,7 +285,9 @@ function falaDoHistorico(item: unknown): FalaDoHistorico | null {
   return null
 }
 
-function ePendente(mensagem: Mensagem): boolean {
+type MensagemDaVisitante = Extract<Mensagem, { autor: 'visitante' }>
+
+function ePendente(mensagem: Mensagem): mensagem is MensagemDaVisitante {
   return mensagem.autor === 'visitante' && (mensagem.estado === 'enviando' || mensagem.estado === 'falhou')
 }
 
@@ -258,6 +307,13 @@ function ePendente(mensagem: Mensagem): boolean {
  * devolveu, como fala retida pela moderacao. Nao achando, a fala e nova e
  * ganha chave de `proximoNumero`, contado sobre a lista ANTIGA inteira, para
  * nao repetir a chave de ninguem que esteja saindo.
+ *
+ * **Fala nova da visitante confirma a pendente de mesmo texto (TEC-348,
+ * D5).** Na reconexao o servidor le o historico antes do reenvio, entao uma
+ * pendente que ele ja gravou -- o `ack` se perdeu na queda -- vem nele como
+ * fala nova. Ela casa com a primeira pendente de texto igual, na ordem: a
+ * pendente vai para a posicao do historico, com o mesmo `messageId`, ja
+ * `recebida`. Sem isso a tela a mostraria duas vezes.
  *
  * Se o resultado e a lista de antes, objeto por objeto, devolve a MESMA
  * `Conversa` -- inclusive historico vazio com a tela vazia.
@@ -289,6 +345,12 @@ function aplicarHistorico(estado: Conversa, dado: FrameBruto): Conversa {
     if (achada >= 0) {
       mensagens.push(confirmadas[achada])
       naTela = achada + 1
+      continue
+    }
+    const pendente = fala.autor === 'visitante' ? pendentes.findIndex((mensagem) => mensagem.texto === fala.texto) : -1
+    if (pendente >= 0) {
+      const [confirmada] = pendentes.splice(pendente, 1)
+      mensagens.push({ ...confirmada, estado: 'recebida' })
       continue
     }
     mensagens.push(
@@ -354,21 +416,44 @@ function marcarTodasEnviandoComoFalhou(mensagens: Mensagem[]): Mensagem[] {
   return mudou ? resultado : mensagens
 }
 
-function aplicarFechou(estado: Conversa): Conversa {
-  const mensagens = marcarTodasEnviandoComoFalhou(estado.mensagens)
-  // 'aguardando' e 'adormecida' sao os dois estados que uma queda de socket
-  // nao deve pisar: a espera de 'muitas_tentativas' e a informacao relevante
-  // na primeira -- 'fechada' pisaria em cima da contagem regressiva --, e
-  // 'adormecida' (D4) ja e um fechamento deliberado, que pode receber outro
-  // 'fechou' do mesmo socket sem virar 'fechada'. Quando a espera acaba, ou
-  // quando o painel reabre depois do sono, `reabrindo` troca qualquer das
-  // duas por 'conectando', e uma queda do socket novo antes do `open` vira
-  // 'fechada' normalmente.
-  const conexao: Conexao =
-    estado.conexao.tipo === 'aguardando' || estado.conexao.tipo === 'adormecida'
-      ? estado.conexao
-      : { tipo: 'fechada' }
-  return mensagens === estado.mensagens && conexao === estado.conexao ? estado : { ...estado, mensagens, conexao }
+/**
+ * O socket fechou (TEC-348, D2). Tres estados nao sao pisados por uma queda:
+ * a espera de 'muitas_tentativas' tem timer proprio, e trocar o estado
+ * pisaria em cima da contagem regressiva; 'adormecida' (D4 da TEC-347) ja e
+ * um fechamento deliberado, que pode receber outro 'fechou' do mesmo socket;
+ * e 'offline' ja desistiu, e o socket que cai depois disso e o da ultima
+ * tentativa. Nas duas primeiras as pendentes viram `falhou`, como antes da
+ * TEC-348; em 'offline' continuam na fila. Quando a espera acaba, ou quando o
+ * painel reabre depois do sono, `reabrindo` troca qualquer das tres por
+ * 'conectando', e uma queda do socket novo antes do `open` reconecta como
+ * qualquer outra.
+ *
+ * Fora delas, 1002 e cliente quebrado: 'fechada', e as pendentes viram
+ * `falhou` para a visitante reenviar a mao. Qualquer outro codigo reconecta:
+ * 'reconectando', com as pendentes ainda `enviando`. Uma queda durante
+ * 'reconectando' -- a tentativa que nao abriu -- soma uma tentativa e
+ * mantem `desde`.
+ */
+function aplicarFechou(estado: Conversa, codigo: number, agora: number): Conversa {
+  const atual = estado.conexao
+  if (atual.tipo === 'offline') {
+    return estado
+  }
+  if (atual.tipo === 'aguardando' || atual.tipo === 'adormecida' || codigo === CODIGO_PROTOCOLO) {
+    const mensagens = marcarTodasEnviandoComoFalhou(estado.mensagens)
+    const conexao: Conexao = atual.tipo === 'aguardando' || atual.tipo === 'adormecida' ? atual : { tipo: 'fechada' }
+    return mensagens === estado.mensagens && conexao === atual ? estado : { ...estado, mensagens, conexao }
+  }
+  const queda = atual.tipo === 'reconectando' ? atual : null
+  return {
+    ...estado,
+    conexao: {
+      tipo: 'reconectando',
+      tentativa: queda ? queda.tentativa + 1 : 1,
+      desde: queda ? queda.desde : agora,
+      instavel: (queda?.instavel ?? false) || codigo === CODIGO_INDISPONIVEL,
+    },
+  }
 }
 
 export function reduzir(estado: Conversa, evento: Evento): Conversa {
@@ -386,7 +471,7 @@ export function reduzir(estado: Conversa, evento: Evento): Conversa {
     case 'frame':
       return aplicarFrame(estado, evento.bruto)
     case 'fechou':
-      return aplicarFechou(estado)
+      return aplicarFechou(estado, evento.codigo, evento.agora)
     case 'prazoDoAck':
       return marcarFalhouSeEnviando(estado, evento.messageId)
     case 'reenviou':
@@ -400,6 +485,12 @@ export function reduzir(estado: Conversa, evento: Evento): Conversa {
       return { ...INICIAL, conexao: estado.conexao.tipo === 'aguardando' ? estado.conexao : { tipo: 'conectando' } }
     case 'adormeceu':
       return estado.conexao.tipo === 'adormecida' ? estado : { ...estado, conexao: { tipo: 'adormecida' } }
+    case 'desistiu':
+      // So uma queda em curso desiste: o timer dos 5 min pode vencer no mesmo
+      // instante em que a tentativa abriu.
+      return estado.conexao.tipo === 'reconectando'
+        ? { ...estado, conexao: { tipo: 'offline', instavel: estado.conexao.instavel } }
+        : estado
   }
 }
 

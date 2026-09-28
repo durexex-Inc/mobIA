@@ -19,10 +19,13 @@ import {
   CODIGO_OCIOSA,
   type Conexao,
   type EstadoDaMensagem,
+  esperaDaTentativa,
   INICIAL,
   LIMITE_DE_CARACTERES,
+  type Mensagem,
   novoMessageId,
   PRAZO_DO_ACK_MS,
+  PRAZO_SEM_CONEXAO_MS,
   reduzir,
 } from '@/lib/conversa'
 import { apagarSessao, armazemDoNavegador, gravarSessao, lerSessao } from '@/lib/sessaoGuardada'
@@ -40,6 +43,9 @@ const DISTANCIA_DO_FIM_PX = 40
 const PRAZO_DO_SONO_MS = 30 * 60 * 1000
 
 const PERGUNTA_DE_ENCERRAR = 'Encerrar esta conversa? O histórico some desta tela.'
+
+// TEC-348, D6: o texto da card para o servidor fora do ar (fechou com 1011).
+const AVISO_DE_INSTAVEL = 'Nosso atendimento está instável. Deixe sua mensagem que responderemos.'
 
 type Envio = { id: string; texto: string }
 
@@ -147,12 +153,22 @@ function MenuDaConversa({
  * e `close`, e um `close` atrasado marcaria como `falhou` o que o socket novo
  * esta enviando.
  *
- * **Mensagem que sai com o socket fechado espera o `open` na fila.** Enviar
- * ou reenviar sem socket aberto abre um novo (a menos que um ja esteja
- * conectando) e a mensagem sai logo depois do `ola`. Reenviar usa o mesmo
- * `messageId` (D3) -- o servidor deduplica dentro da sessao, e por isso a
- * reconexao retoma a sessao --, e despacha `reenviou`, nunca `enviou`, que
- * duplicaria o balao.
+ * **A fila local e o que esta `enviando` (TEC-348, D4).** No `open` de todo
+ * socket, logo depois do `ola`, sai de novo toda mensagem `enviando` da tela,
+ * na ordem e com o mesmo `messageId` -- inclusive a que tinha saido pelo
+ * socket que caiu e nao recebeu `ack`. O servidor deduplica dentro da sessao
+ * e confirma o repetido, e por isso a reconexao retoma a sessao. Enviar ou
+ * reenviar sem socket aberto abre um novo, a menos que um ja esteja
+ * conectando ou que a reconexao automatica esteja em curso -- ai a mensagem
+ * so espera. Reenviar despacha `reenviou`, nunca `enviou`, que duplicaria o
+ * balao. O prazo do `ack` so corre com a mensagem no fio: e agendado quando
+ * o frame sai, e todo `close` cancela todos.
+ *
+ * **Queda reconecta sozinha (TEC-348, D1 a D3).** O redutor leva a conexao a
+ * `reconectando`; aqui um timer espera `esperaDaTentativa` e abre o socket
+ * seguinte, e outro, cinco minutos depois da primeira queda, despacha
+ * `desistiu`. Em `offline`, "Tentar de novo" -- ou uma mensagem nova -- abre
+ * um socket na hora e, se ele cair, a contagem recomeca.
  *
  * **Toda conexao manda a sessao conhecida (TEC-347, D1 e D2).** A primeira
  * de cada montagem leva a que `lerSessao` achar valida no `localStorage` (30
@@ -166,10 +182,9 @@ function MenuDaConversa({
  * para o que ja estava nela. Gravar e so quando o servidor emite sessao
  * diferente da que este socket mandou no `ola`, isto e, quando cunhou uma
  * nova: retomar nao regrava, entao o prazo nao anda -- nem se outra aba
- * apagou a guardada no meio tempo. A reconexao depois de uma queda continua
- * manual (L5 da TEC-346) -- reconectar sozinho e da TEC-348. As reaberturas
- * automaticas sao o fim da espera de `muitas_tentativas` (D5 da TEC-346) e o
- * despertar do sono (abaixo).
+ * apagou a guardada no meio tempo. Alem da reconexao depois de uma queda
+ * (acima), as reaberturas automaticas sao o fim da espera de
+ * `muitas_tentativas` (D5 da TEC-346) e o despertar do sono (abaixo).
  *
  * **Encerrar (D3) nao avisa o servidor.** Apaga a sessao guardada e a da
  * memoria, zera a tela e troca o socket por um que manda `ola` com `null`
@@ -188,8 +203,11 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   const [rascunho, setRascunho] = useState('')
   const [confirmando, setConfirmando] = useState(false)
   const socketRef = useRef<WebSocket | null>(null)
-  // Mensagens que esperam o `open` do socket atual para sair.
+  // Mensagens que esperam o `open` do socket atual para sair. O `open` manda
+  // tambem toda `enviando` de `mensagensRef` (TEC-348, D4); a fila so garante
+  // a que foi despachada e ainda nao chegou a um render.
   const filaRef = useRef<Envio[]>([])
+  const mensagensRef = useRef<Mensagem[]>(INICIAL.mensagens)
   const prazosRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   // A sessao que vai no `ola` da proxima conexao. A montagem a le do
   // storage (no efeito, nao no render: ler o storage e I/O); depois, so o
@@ -219,15 +237,44 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
     sonoRef.current = setTimeout(() => {
       sonoRef.current = null
       const socket = socketRef.current
-      // Socket ja fechado (queda, `muitas_tentativas`) nao dorme: a tela ja
-      // diz o que houve, e `adormecida` apagaria a espera ou reconectaria
-      // sozinho ao abrir o painel -- o que e da TEC-348.
-      if (!socket || socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      // Socket ja fechado (a queda em reconexao, `offline`, `muitas_tentativas`)
+      // nao dorme: a tela ja diz o que houve, e `adormecida` apagaria a espera
+      // ou a reconexao em curso (TEC-348).
+      // A tentativa que ainda esta abrindo tambem nao: e a mesma queda.
+      const emQueda = conexaoRef.current.tipo === 'reconectando' || conexaoRef.current.tipo === 'offline'
+      if (
+        emQueda ||
+        !socket ||
+        socket.readyState === WebSocket.CLOSING ||
+        socket.readyState === WebSocket.CLOSED
+      ) {
         return
       }
       despachar({ tipo: 'adormeceu' })
       socket.close()
     }, PRAZO_DO_SONO_MS)
+  }, [])
+
+  const limparPrazos = useCallback(() => {
+    const prazos = prazosRef.current
+    for (const prazo of prazos.values()) {
+      clearTimeout(prazo)
+    }
+    prazos.clear()
+  }, [])
+
+  const agendarPrazo = useCallback((id: string) => {
+    const prazos = prazosRef.current
+    // Um reenvio antes do prazo do envio anterior substitui o prazo: senao o
+    // antigo venceria no meio do reenvio e o marcaria `falhou` antes da hora.
+    clearTimeout(prazos.get(id))
+    prazos.set(
+      id,
+      setTimeout(() => {
+        prazos.delete(id)
+        despachar({ tipo: 'prazoDoAck', messageId: id })
+      }, PRAZO_DO_ACK_MS),
+    )
   }, [])
 
   const conectar = useCallback(() => {
@@ -248,8 +295,22 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
       despachar({ tipo: 'abriu' })
       sessaoDoOlaRef.current = sessaoRef.current
       mandar(JSON.stringify({ tipo: 'ola', sessao: sessaoRef.current }))
+      // A fila local (TEC-348, D4): toda `enviando` da tela, na ordem, e o que
+      // a fila tiver alem disso. O mapa deixa cada `messageId` sair uma vez.
+      const saindo = new Map<string, Envio>()
+      for (const mensagem of mensagensRef.current) {
+        if (mensagem.autor === 'visitante' && mensagem.estado === 'enviando') {
+          saindo.set(mensagem.messageId, { id: mensagem.messageId, texto: mensagem.texto })
+        }
+      }
       for (const envio of filaRef.current.splice(0)) {
+        if (!saindo.has(envio.id)) {
+          saindo.set(envio.id, envio)
+        }
+      }
+      for (const envio of saindo.values()) {
         mandar(frameDeMensagem(envio))
+        agendarPrazo(envio.id)
       }
     })
     socket.addEventListener('message', (evento: MessageEvent) => {
@@ -269,19 +330,15 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
       if (evento.code === CODIGO_OCIOSA) {
         despachar({ tipo: 'adormeceu' })
       }
-      // O que estava na fila nunca saiu; o redutor ja o marca como `falhou`.
+      // O que estava na fila continua `enviando` na tela, e o `open` do
+      // proximo socket o manda de novo -- ou o redutor o marca como `falhou`,
+      // se esta queda nao reconecta (TEC-348, D2). Nenhum prazo do `ack` corre
+      // sem socket: o proximo `open` os agenda de novo.
       filaRef.current = []
-      despachar({ tipo: 'fechou' })
+      limparPrazos()
+      despachar({ tipo: 'fechou', codigo: evento.code, agora: Date.now() })
     })
-  }, [endereco, reagendarSono])
-
-  const limparPrazos = useCallback(() => {
-    const prazos = prazosRef.current
-    for (const prazo of prazos.values()) {
-      clearTimeout(prazo)
-    }
-    prazos.clear()
-  }, [])
+  }, [endereco, reagendarSono, limparPrazos, agendarPrazo])
 
   useEffect(() => {
     // Uma vez por componente, e nunca de novo: o StrictMode repete este
@@ -304,6 +361,10 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   useEffect(() => {
     conexaoRef.current = conversa.conexao
   }, [conversa.conexao])
+
+  useEffect(() => {
+    mensagensRef.current = conversa.mensagens
+  }, [conversa.mensagens])
 
   useEffect(() => {
     function aoReceberAviso(evento: MessageEvent) {
@@ -339,6 +400,8 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   // `encerrou` -- entao o timer nao reinicia a cada balao que chega nem
   // quando a visitante encerra no meio da espera.
   const espera = conversa.conexao.tipo === 'aguardando' ? conversa.conexao : null
+  const queda =
+    conversa.conexao.tipo === 'reconectando' || conversa.conexao.tipo === 'offline' ? conversa.conexao : null
   useEffect(() => {
     if (!espera) {
       return
@@ -349,6 +412,35 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
     }, espera.segundos * 1000)
     return () => clearTimeout(reabrir)
   }, [espera, conectar])
+
+  // A reconexao da TEC-348 (D1): cada queda produz um objeto `reconectando`
+  // novo, com a tentativa seguinte, e so ela -- balao que chega nao troca o
+  // objeto --, entao o timer e um por tentativa. A tentativa que nao abre
+  // fecha, e o `fechou` traz a proxima.
+  const reconexao = conversa.conexao.tipo === 'reconectando' ? conversa.conexao : null
+  useEffect(() => {
+    if (!reconexao) {
+      return
+    }
+    const tentar = setTimeout(conectar, esperaDaTentativa(reconexao.tentativa) * 1000)
+    return () => clearTimeout(tentar)
+  }, [reconexao, conectar])
+
+  // Cinco minutos desde a primeira queda (D3). Pela chave `desde`, e nao pelo
+  // objeto: as tentativas trocam o objeto, e o prazo nao pode recomecar a
+  // cada uma. `desistiu` tira a conexao de `reconectando`, e o efeito de
+  // cima cancela a tentativa que estava marcada.
+  const desde = reconexao ? reconexao.desde : null
+  useEffect(() => {
+    if (desde === null) {
+      return
+    }
+    const desistir = setTimeout(
+      () => despachar({ tipo: 'desistiu' }),
+      Math.max(0, desde + PRAZO_SEM_CONEXAO_MS - Date.now()),
+    )
+    return () => clearTimeout(desistir)
+  }, [desde])
 
   // A mensagem mais nova a vista -- mas so se a visitante ja estava perto do
   // fim, ou se a mensagem nova e dela: quem rolou para cima para reler nao e
@@ -427,32 +519,34 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
     }
   }, [conversa.mensagens])
 
-  function agendarPrazo(id: string) {
-    const prazos = prazosRef.current
-    // Um reenvio antes do prazo do envio anterior substitui o prazo: senao o
-    // antigo venceria no meio do reenvio e o marcaria `falhou` antes da hora.
-    clearTimeout(prazos.get(id))
-    prazos.set(
-      id,
-      setTimeout(() => {
-        prazos.delete(id)
-        despachar({ tipo: 'prazoDoAck', messageId: id })
-      }, PRAZO_DO_ACK_MS),
-    )
-  }
-
+  // Socket aberto: sai agora, e o prazo do `ack` comeca. Fora disso a
+  // mensagem espera na fila (D4 da TEC-348), e so abre socket quando nada
+  // mais vai abrir: nem um conectando, nem a reconexao automatica, nem o fim
+  // da espera de `muitas_tentativas`. Em `offline` abre -- enviar e gesto da
+  // visitante, como "Tentar de novo" (D3).
   function transmitir(envio: Envio) {
-    agendarPrazo(envio.id)
     const socket = socketRef.current
     if (socket?.readyState === WebSocket.OPEN) {
       socket.send(frameDeMensagem(envio))
+      agendarPrazo(envio.id)
       reagendarSono()
       return
     }
     filaRef.current.push(envio)
-    if (socket?.readyState !== WebSocket.CONNECTING) {
-      conectar()
+    const conexao = conexaoRef.current.tipo
+    // Em `offline` nem o socket conectando segura: pode ser a ultima
+    // tentativa, pendurada no handshake quando os cinco minutos venceram.
+    const conectando = socket?.readyState === WebSocket.CONNECTING && conexao !== 'offline'
+    if (conectando || conexao === 'reconectando' || conexao === 'aguardando') {
+      return
     }
+    despachar({ tipo: 'reabrindo' })
+    conectar()
+  }
+
+  function tentarDeNovo() {
+    despachar({ tipo: 'reabrindo' })
+    conectar()
   }
 
   function enviarRascunho() {
@@ -606,6 +700,26 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
             )}
           </ol>
         </div>
+        {/* TEC-348, D6: a queda acima do campo, que continua de pe para a
+            visitante escrever durante ela. O botao fica fora do `status`,
+            que so anuncia texto. */}
+        {queda ? (
+          <div className="conversa__conexao">
+            <p role="status">
+              {queda.instavel ? <span>{AVISO_DE_INSTAVEL}</span> : null}
+              {queda.tipo === 'reconectando' ? (
+                <span>Reconectando…</span>
+              ) : queda.instavel ? null : (
+                <span>Sem conexão.</span>
+              )}
+            </p>
+            {queda.tipo === 'offline' ? (
+              <button type="button" onClick={tentarDeNovo}>
+                Tentar de novo
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {espera ? (
           <p className="conversa__espera" role="status">
             {espera.mensagem}
