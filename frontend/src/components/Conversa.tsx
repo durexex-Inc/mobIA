@@ -31,6 +31,7 @@ import {
 } from '@/lib/conversa'
 import { type ImovelCard, type Reacao, textoDaReacao } from '@/lib/imovel'
 import type { Privacidade } from '@/lib/privacidade'
+import { digitosDe, FORMATO_ESPERADO, mascarar, MAXIMO_DE_DIGITOS, telefoneParaEnvio } from '@/lib/telefone'
 import { apagarSessao, armazemDoNavegador, gravarSessao, lerSessao } from '@/lib/sessaoGuardada'
 
 const ROTULO_DO_ESTADO: Record<EstadoDaMensagem, string> = {
@@ -49,6 +50,15 @@ const PERGUNTA_DE_ENCERRAR = 'Encerrar esta conversa? O histórico some desta te
 
 // TEC-348, D6: o texto da card para o servidor fora do ar (fechou com 1011).
 const AVISO_DE_INSTAVEL = 'Nosso atendimento está instável. Deixe sua mensagem que responderemos.'
+
+/**
+ * O que "Falar com um corretor" manda (TEC-353, D3). Tem "falar com uma
+ * pessoa", que e termo de `pediu_humano` (`src/mobia/domain/humano/
+ * deteccao.py`); "falar com um corretor" sozinho nao e, porque no WhatsApp e o
+ * comeco normal de quem quer visitar. `tests/unit/test_contrato_do_chat_web.py`
+ * tem uma copia desta frase e confere que ela dispara a guarda.
+ */
+const PEDIDO_DE_CORRETOR = 'Quero falar com uma pessoa da equipe de corretores.'
 
 // TEC-352, D3: a faixa de privacidade, texto que a visitante le.
 const FINALIDADE =
@@ -136,41 +146,57 @@ function comoAvisoDeVisibilidade(dado: unknown): { aberto: boolean } | null {
   return tipo === 'mobia:visibilidade' && typeof aberto === 'boolean' ? { aberto } : null
 }
 
+type ItemDoMenu = { rotulo: string; aoEscolher: () => void }
+
 /**
- * O botao "Opções da conversa" do cabecalho e o menu dele (D3). O menu so
- * tem "Encerrar conversa", e escolher nao encerra: pede a confirmacao, que
- * mora em `Conversa`. Escape fecha e devolve o foco ao botao; o foco sair
- * do menu (a visitante tocou no campo, por exemplo) tambem fecha, senao o
- * menu ficaria aberto por cima da lista. `botaoRef` vem de `Conversa`, que
- * devolve o foco ao botao quando a confirmacao e cancelada.
+ * O botao "Opções da conversa" do cabecalho e o menu dele (D3 da TEC-347;
+ * os dois primeiros itens da TEC-353, D5): "Falar com um corretor", "Informar
+ * meu telefone" e "Encerrar conversa". Escolher encerrar nao encerra: pede a
+ * confirmacao, que mora em `Conversa`. Abrir foca o primeiro item; setas para
+ * cima e para baixo andam entre eles, dando a volta nas pontas (padrao de
+ * `role="menu"`). Escape fecha e devolve o foco ao botao; o foco sair do menu
+ * (a visitante tocou no campo, por exemplo) tambem fecha, senao o menu
+ * ficaria aberto por cima da lista. `botaoRef` vem de `Conversa`, que devolve
+ * o foco ao botao quando a confirmacao e cancelada.
  */
 function MenuDaConversa({
-  aoEscolherEncerrar,
+  itens,
   botaoRef,
 }: {
-  aoEscolherEncerrar: () => void
+  itens: ItemDoMenu[]
   botaoRef: RefObject<HTMLButtonElement | null>
 }) {
   const [aberto, setAberto] = useState(false)
   const idDoMenu = useId()
-  const itemRef = useRef<HTMLButtonElement | null>(null)
+  const itensRef = useRef<(HTMLButtonElement | null)[]>([])
 
   useEffect(() => {
     if (aberto) {
-      itemRef.current?.focus()
+      itensRef.current[0]?.focus()
     }
   }, [aberto])
 
   function aoTeclar(evento: KeyboardEvent<HTMLDivElement>) {
-    if (evento.key === 'Escape' && aberto) {
+    if (!aberto) {
+      return
+    }
+    if (evento.key === 'Escape') {
       evento.preventDefault()
       setAberto(false)
       botaoRef.current?.focus()
+      return
+    }
+    if (evento.key === 'ArrowDown' || evento.key === 'ArrowUp') {
+      evento.preventDefault()
+      const botoes = itensRef.current.filter((botao): botao is HTMLButtonElement => botao !== null)
+      const atual = botoes.indexOf(document.activeElement as HTMLButtonElement)
+      const passo = evento.key === 'ArrowDown' ? 1 : -1
+      botoes[(atual + passo + botoes.length) % botoes.length]?.focus()
     }
   }
 
   // `relatedTarget` e quem recebe o foco; nulo quando o foco vai para lugar
-  // nenhum. Foco que passa do item para o botao (ou o contrario) fica dentro.
+  // nenhum. Foco que passa de um item a outro, ou ao botao, fica dentro.
   function aoPerderFoco(evento: FocusEvent<HTMLDivElement>) {
     if (aberto && !evento.currentTarget.contains(evento.relatedTarget as Node | null)) {
       setAberto(false)
@@ -193,19 +219,23 @@ function MenuDaConversa({
       </button>
       {aberto ? (
         <ul id={idDoMenu} className="conversa__menu" role="menu" aria-label="Opções da conversa">
-          <li role="none">
-            <button
-              ref={itemRef}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setAberto(false)
-                aoEscolherEncerrar()
-              }}
-            >
-              Encerrar conversa
-            </button>
-          </li>
+          {itens.map((item, posicao) => (
+            <li key={item.rotulo} role="none">
+              <button
+                ref={(botao) => {
+                  itensRef.current[posicao] = botao
+                }}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setAberto(false)
+                  item.aoEscolher()
+                }}
+              >
+                {item.rotulo}
+              </button>
+            </li>
+          ))}
         </ul>
       ) : null}
     </div>
@@ -296,6 +326,11 @@ export function Conversa({
   // O checkbox de marketing da faixa (TEC-352, D3): desmarcado, e so a
   // visitante o marca.
   const [marketing, setMarketing] = useState(false)
+  // O campo de telefone com mascara (TEC-353, D1 e D2), aberto pelo menu:
+  // so os digitos, sem o +55, e se o ultimo envio foi recusado.
+  const [pedindoTelefone, setPedindoTelefone] = useState(false)
+  const [digitosDoTelefone, setDigitosDoTelefone] = useState('')
+  const [telefoneRecusado, setTelefoneRecusado] = useState(false)
   // O instante em que a faixa apareceu, para o `exibidoEm` (D4). E o consentimento
   // em curso, lido pelo `open` -- que pode chegar antes do render do `deuCiencia`.
   const exibidoEmRef = useRef<string | null>(null)
@@ -726,6 +761,32 @@ export function Conversa({
     setRascunho('')
   }
 
+  // TEC-353, D1: o campo de telefone abre pelo menu, porque o agente nao pede.
+  function abrirTelefone() {
+    setDigitosDoTelefone('')
+    setTelefoneRecusado(false)
+    setPedindoTelefone(true)
+  }
+
+  function fecharTelefone() {
+    setPedindoTelefone(false)
+    setTelefoneRecusado(false)
+  }
+
+  // TEC-353, D2: numero invalido nao sai, e o campo diz o formato esperado. O
+  // valido sai como mensagem comum -- o servidor vincula pela regex (TEC-129).
+  function enviarTelefone(evento: FormEvent<HTMLFormElement>) {
+    evento.preventDefault()
+    const texto = telefoneParaEnvio(digitosDoTelefone)
+    if (texto === null) {
+      setTelefoneRecusado(true)
+      telefoneRef.current?.focus()
+      return
+    }
+    enviarTexto(texto)
+    fecharTelefone()
+  }
+
   // TEC-350, D1 e D2: o toque vira fala comum da visitante, e o card guarda
   // qual foi para nao mandar uma segunda que contradiz a primeira.
   function reagir(imovel: ImovelCard, reacao: Reacao) {
@@ -759,6 +820,7 @@ export function Conversa({
     setConfirmando(false)
     setReacoes({})
     setMarketing(false)
+    fecharTelefone()
     exibidoEmRef.current = null
     consentimentoRef.current = null
     apagarSessao(armazemDoNavegador())
@@ -801,6 +863,19 @@ export function Conversa({
   const campoRef = useRef<HTMLTextAreaElement | null>(null)
   const cancelarRef = useRef<HTMLButtonElement | null>(null)
   const idDaPergunta = useId()
+  const idDoTelefone = useId()
+  const idDoFormato = useId()
+  const telefoneRef = useRef<HTMLInputElement | null>(null)
+  // Abrir o campo de telefone leva o foco a ele; fechar devolve ao de texto.
+  const telefoneAbertoAntesRef = useRef(false)
+  useEffect(() => {
+    if (pedindoTelefone) {
+      telefoneRef.current?.focus()
+    } else if (telefoneAbertoAntesRef.current) {
+      campoRef.current?.focus()
+    }
+    telefoneAbertoAntesRef.current = pedindoTelefone
+  }, [pedindoTelefone])
   useEffect(() => {
     if (confirmando) {
       cancelarRef.current?.focus()
@@ -810,7 +885,14 @@ export function Conversa({
   return (
     <>
       <CabecalhoDoChat nome={nome} conexao={estadoNoCabecalho(conversa.conexao)}>
-        <MenuDaConversa botaoRef={botaoDeOpcoesRef} aoEscolherEncerrar={() => setConfirmando(true)} />
+        <MenuDaConversa
+          botaoRef={botaoDeOpcoesRef}
+          itens={[
+            { rotulo: 'Falar com um corretor', aoEscolher: () => enviarTexto(PEDIDO_DE_CORRETOR) },
+            { rotulo: 'Informar meu telefone', aoEscolher: abrirTelefone },
+            { rotulo: 'Encerrar conversa', aoEscolher: () => setConfirmando(true) },
+          ]}
+        />
       </CabecalhoDoChat>
       <section className="conversa">
         {confirmando ? (
@@ -923,6 +1005,45 @@ export function Conversa({
           <p className="conversa__espera" role="status">
             {espera.mensagem}
           </p>
+        ) : pedindoTelefone ? (
+          // TEC-353, D2. `noValidate`: quem valida e `telefoneParaEnvio`, com a
+          // regra do servidor, e a mensagem de erro e a nossa.
+          <form className="conversa__formulario conversa__telefone" onSubmit={enviarTelefone} noValidate>
+            <label htmlFor={idDoTelefone}>Seu telefone, com DDD</label>
+            <div className="conversa__campo-de-telefone">
+              <span aria-hidden="true">+55</span>
+              <input
+                ref={telefoneRef}
+                id={idDoTelefone}
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel-national"
+                placeholder="(48) 99999-0021"
+                value={mascarar(digitosDoTelefone)}
+                // A mascara mais longa: "(48) 99999-0021" tem 15 caracteres.
+                maxLength={MAXIMO_DE_DIGITOS + 4}
+                onChange={(evento) => {
+                  setDigitosDoTelefone(digitosDe(evento.target.value))
+                  setTelefoneRecusado(false)
+                }}
+                aria-invalid={telefoneRecusado}
+                aria-describedby={idDoFormato}
+              />
+            </div>
+            <p
+              id={idDoFormato}
+              className={telefoneRecusado ? 'conversa__formato conversa__formato--recusado' : 'conversa__formato'}
+              role={telefoneRecusado ? 'alert' : undefined}
+            >
+              {telefoneRecusado ? FORMATO_ESPERADO : 'O +55 entra sozinho.'}
+            </p>
+            <div className="conversa__rodape">
+              <button type="button" onClick={fecharTelefone}>
+                Cancelar
+              </button>
+              <button type="submit">Enviar telefone</button>
+            </div>
+          </form>
         ) : (
           <form className="conversa__formulario" onSubmit={aoEnviar}>
             <textarea
