@@ -1278,7 +1278,8 @@ describe('Conversa -- reconexao automatica e fila local (TEC-348)', () => {
     avancar(cincoMinutos - passou)
 
     expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeInTheDocument()
-    expect(screen.getByText('Sem conexão.')).toBeInTheDocument()
+    // Desde a TEC-351 quem diz "Offline" e o cabecalho.
+    expect(screen.getByRole('banner')).toHaveTextContent('Offline')
     expect(screen.queryByText('Reconectando…')).toBeNull()
 
     const tentativas = SocketFalso.instancias.length
@@ -1289,7 +1290,7 @@ describe('Conversa -- reconexao automatica e fila local (TEC-348)', () => {
     expect(SocketFalso.instancias).toHaveLength(tentativas + 1)
     expect(screen.queryByRole('button', { name: 'Tentar de novo' })).toBeNull()
     ultimoSocket().abrir()
-    expect(screen.queryByText('Sem conexão.')).toBeNull()
+    expect(screen.getByRole('banner')).toHaveTextContent('Conectado')
   })
 
   it('"Tentar de novo" que falha recomeca a reconexao automatica em 1 s', () => {
@@ -1489,5 +1490,137 @@ describe('Conversa -- reacao rapida ao imovel (TEC-350)', () => {
 
     expect(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' })).toBeDisabled()
     expect(grupoDe('Casa 3 quartos').getByRole('button', { name: 'Gostei' })).toHaveAttribute('aria-pressed', 'false')
+  })
+})
+
+describe('Conversa -- digitando e estado da conexao (TEC-351)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(AGORA)
+  })
+
+  function avancar(ms: number) {
+    act(() => {
+      vi.advanceTimersByTime(ms)
+    })
+  }
+
+  function daquiA(ms: number): string {
+    return new Date(Date.now() + ms).toISOString()
+  }
+
+  function montarAbertoCom(nome: string | null): SocketFalso {
+    render(<Conversa endereco={ENDERECO} nome={nome} />)
+    const socket = ultimoSocket()
+    socket.abrir()
+    return socket
+  }
+
+  function cabecalho() {
+    return screen.getByRole('banner')
+  }
+
+  it('o frame digitando mostra "{nome} está digitando…", e a resposta o apaga', () => {
+    const socket = montarAbertoCom('Lia')
+    enviar('Tem garagem?')
+
+    socket.receber({ tipo: 'digitando', ate: daquiA(25_000) })
+    expect(screen.getByText('Lia está digitando…')).toBeInTheDocument()
+    // Fora do log: o indicador nao e mensagem da conversa.
+    expect(within(screen.getByRole('log')).queryByText('Lia está digitando…')).toBeNull()
+
+    socket.receber({ tipo: 'mensagem', texto: 'Tem, sim.', kind: 'reply' })
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+  })
+
+  it('sem nome configurado, "O assistente está digitando…"', () => {
+    const socket = montarAbertoCom(null)
+    socket.receber({ tipo: 'digitando', ate: daquiA(25_000) })
+    expect(screen.getByText('O assistente está digitando…')).toBeInTheDocument()
+  })
+
+  it('o card de imovel tambem apaga o indicador', () => {
+    const socket = montarAbertoCom('Lia')
+    socket.receber({ tipo: 'digitando', ate: daquiA(25_000) })
+    socket.receber({ tipo: 'imovel', kind: 'ficha_1', texto: 'Separei esta:', imovel: null })
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+  })
+
+  it('o indicador obedece o ate do servidor: 25 s', () => {
+    const socket = montarAbertoCom('Lia')
+    socket.receber({ tipo: 'digitando', ate: daquiA(25_000) })
+
+    avancar(24_999)
+    expect(screen.getByText('Lia está digitando…')).toBeInTheDocument()
+    avancar(1)
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+  })
+
+  it('cenario 2: sem nova fala do agente, o indicador some em no maximo 30 s, mesmo com ate mais longe', () => {
+    const socket = montarAbertoCom('Lia')
+    socket.receber({ tipo: 'digitando', ate: daquiA(60_000) })
+
+    avancar(29_999)
+    expect(screen.getByText('Lia está digitando…')).toBeInTheDocument()
+    avancar(1)
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+  })
+
+  it('ate ja passado ou ilegivel (relogio do aparelho diferente) vale 30 s, e nao esconde o indicador', () => {
+    const socket = montarAbertoCom('Lia')
+    socket.receber({ tipo: 'digitando', ate: daquiA(-5_000) })
+    expect(screen.getByText('Lia está digitando…')).toBeInTheDocument()
+    avancar(30_000)
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+
+    socket.receber({ tipo: 'digitando', ate: 'logo' })
+    avancar(29_999)
+    expect(screen.getByText('Lia está digitando…')).toBeInTheDocument()
+    avancar(1)
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+  })
+
+  it('um digitando novo renova o prazo', () => {
+    const socket = montarAbertoCom('Lia')
+    socket.receber({ tipo: 'digitando', ate: daquiA(25_000) })
+    avancar(20_000)
+    socket.receber({ tipo: 'digitando', ate: daquiA(25_000) })
+
+    avancar(10_000)
+    expect(screen.getByText('Lia está digitando…')).toBeInTheDocument()
+    avancar(15_000)
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+  })
+
+  it('o socket que cai apaga o indicador', () => {
+    const socket = montarAbertoCom('Lia')
+    socket.receber({ tipo: 'digitando', ate: daquiA(25_000) })
+    socket.fechar()
+    expect(screen.queryByText('Lia está digitando…')).toBeNull()
+  })
+
+  it('cenario 3: o cabecalho mostra Conectado, Reconectando… e Offline', () => {
+    render(<Conversa endereco={ENDERECO} nome="Lia" />)
+    expect(cabecalho()).toHaveTextContent('Conectando…')
+
+    const socket = ultimoSocket()
+    socket.abrir()
+    expect(cabecalho()).toHaveTextContent('Conectado')
+
+    socket.fechar()
+    expect(cabecalho()).toHaveTextContent('Reconectando…')
+    // O cabecalho diz; a linha acima do campo nao repete.
+    expect(screen.getAllByText('Reconectando…')).toHaveLength(1)
+
+    avancar(5 * 60 * 1000)
+    expect(cabecalho()).toHaveTextContent('Offline')
+    expect(screen.getByRole('button', { name: 'Tentar de novo' })).toBeInTheDocument()
+  })
+
+  it('a espera de muitas_tentativas e Offline no cabecalho', () => {
+    const socket = montarAbertoCom('Lia')
+    socket.receber({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'Muitas tentativas, aguarde 20 s.', aguardeSegundos: 20 })
+    socket.fechar(1013)
+    expect(cabecalho()).toHaveTextContent('Offline')
   })
 })

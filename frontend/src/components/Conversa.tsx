@@ -13,7 +13,7 @@ import {
   useState,
 } from 'react'
 
-import { CabecalhoDoChat } from '@/components/CabecalhoDoChat'
+import { CabecalhoDoChat, type EstadoDaConexao } from '@/components/CabecalhoDoChat'
 import { CardDeImovel } from '@/components/CardDeImovel'
 import {
   CODIGO_OCIOSA,
@@ -47,6 +47,42 @@ const PERGUNTA_DE_ENCERRAR = 'Encerrar esta conversa? O histórico some desta te
 
 // TEC-348, D6: o texto da card para o servidor fora do ar (fechou com 1011).
 const AVISO_DE_INSTAVEL = 'Nosso atendimento está instável. Deixe sua mensagem que responderemos.'
+
+/** Teto do "está digitando…" a partir da chegada do frame (TEC-351, D2). */
+const PRAZO_MAXIMO_DA_DIGITACAO_MS = 30_000
+
+/**
+ * A tabela da D3 da TEC-351. `conectando` e seu proprio texto porque a
+ * primeira conexao de cada carregamento nao e queda nenhuma; tudo o que tem
+ * o socket fechado sem reconexao em curso -- a desistencia, o 1002, a espera
+ * de `muitas_tentativas`, o sono -- e "Offline".
+ */
+function estadoNoCabecalho(conexao: Conexao): EstadoDaConexao {
+  switch (conexao.tipo) {
+    case 'aberta':
+      return 'conectado'
+    case 'conectando':
+      return 'conectando'
+    case 'reconectando':
+      return 'reconectando'
+    default:
+      return 'offline'
+  }
+}
+
+/**
+ * Quanto o indicador fica aceso (TEC-351, D2): o `ate` do servidor, se cair
+ * dentro dos 30 s da regra; senao, os 30 s. `ate` ja passado ou longe demais e
+ * relogio do aparelho diferente do servidor, e nao motivo para esconder o
+ * indicador.
+ */
+function prazoDaDigitacao(ate: number | null, agora: number): number {
+  if (ate === null) {
+    return PRAZO_MAXIMO_DA_DIGITACAO_MS
+  }
+  const restante = ate - agora
+  return restante > 0 && restante <= PRAZO_MAXIMO_DA_DIGITACAO_MS ? restante : PRAZO_MAXIMO_DA_DIGITACAO_MS
+}
 
 type Envio = { id: string; texto: string }
 
@@ -144,7 +180,8 @@ function MenuDaConversa({
  * A conversa do chat embutido (TEC-346; retomada, encerramento e sono da
  * TEC-347; reconexao da TEC-348): liga o redutor de `lib/conversa` (D3 da TEC-346) a um
  * `WebSocket` de verdade e desenha a tela da D5 da TEC-346, com o cabecalho. Todo o I/O mora aqui --
- * socket, timers do prazo do `ack`, do sono e da reconexao, `localStorage`, o aviso de
+ * socket, timers do prazo do `ack`, do sono, da reconexao e do "está digitando…"
+ * (TEC-351), `localStorage`, o aviso de
  * visibilidade do loader --; decidir o proximo estado e do redutor.
  *
  * **So o socket atual fala com a tela.** Cada listener confere
@@ -429,6 +466,21 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
     return () => clearTimeout(tentar)
   }, [reconexao, conectar])
 
+  // O prazo do "está digitando…" (TEC-351, D2). Cada frame `digitando` e um
+  // objeto novo, entao um frame que chega renova o timer; a fala do agente, o
+  // socket que fecha e o encerramento o apagam pelo redutor.
+  const digitando = conversa.digitando
+  useEffect(() => {
+    if (!digitando) {
+      return
+    }
+    const vencer = setTimeout(
+      () => despachar({ tipo: 'digitacaoVenceu', indicador: digitando }),
+      prazoDaDigitacao(digitando.ate, Date.now()),
+    )
+    return () => clearTimeout(vencer)
+  }, [digitando])
+
   // Cinco minutos desde a primeira queda (D3). Pela chave `desde`, e nao pelo
   // objeto: as tentativas trocam o objeto, e o prazo nao pode recomecar a
   // cada uma. `desistiu` tira a conexao de `reconectando`, e o efeito de
@@ -650,7 +702,7 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
 
   return (
     <>
-      <CabecalhoDoChat nome={nome}>
+      <CabecalhoDoChat nome={nome} conexao={estadoNoCabecalho(conversa.conexao)}>
         <MenuDaConversa botaoRef={botaoDeOpcoesRef} aoEscolherEncerrar={() => setConfirmando(true)} />
       </CabecalhoDoChat>
       <section className="conversa">
@@ -726,19 +778,21 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
             )}
           </ol>
         </div>
+        {/* TEC-351, D2: fora do `log`, que anunciaria o indicador como
+            mensagem nova da conversa. */}
+        {conversa.digitando ? (
+          <p className="conversa__digitando" role="status">
+            {`${nome ?? 'O assistente'} está digitando…`}
+          </p>
+        ) : null}
         {/* TEC-348, D6: a queda acima do campo, que continua de pe para a
-            visitante escrever durante ela. O botao fica fora do `status`,
-            que so anuncia texto. */}
-        {queda ? (
+            visitante escrever durante ela. Desde a TEC-351 (D3) o estado da
+            conexao mora no cabecalho, e aqui fica so o que ele nao diz: a
+            frase de instavel e o "Tentar de novo". O botao fica fora do
+            `status`, que so anuncia texto. */}
+        {queda && (queda.instavel || queda.tipo === 'offline') ? (
           <div className="conversa__conexao">
-            <p role="status">
-              {queda.instavel ? <span>{AVISO_DE_INSTAVEL}</span> : null}
-              {queda.tipo === 'reconectando' ? (
-                <span>Reconectando…</span>
-              ) : queda.instavel ? null : (
-                <span>Sem conexão.</span>
-              )}
-            </p>
+            {queda.instavel ? <p role="status">{AVISO_DE_INSTAVEL}</p> : null}
             {queda.tipo === 'offline' ? (
               <button type="button" onClick={tentarDeNovo}>
                 Tentar de novo
