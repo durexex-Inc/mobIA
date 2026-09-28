@@ -221,6 +221,31 @@ describe('FormularioDeImovel', () => {
     })
   })
 
+  describe('pre-visualizar card (TEC-336, D2)', () => {
+    it('nao existe no cadastro -- so ha imovel salvo na edicao', async () => {
+      render(<FormularioDeImovel imovel={null} />)
+      await clicar('Cadastrar imóvel')
+
+      expect(screen.queryByRole('button', { name: 'Pré-visualizar card' })).toBeNull()
+    })
+
+    it('comeca habilitado na edicao de um imovel ja valido', async () => {
+      render(<FormularioDeImovel imovel={IMOVEL} />)
+      await clicar('Editar')
+
+      expect(screen.getByRole('button', { name: 'Pré-visualizar card' })).toBeEnabled()
+    })
+
+    it('desabilita quando um campo obrigatorio fica vazio', async () => {
+      render(<FormularioDeImovel imovel={IMOVEL} />)
+      await clicar('Editar')
+
+      digitar('Título', '')
+
+      expect(screen.getByRole('button', { name: 'Pré-visualizar card' })).toBeDisabled()
+    })
+  })
+
   describe('alteracao nao salva (TEC-311)', () => {
     it('sujo registra; cancelar desfaz', async () => {
       render(<FormularioDeImovel imovel={IMOVEL} />)

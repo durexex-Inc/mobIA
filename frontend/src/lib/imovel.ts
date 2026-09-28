@@ -96,6 +96,18 @@ export function contagem(quantidade: number, singular: string, plural: string): 
   return `${quantidade} ${quantidade === 1 ? singular : plural}`
 }
 
+/**
+ * As duas primeiras caracteristicas, juntas por " e " -- mesma regra de
+ * `apresentacao.py::diferencial_de` (`CARACTERISTICAS_NO_DESTAQUE = 2`), D4 do
+ * desenho da TEC-336. `null` quando a lista esta vazia, para `imovelDe`
+ * descartar o campo do mesmo jeito que descartaria um `diferencial` vazio
+ * vindo da rede.
+ */
+export function diferencialDe(caracteristicas: string[]): string | null {
+  const escolhidas = caracteristicas.slice(0, 2)
+  return escolhidas.length > 0 ? escolhidas.join(' e ') : null
+}
+
 /** O texto alternativo da foto (RN-FE-18.4): "Foto de {titulo} em {bairro}". */
 export function textoAlternativo(imovel: Pick<ImovelCard, 'titulo' | 'bairro'>): string {
   return `Foto de ${imovel.titulo} em ${imovel.bairro}`

@@ -4,11 +4,13 @@ import { useEffect, useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { FotosDoImovel } from '@/components/FotosDoImovel'
+import { PreviewDoCard } from '@/components/PreviewDoCard'
 import {
   type CampoDeTexto as CampoDeTextoDoFormulario,
   estaSujo,
   type Formulario,
   formularioDe,
+  formularioValido,
   type Imovel,
   OPERACOES,
   type Operacao,
@@ -318,6 +320,18 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
         <button type="button" onClick={fechar} disabled={enviando}>
           {avisoDeReindexacao ? 'Fechar' : 'Cancelar'}
         </button>
+        {/* So na edicao (D2 do desenho da TEC-336): sem imovel salvo nao ha
+            o que pre-visualizar, e o botao so ativa com o formulario ja
+            valido -- assim a pre-visualizacao nunca precisa decidir o que
+            mostrar para um formulario incompleto. */}
+        {imovel && (
+          <PreviewDoCard
+            imovel={imovel}
+            formulario={atual}
+            fotos={fotos}
+            desabilitado={!formularioValido(atual)}
+          />
+        )}
       </div>
     </form>
   )
