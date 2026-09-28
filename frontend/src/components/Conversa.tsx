@@ -141,17 +141,17 @@ function MenuDaConversa({
 
 /**
  * A conversa do chat embutido (TEC-346; retomada, encerramento e sono da
- * TEC-347): liga o redutor de `lib/conversa` (D3 da TEC-346) a um
+ * TEC-347; reconexao da TEC-348): liga o redutor de `lib/conversa` (D3 da TEC-346) a um
  * `WebSocket` de verdade e desenha a tela da D5 da TEC-346, com o cabecalho. Todo o I/O mora aqui --
- * socket, timers do prazo do `ack` e do sono, `localStorage`, o aviso de
+ * socket, timers do prazo do `ack`, do sono e da reconexao, `localStorage`, o aviso de
  * visibilidade do loader --; decidir o proximo estado e do redutor.
  *
  * **So o socket atual fala com a tela.** Cada listener confere
  * `socketRef.current === socket` antes de despachar: o socket de uma montagem
  * descartada (o StrictMode monta, desmonta e monta de novo), o de antes de
  * um reenvio ou o de antes de um encerramento ainda pode entregar `message`
- * e `close`, e um `close` atrasado marcaria como `falhou` o que o socket novo
- * esta enviando.
+ * e `close`, e um `close` atrasado poria em `reconectando` -- ou marcaria
+ * como `falhou` -- o que o socket novo esta enviando.
  *
  * **A fila local e o que esta `enviando` (TEC-348, D4).** No `open` de todo
  * socket, logo depois do `ola`, sai de novo toda mensagem `enviando` da tela,
@@ -498,11 +498,13 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
     }
   }, [conversa.sessao])
 
-  // Prazo de mensagem que nao esta mais `enviando` (ack, erro, queda) -- ou
+  // Prazo de mensagem que nao esta mais `enviando` (ack, erro, 1002) -- ou
   // que saiu da lista -- nao tem mais o que marcar. O `historico` nao tira
   // pendente nenhuma: ela continua no fim, com o mesmo id e o mesmo estado,
-  // entao o prazo dela segue valendo. E um `historico` igual a tela devolve
-  // a mesma lista, e este efeito nem roda.
+  // e o prazo dela segue valendo -- menos a que ele ja traz, que vira
+  // `recebida` (D5 da TEC-348) e perde o prazo aqui. E um `historico` igual
+  // a tela devolve a mesma lista, e este efeito nem roda. A queda nao passa
+  // por aqui: o `close` cancela todos os prazos de uma vez.
   useEffect(() => {
     const prazos = prazosRef.current
     const enviando = new Set<string>()
