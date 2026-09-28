@@ -209,6 +209,28 @@ describe('caminhoPermitido', () => {
     })
   })
 
+  describe('configuracao do agente (TEC-337)', () => {
+    it('ler e alterar entram no caminho sem id', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'configuracao', 'agente'])).toBe(
+        '/api/v1/configuracao/agente',
+      )
+      expect(caminhoPermitido('PATCH', ['api', 'v1', 'configuracao', 'agente'])).toBe(
+        '/api/v1/configuracao/agente',
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'configuracao', 'agente'])).toBeNull()
+      expect(caminhoPermitido('DELETE', ['api', 'v1', 'configuracao', 'agente'])).toBeNull()
+    })
+
+    it('o historico entra so como GET', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'configuracao', 'agente', 'historico'])).toBe(
+        '/api/v1/configuracao/agente/historico',
+      )
+      expect(
+        caminhoPermitido('PATCH', ['api', 'v1', 'configuracao', 'agente', 'historico']),
+      ).toBeNull()
+    })
+  })
+
   it('nao casa por PREFIXO, que e o furo classico de allowlist', () => {
     // Se o casamento fosse `startsWith`, esta linha passaria e levaria o
     // FastAPI a `/api/v1/corretores` depois da normalizacao do caminho.
