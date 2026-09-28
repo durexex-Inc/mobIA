@@ -187,13 +187,56 @@ describe('reduzir', () => {
     expect(depois.conexao).toEqual({ tipo: 'aguardando', mensagem: 'Muitas tentativas, aguarde N s.', segundos: 60 })
   })
 
-  it('digitando mantem o estado, mesma referencia', () => {
-    const antes = INICIAL
-    const depois = reduzir(antes, {
-      tipo: 'frame',
-      bruto: frame({ tipo: 'digitando', ate: '2026-09-27T12:00:00Z' }),
+  describe('digitando (TEC-351, D2)', () => {
+    function digitando(ate: unknown = '2026-09-27T12:00:25Z'): Conversa {
+      return reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'digitando', ate }) })
+    }
+
+    it('liga o indicador com o instante do frame', () => {
+      expect(digitando().digitando).toEqual({ ate: Date.UTC(2026, 8, 27, 12, 0, 25) })
     })
-    expect(depois).toBe(antes)
+
+    it('ate ilegivel ou ausente liga o indicador sem instante', () => {
+      expect(digitando('amanha').digitando).toEqual({ ate: null })
+      expect(digitando(42).digitando).toEqual({ ate: null })
+    })
+
+    it('cada frame e um indicador novo, que renova o prazo', () => {
+      const primeiro = digitando()
+      const segundo = reduzir(primeiro, { tipo: 'frame', bruto: frame({ tipo: 'digitando', ate: '2026-09-27T12:00:30Z' }) })
+      expect(segundo.digitando).not.toBe(primeiro.digitando)
+    })
+
+    it.each([
+      ['mensagem', { tipo: 'mensagem', texto: 'Tem sim.', kind: 'reply' }],
+      ['imovel', { tipo: 'imovel', kind: 'ficha_1', texto: 'Separei:', imovel: null }],
+      ['imagem', { tipo: 'imagem', url: 'https://x/y.png' }],
+    ])('a fala do agente (%s) apaga o indicador', (_nome, dado) => {
+      expect(reduzir(digitando(), { tipo: 'frame', bruto: frame(dado) }).digitando).toBeNull()
+    })
+
+    it('o socket que fecha apaga o indicador', () => {
+      const estado = reduzir(digitando(), { tipo: 'abriu' })
+      expect(reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 0 }).digitando).toBeNull()
+    })
+
+    it('encerrar apaga o indicador', () => {
+      expect(reduzir(digitando(), { tipo: 'encerrou' }).digitando).toBeNull()
+    })
+
+    it('o prazo vencido apaga so o indicador daquele frame', () => {
+      const primeiro = digitando()
+      const segundo = reduzir(primeiro, { tipo: 'frame', bruto: frame({ tipo: 'digitando', ate: '2026-09-27T12:00:30Z' }) })
+
+      // O prazo do primeiro vence depois de o segundo chegar: nada muda.
+      expect(reduzir(segundo, { tipo: 'digitacaoVenceu', indicador: primeiro.digitando! })).toBe(segundo)
+      expect(reduzir(segundo, { tipo: 'digitacaoVenceu', indicador: segundo.digitando! }).digitando).toBeNull()
+    })
+
+    it('a fala do agente sem indicador ligado nao muda a referencia por causa dele', () => {
+      const antes = INICIAL
+      expect(reduzir(antes, { tipo: 'frame', bruto: frame({ tipo: 'imagem', url: 'https://x/y.png' }) })).toBe(antes)
+    })
   })
 
   it('imagem mantem o estado, mesma referencia', () => {
@@ -485,7 +528,7 @@ describe('reduzir', () => {
 
     const depois = reduzir(estado, { tipo: 'encerrou' })
 
-    expect(depois).toEqual({ mensagens: [], conexao: { tipo: 'conectando' }, sessao: null })
+    expect(depois).toEqual({ mensagens: [], conexao: { tipo: 'conectando' }, sessao: null, digitando: null })
   })
 
   it('encerrou durante a espera de muitas_tentativas mantem a espera (Review Focus 5)', () => {
@@ -502,6 +545,7 @@ describe('reduzir', () => {
       mensagens: [],
       conexao: { tipo: 'aguardando', mensagem: 'espera', segundos: 5 },
       sessao: null,
+      digitando: null,
     })
   })
 

@@ -19,8 +19,14 @@
  * mesmo objeto -- e a mesma chave --, e so a que falta ganha chave nova: ver
  * `aplicarHistorico`.
  *
- * **Frames do servidor que esta card ainda ignora, e quem trata cada um:**
- * `digitando` (TEC-351), `imagem` e `consentimento_registrado` (TEC-352).
+ * **Frames do servidor que esta tela ainda ignora, e quem trata cada um:**
+ * `imagem` e `consentimento_registrado` (TEC-352). A `imagem` ja apaga o
+ * indicador de digitacao, porque e fala do agente.
+ *
+ * **`digitando` liga o indicador desde a TEC-351** (`digitando` da
+ * `Conversa`): a proxima fala do agente, o socket que fecha e o encerramento
+ * o apagam, e o prazo -- o `ate` do frame, com teto de 30 s -- e do
+ * componente, que despacha `digitacaoVenceu`.
  *
  * **`imovel` vira card desde a TEC-349** (`aplicarImovel`): a prosa do
  * primeiro frame, quando vem, e um balao do agente, e o imovel entra numa
@@ -60,7 +66,15 @@ export type Conexao =
   // oferece "Tentar de novo".
   | { tipo: 'offline'; instavel: boolean }
 
-export type Conversa = { mensagens: Mensagem[]; conexao: Conexao; sessao: string | null }
+/**
+ * O indicador "está digitando…" que o frame `digitando` ligou (TEC-351, D2).
+ * `ate` e o instante que o servidor mandou, em epoch ms, ou `null` se nao veio
+ * um instante legivel. Cada frame gera um objeto novo: e a identidade dele
+ * que o timer do componente segue, entao um frame novo renova o prazo.
+ */
+export type Digitando = { ate: number | null }
+
+export type Conversa = { mensagens: Mensagem[]; conexao: Conexao; sessao: string | null; digitando: Digitando | null }
 
 export type Evento =
   | { tipo: 'abriu' }
@@ -80,6 +94,8 @@ export type Evento =
   | { tipo: 'adormeceu' }
   // Cinco minutos desde a primeira queda venceram (TEC-348, D3).
   | { tipo: 'desistiu' }
+  // O prazo do indicador `indicador` venceu (TEC-351, D2).
+  | { tipo: 'digitacaoVenceu'; indicador: Digitando }
 
 /**
  * O codigo com que o SERVIDOR fecha o socket ocioso (TEC-366): 30 minutos sem
@@ -130,7 +146,17 @@ export const MAXIMO_DE_CARDS = 3
 /** Quanto tempo sem `ack` marca uma mensagem enviada como `falhou` (D3). */
 export const PRAZO_DO_ACK_MS = 10_000
 
-export const INICIAL: Conversa = { mensagens: [], conexao: { tipo: 'conectando' }, sessao: null }
+export const INICIAL: Conversa = { mensagens: [], conexao: { tipo: 'conectando' }, sessao: null, digitando: null }
+
+/** Devolve a MESMA `Conversa` quando o indicador ja esta apagado. */
+function semDigitando(estado: Conversa): Conversa {
+  return estado.digitando === null ? estado : { ...estado, digitando: null }
+}
+
+function aplicarDigitando(estado: Conversa, dado: FrameBruto): Conversa {
+  const ate = typeof dado.ate === 'string' ? Date.parse(dado.ate) : Number.NaN
+  return { ...estado, digitando: { ate: Number.isNaN(ate) ? null : ate } }
+}
 
 // Um frame decodificado, antes de sabermos se o `tipo` e um dos que esta
 // card trata. `unknown` nos campos: o valor vem da rede.
@@ -387,10 +413,15 @@ function aplicarFrame(estado: Conversa, bruto: string): Conversa {
   switch (objeto.tipo) {
     case 'sessao':
       return aplicarSessao(estado, objeto)
+    // A fala do agente apaga o "está digitando…" (TEC-351, D2).
     case 'mensagem':
-      return aplicarMensagemDoAgente(estado, objeto)
+      return semDigitando(aplicarMensagemDoAgente(estado, objeto))
     case 'imovel':
-      return aplicarImovel(estado, objeto)
+      return semDigitando(aplicarImovel(estado, objeto))
+    case 'imagem':
+      return semDigitando(estado)
+    case 'digitando':
+      return aplicarDigitando(estado, objeto)
     case 'ack':
       return aplicarAck(estado, objeto)
     case 'erro':
@@ -398,8 +429,8 @@ function aplicarFrame(estado: Conversa, bruto: string): Conversa {
     case 'historico':
       return aplicarHistorico(estado, objeto)
     default:
-      // digitando, imagem, consentimento_registrado, e qualquer tipo que o
-      // servidor venha a mandar e esta tela ainda nao conheca.
+      // consentimento_registrado, e qualquer tipo que o servidor venha a
+      // mandar e esta tela ainda nao conheca.
       return estado
   }
 }
@@ -471,7 +502,12 @@ export function reduzir(estado: Conversa, evento: Evento): Conversa {
     case 'frame':
       return aplicarFrame(estado, evento.bruto)
     case 'fechou':
-      return aplicarFechou(estado, evento.codigo, evento.agora)
+      // O indicador era do socket que caiu (TEC-351, D2): o que o agente disse
+      // enquanto isso volta pelo `historico` da reconexao.
+      return semDigitando(aplicarFechou(estado, evento.codigo, evento.agora))
+    case 'digitacaoVenceu':
+      // So o indicador daquele frame: um `digitando` mais novo tem prazo proprio.
+      return estado.digitando === evento.indicador ? { ...estado, digitando: null } : estado
     case 'prazoDoAck':
       return marcarFalhouSeEnviando(estado, evento.messageId)
     case 'reenviou':

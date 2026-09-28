@@ -15,4 +15,24 @@ describe('CabecalhoDoChat', () => {
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Assistente virtual$/)
   })
+
+  it.each([
+    ['conectado', 'Conectado'],
+    ['conectando', 'Conectando…'],
+    ['reconectando', 'Reconectando…'],
+    ['offline', 'Offline'],
+  ] as const)('a conexao %s aparece em texto: "%s" (TEC-351)', (conexao, texto) => {
+    render(<CabecalhoDoChat nome="Lia" conexao={conexao} />)
+
+    const status = screen.getByRole('status')
+    expect(status).toHaveTextContent(new RegExp(`^${texto}$`))
+    // O ponto colorido e decoracao: a informacao esta no texto.
+    expect(status.querySelector('.chat-embutido__marcador')).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('sem conexao, nao ha linha de estado', () => {
+    render(<CabecalhoDoChat nome="Lia" />)
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
 })

@@ -632,6 +632,42 @@ a {
   font-size: 1.125rem;
 }
 
+/* O estado da conexao (TEC-351): texto sempre, e o ponto so reforca. As
+   cores do ponto ficam sobre a cor do tenant, entao vao com borda branca. */
+.chat-embutido__conexao {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: 0.8125rem;
+}
+
+.chat-embutido__marcador {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #a3a3a3;
+}
+
+.chat-embutido__conexao--conectado .chat-embutido__marcador {
+  background: #22c55e;
+}
+
+.chat-embutido__conexao--conectando .chat-embutido__marcador,
+.chat-embutido__conexao--reconectando .chat-embutido__marcador {
+  background: #facc15;
+}
+
+/* O "está digitando…" (TEC-351): fora do `log`, acima do campo. */
+.conversa__digitando {
+  margin: 0;
+  padding: 4px 16px;
+  font-size: 0.875rem;
+  font-style: italic;
+  color: #525252;
+}
+
 /* A conversa do chat embutido (TEC-346, D5). A lista rola sozinha e o campo
    fica no rodape -- o `min-height: 0` deixa os filhos flex encolherem abaixo
    do conteudo, senao a lista empurraria o campo para fora do iframe. A cor da
