@@ -30,9 +30,11 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao
+from mobia.app.config import get_settings
 from mobia.domain.catalogo import cadastro
 from mobia.domain.catalogo.busca import MAX_CANDIDATOS
 from mobia.domain.catalogo.enums import (
@@ -42,10 +44,19 @@ from mobia.domain.catalogo.enums import (
     StatusImportacao,
     TipoImovel,
 )
+from mobia.domain.catalogo.fotos import (
+    FOTO_LIMITE_POR_IMOVEL,
+    FOTO_TETO_DE_BYTES,
+    chave_do_armazem,
+    detectar_formato,
+    mime_da_extensao,
+    mime_e_extensao_de,
+)
 from mobia.domain.catalogo.importacao import registrar
 from mobia.domain.catalogo.models import Imovel, Importacao
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca
+from mobia.domain.midia.armazem import armazem_da_config
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
 
@@ -491,3 +502,85 @@ async def excluir(imovel_id: uuid.UUID, _: IdentidadeDaRequisicao = _ADMIN) -> N
         except cadastro.CadastroRecusado as erro:
             raise _recusa(erro) from erro
         await session.commit()
+
+
+# --- TEC-335: upload e leitura da foto do imovel -------------------------------
+#
+# `GERIR_CATALOGO` nas duas, D2 do desenho: o unico consumidor de verdade hoje
+# e a propria tela de administracao, e o widget do chat web ainda nao desenha
+# o card com foto (`frontend/src/widget` nao le `foto` do payload) -- expor a
+# leitura sem guarda seria decisao de exposicao publica tomada cedo demais.
+# Reordenar/remover fotos NAO ganham rota nova: e o `PATCH` acima, com
+# `fotos: list[str]` numa ordem ou tamanho diferente (D4/D5).
+
+
+@router.post("/{imovel_id}/fotos", status_code=status.HTTP_201_CREATED)
+async def enviar_foto(
+    imovel_id: uuid.UUID,
+    arquivo: Annotated[UploadFile, File()],
+    _: IdentidadeDaRequisicao = _ADMIN,
+) -> dict[str, object]:
+    """Sobe uma foto do imovel. Validada por assinatura de bytes, nunca por
+    `Content-Type` declarado nem pela extensao do nome (D3)."""
+    async with get_sessionmaker()() as session:
+        imovel = await session.get(Imovel, imovel_id)
+        if imovel is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="imovel nao existe")
+
+        if len(imovel.fotos) >= FOTO_LIMITE_POR_IMOVEL:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"o imovel ja tem o limite de {FOTO_LIMITE_POR_IMOVEL} fotos",
+            )
+
+        dados = await arquivo.read()
+        if len(dados) > FOTO_TETO_DE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"foto acima de {FOTO_TETO_DE_BYTES} bytes",
+            )
+
+        formato = detectar_formato(dados)
+        if formato is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="formato nao reconhecido: aceita apenas JPEG, PNG ou WebP",
+            )
+
+        _mime_ignorado, extensao = mime_e_extensao_de(formato)
+        foto_id = uuid.uuid4()
+        chave = chave_do_armazem(str(imovel_id), str(foto_id), extensao)
+        await armazem_da_config(get_settings()).guardar(chave, dados)
+
+        # URL relativa, como as outras entradas de `fotos` (D3 do desenho):
+        # `armazem_da_config` grava sob um `foto_id` de `uuid4()`, entao nunca
+        # contem `|` -- o separador que `cadastro._bruto` recusa em listas.
+        nova_url = f"/api/v1/imoveis/{imovel_id}/fotos/{foto_id}"
+        try:
+            edicao = await cadastro.editar(
+                session, imovel_id=imovel_id, campos={"fotos": [*imovel.fotos, nova_url]}
+            )
+        except cadastro.CadastroRecusado as erro:
+            raise _recusa(erro) from erro
+        await session.commit()
+        return cadastro.como_api(edicao.imovel)
+
+
+@router.get("/{imovel_id}/fotos/{foto_id}")
+async def ler_foto(
+    imovel_id: uuid.UUID, foto_id: uuid.UUID, _: IdentidadeDaRequisicao = _ADMIN
+) -> Response:
+    """Serve a foto de volta. O `Content-Type` vem da extensao gravada na
+    chave do armazem -- a mesma que a validacao do upload (D3) escolheu, nunca
+    o que o navegador declarou (D2)."""
+    settings = get_settings()
+    armazem = armazem_da_config(settings)
+    for extensao in ("jpg", "png", "webp"):
+        chave = chave_do_armazem(str(imovel_id), str(foto_id), extensao)
+        try:
+            dados = await armazem.ler(chave)
+        except FileNotFoundError:
+            continue
+        mime = mime_da_extensao(extensao)
+        return Response(content=dados, media_type=mime)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="foto nao existe")
