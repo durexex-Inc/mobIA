@@ -83,6 +83,19 @@ async def test_temperatura_invalida_e_422_e_nao_funil_vazio(client) -> None:
     assert "MORNA" in resposta.json()["detail"]
 
 
+async def test_periodo_maior_que_12_meses_e_422_nomeando_o_campo(client) -> None:
+    """TEC-316, RN-FE-05.3 -- o exemplo do Gherkin daquela card."""
+    resposta = await client.get(
+        ROTA,
+        params={"de": "2025-01-01", "ate": "2026-09-24"},
+        headers=cabecalho_de("LEITURA"),
+    )
+
+    assert resposta.status_code == 422
+    assert "ate" in resposta.json()["detail"]
+    assert "12 meses" in resposta.json()["detail"]
+
+
 async def test_data_malformada_e_422(client) -> None:
     resposta = await client.get(
         ROTA, params={"de": "ontem", "ate": "2026-08-31"}, headers=cabecalho_de("LEITURA")

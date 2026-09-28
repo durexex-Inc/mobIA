@@ -72,8 +72,12 @@ function Selecao({
  * Testar contra esta lista, e nao contra as chaves presentes em `atuais`:
  * filtro opcional nao preenchido nao existe como chave, e a mensagem sumiria
  * exatamente no caso em que o valor veio errado.
+ *
+ * `corretorId` saiu desta lista na TEC-316: o campo agora e desabilitado (D2
+ * do desenho) e ninguem mais envia esse parametro, entao ele nao pode mais
+ * levar 422 nenhum.
  */
-const CAMPOS_COM_MENSAGEM: ReadonlySet<string> = new Set(['de', 'ate', 'corretorId'])
+const CAMPOS_COM_MENSAGEM: ReadonlySet<string> = new Set(['de', 'ate'])
 
 /**
  * A mensagem do backend ao lado do campo que ela recusa (RN-FE-04.4).
@@ -154,11 +158,21 @@ export function Filtros({
         valor={atuais.temperatura}
         vazio="Todas"
       />
+      {/* TEC-316, D2: desabilitado ate existir alocacao de corretor no
+          handoff (a TEC-166 aloca ao agendamento, nao ao handoff -- ver a
+          descoberta do desenho). Nao envia `corretorId` nenhum: o backend
+          continua recusando esse filtro com 422, e ninguem mais digita um
+          valor para mandar. Molde identico ao `modo: 'indisponivel'` de
+          `FiltrosDeLeads` (TEC-322, D5). */}
       <label>
         Corretor
-        <input type="text" name="corretorId" defaultValue={atuais.corretorId ?? ''} />
-        <ErroDoCampo nome="corretorId" campos={comCampo} mensagem={erro} />
+        <select disabled aria-describedby="filtros-corretor-motivo">
+          <option>Todos</option>
+        </select>
       </label>
+      <span id="filtros-corretor-motivo" className="filtros-corretor-motivo">
+        Disponível após a alocação de corretor.
+      </span>
       <button type="submit">Aplicar</button>
     </form>
   )

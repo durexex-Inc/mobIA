@@ -40,6 +40,14 @@ def _instante(dia: date, fuso: ZoneInfo) -> datetime:
     return datetime.combine(dia, time.min, tzinfo=fuso).astimezone(UTC)
 
 
+def _mais_um_ano(dia: date) -> date:
+    """O mesmo dia, um ano depois -- 29/02 sem ano bissexto seguinte vira 28/02."""
+    try:
+        return dia.replace(year=dia.year + 1)
+    except ValueError:
+        return dia.replace(year=dia.year + 1, day=28)
+
+
 def montar_recorte(
     *,
     de: date,
@@ -68,6 +76,17 @@ def montar_recorte(
     """
     if de > ate:
         raise FiltroInvalido("de", f"de={de.isoformat()} e depois de ate={ate.isoformat()}")
+
+    # TEC-316, RN-FE-05.3: 12 meses, e nao um numero fixo de dias -- o mesmo
+    # dia um ano depois, para o limite nao mudar de tamanho conforme o ano
+    # tem ou nao 29 de fevereiro no meio.
+    limite = _mais_um_ano(de)
+    if ate > limite:
+        raise FiltroInvalido(
+            "ate",
+            f"periodo maior que 12 meses: de={de.isoformat()} ate={ate.isoformat()}, "
+            f"o limite e {limite.isoformat()}",
+        )
 
     if temperatura is not None and temperatura not in {t.value for t in Temperatura}:
         raise FiltroInvalido("temperatura", f"temperatura={temperatura!r} nao e um valor conhecido")

@@ -46,6 +46,40 @@ def test_de_depois_de_ate_e_recusado() -> None:
     assert erro.value.campo == "de"
 
 
+def test_doze_meses_exatos_e_periodo_valido() -> None:
+    """O mesmo dia, um ano depois -- o limite e inclusivo."""
+    recorte = montar_recorte(de=date(2025, 9, 24), ate=date(2026, 9, 24), fuso=SAO_PAULO)
+
+    assert recorte.fim > recorte.inicio
+
+
+def test_doze_meses_e_um_dia_e_recusado() -> None:
+    with pytest.raises(FiltroInvalido) as erro:
+        montar_recorte(de=date(2025, 9, 24), ate=date(2026, 9, 25), fuso=SAO_PAULO)
+
+    assert erro.value.campo == "ate"
+    assert "12 meses" in str(erro.value)
+
+
+def test_o_exemplo_da_card_e_recusado() -> None:
+    """O cenario 3 do Gherkin da TEC-316."""
+    with pytest.raises(FiltroInvalido) as erro:
+        montar_recorte(de=date(2025, 1, 1), ate=date(2026, 9, 24), fuso=SAO_PAULO)
+
+    assert erro.value.campo == "ate"
+
+
+def test_29_de_fevereiro_sem_ano_bissexto_seguinte_vira_28() -> None:
+    """O limite de um `de` em ano bissexto e 28/02 do ano seguinte, nao 01/03
+    nem uma recusa por o dia nao existir."""
+    recorte = montar_recorte(de=date(2024, 2, 29), ate=date(2025, 2, 28), fuso=SAO_PAULO)
+
+    assert recorte.fim > recorte.inicio
+
+    with pytest.raises(FiltroInvalido):
+        montar_recorte(de=date(2024, 2, 29), ate=date(2025, 3, 1), fuso=SAO_PAULO)
+
+
 def test_temperatura_fora_do_vocabulario_e_recusada() -> None:
     with pytest.raises(FiltroInvalido) as erro:
         montar_recorte(

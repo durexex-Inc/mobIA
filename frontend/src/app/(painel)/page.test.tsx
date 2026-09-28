@@ -244,4 +244,20 @@ describe('Pagina', () => {
     expect(url).toMatch(/de=\d{4}-\d{2}-\d{2}/)
     expect(url).toMatch(/ate=\d{4}-\d{2}-\d{2}/)
   })
+
+  it('corretorId na URL nao chega ao FastAPI (TEC-316, D3)', async () => {
+    // Uma URL antiga (de antes do campo virar desabilitado) ou montada a mao
+    // nao deve mais mandar o parametro: o campo nem existe mais na tela, e o
+    // backend so recusaria com 422.
+    const chamadas = responde(FUNIL)
+
+    render(
+      await Pagina({
+        searchParams: Promise.resolve({ corretorId: 'c0c0c0c0-0000-4000-8000-000000000000' }),
+      }),
+    )
+
+    const url = String(chamadas.mock.calls[0][0])
+    expect(url).not.toContain('corretorId')
+  })
 })
