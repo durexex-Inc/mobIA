@@ -59,6 +59,17 @@ describe('itensDoMenu', () => {
     },
   )
 
+  it.each([
+    ['ADMIN', true],
+    ['GERENTE', true],
+    ['CORRETOR', false],
+    ['LEITURA', true],
+  ] as const)('%s ve "Custo de IA": mesma permissao do funil (TEC-319)', (papel, ve) => {
+    const rotulos = itensDoMenu(new Set(PERMISSOES[papel])).map((item) => item.rotulo)
+
+    expect(rotulos.includes('Custo de IA')).toBe(ve)
+  })
+
   it('sem permissao nenhuma, menu vazio', () => {
     expect(itensDoMenu(new Set())).toEqual([])
   })
