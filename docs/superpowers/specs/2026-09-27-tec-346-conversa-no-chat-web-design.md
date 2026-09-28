@@ -61,6 +61,7 @@ Descartadas: tratar 1006 antes do frame `sessao` como "muitas tentativas" (menti
   - `digitando`, `imagem`, `historico` e `consentimento_registrado` são ignorados aqui (TEC-351, TEC-349, TEC-347 e TEC-352).
 - **O `messageId` é UUIDv4** de `crypto.randomUUID()`, com gerador de reserva por `crypto.getRandomValues` para contexto sem `randomUUID`.
 - **`falhou` tem três causas:** `erro` com o `messageId`, socket fechado com a mensagem ainda em `enviando`, e 10 s sem `ack`.
+  - **Nota (TEC-348, 27/09/2026):** o socket fechado deixou de ser causa, salvo no `1002` e durante o sono ou a espera de `muitas_tentativas` (D2 da TEC-348). E os 10 s sem `ack` contam desde que o frame sai por um socket aberto, não desde o clique (D4).
 - **"Reenviar" usa o mesmo `messageId`.** O servidor deduplica pela UNIQUE (D3 da TEC-124) e confirma de novo (D1 da TEC-364). Com o socket fechado, reenviar reabre a conexão. A reconexão **automática** é da TEC-348.
   - **Nota (27/09/2026):** os eventos implementados incluem também `abriu` e `reabrindo`. O `reabrindo` encerra a espera de `muitas_tentativas` quando o socket novo começa a abrir, para que uma reabertura que falhe não congele o chat na espera. E não só reenviar: enviar com o socket fechado também reabre a conexão.
 
@@ -109,3 +110,4 @@ Esta card grava o UUID ao receber `sessao` e manda sempre `ola` com `sessao: nul
 - **L4 — O WebSocket não confere a origem** (TEC-365). Com o `connect-src` desta card, a página embutida alcança o WebSocket; quem o alcança de outras páginas continua sem barreira até lá.
   - **Nota (27/09/2026):** a TEC-365 entrou na main durante esta card; o handshake agora exige a origem do painel, que é a do iframe de /embed/chat.
 - **L5 — A reconexão é só manual.** Queda de conexão marca as pendentes como `falhou`; reconectar sozinho é da TEC-348.
+  - **Nota (TEC-348, 27/09/2026):** superada pela D2 e pela D4 da TEC-348: a queda reconecta sozinha e as pendentes continuam `enviando`, na fila, até sair. Só o fechamento `1002` segue o caminho manual. Ver `docs/superpowers/specs/2026-09-27-tec-348-reconectar-chat-design.md`.
