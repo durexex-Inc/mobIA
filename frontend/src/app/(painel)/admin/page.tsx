@@ -21,7 +21,7 @@ const SECOES: ReadonlyArray<{ nome: string; card: string; href?: string }> = [
   { nome: 'Prompts do agente', card: 'TEC-338' },
   { nome: 'Configuração do agente', card: 'TEC-337' },
   { nome: 'Corretores', card: 'TEC-332', href: '/admin/corretores' },
-  { nome: 'Imóveis', card: 'TEC-333' },
+  { nome: 'Imóveis', card: 'TEC-333', href: '/admin/imoveis' },
   { nome: 'Trilha de auditoria', card: 'TEC-343', href: '/admin/auditoria' },
   { nome: 'Pedidos do titular', card: 'TEC-340', href: '/admin/titular' },
 ]
