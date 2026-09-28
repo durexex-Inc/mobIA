@@ -28,6 +28,9 @@ def _bearer_admin() -> dict[str, str]:
 @pytest.fixture
 def com_slug(monkeypatch: pytest.MonkeyPatch, caches_de_cliente_limpos: None) -> Iterator[None]:
     monkeypatch.setenv("TENANT_SLUG", SLUG)
+    # Vazios, e nao `delenv`: fora de producao o `Settings` le o `.env`.
+    monkeypatch.setenv("AVISO_DE_PRIVACIDADE_URL", "")
+    monkeypatch.setenv("ENCARREGADO_EMAIL", "")
     get_settings.cache_clear()
     yield
 
@@ -44,6 +47,8 @@ async def test_devolve_a_aparencia_padrao_sem_credencial(
         "corPrimaria": "#1D4ED8",
         "posicaoDoBotao": "DIREITA",
         "dominios": [],
+        "avisoDePrivacidadeUrl": None,
+        "encarregadoEmail": None,
     }
 
 
@@ -70,14 +75,35 @@ async def test_devolve_o_que_o_admin_configurou(
         "corPrimaria": "#0A7F5A",
         "posicaoDoBotao": "ESQUERDA",
         "dominios": ["imobiliariasol.com.br"],
+        "avisoDePrivacidadeUrl": None,
+        "encarregadoEmail": None,
     }
+
+
+async def test_devolve_o_aviso_de_privacidade_e_o_encarregado_configurados(
+    client: AsyncClient,
+    banco_limpo: None,
+    com_slug: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TEC-352, D1: a configuracao de implantacao chega a faixa do chat."""
+    monkeypatch.setenv("AVISO_DE_PRIVACIDADE_URL", "https://imobiliariasol.com.br/privacidade")
+    monkeypatch.setenv("ENCARREGADO_EMAIL", "encarregado@imobiliariasol.com.br")
+    get_settings.cache_clear()
+
+    corpo = (await client.get("/widget/aparencia")).json()
+
+    assert corpo["avisoDePrivacidadeUrl"] == "https://imobiliariasol.com.br/privacidade"
+    assert corpo["encarregadoEmail"] == "encarregado@imobiliariasol.com.br"
 
 
 async def test_so_devolve_o_slug_a_aparencia_e_os_dominios(
     client: AsyncClient, banco_limpo: None, com_slug: None
 ) -> None:
     """D3: tom, pesos, cadencia e orcamento sao do admin e nao saem daqui.
-    Os dominios saem desde a TEC-345 (D2), porque o Next precisa deles."""
+    Os dominios saem desde a TEC-345 (D2), porque o Next precisa deles; o
+    aviso de privacidade e o encarregado desde a TEC-352 (D1), porque a faixa
+    do chat os mostra a toda visitante."""
     corpo = (await client.get("/widget/aparencia")).json()
 
     assert set(corpo) == {
@@ -86,6 +112,8 @@ async def test_so_devolve_o_slug_a_aparencia_e_os_dominios(
         "corPrimaria",
         "posicaoDoBotao",
         "dominios",
+        "avisoDePrivacidadeUrl",
+        "encarregadoEmail",
     }
 
 

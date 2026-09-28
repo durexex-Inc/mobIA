@@ -3,8 +3,10 @@
 **Publica, e so com o que o chat embutido precisa**: nome do assistente, cor
 primaria, posicao e -- desde a TEC-345 -- os dominios que podem embutir o
 chat, que o Next usa no `frame-ancestors` e para negar a aparencia a outro
-site. Os dominios nao sao segredo: sao os sites onde o chat aparece. O resto
-da configuracao do agente e do administrador e nao sai por uma rota anonima.
+site. Os dominios nao sao segredo: sao os sites onde o chat aparece. Desde a
+TEC-352 vao tambem o endereco do aviso de privacidade e o e-mail do
+encarregado, que a faixa do chat mostra a toda visitante. O resto da
+configuracao do agente e do administrador nao sai por uma rota anonima.
 
 **Responde sempre 200, e devolve o slug configurado em `tenant`** (nulo sem
 `TENANT_SLUG`). Quem compara com o `data-tenant` do snippet e o Next, e nao
@@ -49,4 +51,8 @@ async def aparencia() -> dict[str, object]:
         "corPrimaria": config.cor_primaria,
         "posicaoDoBotao": PosicaoDoBotao(config.posicao_do_botao).value,
         "dominios": list(config.dominios_do_chat),
+        # TEC-352, D1. Publicos por natureza: estao na faixa que toda visitante
+        # le. Nulos quando nao configurados, e o Next entao nao abre a conversa.
+        "avisoDePrivacidadeUrl": get_settings().aviso_de_privacidade_url,
+        "encarregadoEmail": get_settings().encarregado_email,
     }

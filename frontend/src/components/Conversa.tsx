@@ -18,6 +18,7 @@ import { CardDeImovel } from '@/components/CardDeImovel'
 import {
   CODIGO_OCIOSA,
   type Conexao,
+  type Consentimento,
   type EstadoDaMensagem,
   esperaDaTentativa,
   INICIAL,
@@ -29,6 +30,7 @@ import {
   reduzir,
 } from '@/lib/conversa'
 import { type ImovelCard, type Reacao, textoDaReacao } from '@/lib/imovel'
+import type { Privacidade } from '@/lib/privacidade'
 import { apagarSessao, armazemDoNavegador, gravarSessao, lerSessao } from '@/lib/sessaoGuardada'
 
 const ROTULO_DO_ESTADO: Record<EstadoDaMensagem, string> = {
@@ -47,6 +49,40 @@ const PERGUNTA_DE_ENCERRAR = 'Encerrar esta conversa? O histórico some desta te
 
 // TEC-348, D6: o texto da card para o servidor fora do ar (fechou com 1011).
 const AVISO_DE_INSTAVEL = 'Nosso atendimento está instável. Deixe sua mensagem que responderemos.'
+
+// TEC-352, D3: a faixa de privacidade, texto que a visitante le.
+const FINALIDADE =
+  'Usamos os dados que você informar nesta conversa para responder ao seu interesse em imóveis e, se quiser, ' +
+  'colocar você em contato com um corretor. Ao enviar sua primeira mensagem, você declara estar ciente do aviso ' +
+  'de privacidade.'
+const ROTULO_DO_MARKETING = 'Aceito receber ofertas de imóveis por esta conversa e pelos meus contatos.'
+
+/**
+ * O `textoExibido` do consentimento (TEC-352, D4): a finalidade, os dois
+ * destinos e o texto do checkbox -- o que a faixa mostrou. Os links aparecem
+ * como "Aviso de privacidade" e "Contato do encarregado"; aqui vao os
+ * enderecos, senao o registro diria a que a pessoa foi apresentada sem dizer
+ * onde estava o aviso.
+ */
+function textoExibido({ avisoUrl, encarregadoEmail }: Privacidade): string {
+  return `${FINALIDADE} Aviso de privacidade: ${avisoUrl}. Contato do encarregado: ${encarregadoEmail}. ${ROTULO_DO_MARKETING}`
+}
+
+function frameDeConsentimento({ marketing, textoExibido, exibidoEm }: Consentimento): string {
+  return JSON.stringify({ tipo: 'consentimento', marketing, textoExibido, exibidoEm })
+}
+
+function LinksDePrivacidade({ privacidade }: { privacidade: Privacidade }) {
+  return (
+    <p className="conversa__links-de-privacidade">
+      <a href={privacidade.avisoUrl} target="_blank" rel="noopener noreferrer">
+        Aviso de privacidade
+      </a>
+      {' · '}
+      <a href={`mailto:${privacidade.encarregadoEmail}`}>Contato do encarregado</a>
+    </p>
+  )
+}
 
 /** Teto do "está digitando…" a partir da chegada do frame (TEC-351, D2). */
 const PRAZO_MAXIMO_DA_DIGITACAO_MS = 30_000
@@ -229,6 +265,13 @@ function MenuDaConversa({
  * -- menos durante a espera de `muitas_tentativas`: ai a conexao nova so
  * abre quando a espera acaba, como abriria de qualquer jeito.
  *
+ * **A primeira mensagem vale como ciencia do aviso de privacidade (TEC-352,
+ * D4).** Ate ela, a faixa mostra a finalidade, os links e o checkbox de
+ * ofertas, desmarcado; o envio manda o frame `consentimento` antes da
+ * mensagem -- no socket aberto, ou no `open` seguinte, logo depois do `ola`
+ * --, e o redutor diz se ele ainda precisa sair. Quem retoma uma conversa em
+ * que ja escreveu ja deu ciencia, e ve so os links.
+ *
  * **Minimizado, o socket dorme (D4).** O loader avisa por `postMessage`
  * quando o painel abre e fecha; so vale o aviso do proprio pai. Com o
  * painel fechado, 30 minutos sem nenhum frame enviado ou recebido fecham o
@@ -236,12 +279,27 @@ function MenuDaConversa({
  * painel de novo reconecta com a sessao, e o `historico` repoe o que
  * faltou. Antes do primeiro aviso o painel conta como aberto.
  */
-export function Conversa({ endereco, nome }: { endereco: string; nome: string | null }) {
+export function Conversa({
+  endereco,
+  nome,
+  privacidade,
+}: {
+  endereco: string
+  nome: string | null
+  privacidade: Privacidade
+}) {
   const [conversa, despachar] = useReducer(reduzir, INICIAL)
   const [rascunho, setRascunho] = useState('')
   const [confirmando, setConfirmando] = useState(false)
   // O toque de cada card, por `id` do imovel (TEC-350, D2). Some no encerramento.
   const [reacoes, setReacoes] = useState<Record<string, Reacao>>({})
+  // O checkbox de marketing da faixa (TEC-352, D3): desmarcado, e so a
+  // visitante o marca.
+  const [marketing, setMarketing] = useState(false)
+  // O instante em que a faixa apareceu, para o `exibidoEm` (D4). E o consentimento
+  // em curso, lido pelo `open` -- que pode chegar antes do render do `deuCiencia`.
+  const exibidoEmRef = useRef<string | null>(null)
+  const consentimentoRef = useRef<Consentimento | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
   // Mensagens que esperam o `open` do socket atual para sair. O `open` manda
   // tambem toda `enviando` de `mensagensRef` (TEC-348, D4); a fila so garante
@@ -335,6 +393,11 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
       despachar({ tipo: 'abriu' })
       sessaoDoOlaRef.current = sessaoRef.current
       mandar(JSON.stringify({ tipo: 'ola', sessao: sessaoRef.current }))
+      // O consentimento vai antes das mensagens (TEC-352, D4): o servidor le
+      // os frames em ordem, e ele e gravado antes de a mensagem virar turno.
+      if (consentimentoRef.current?.estado === 'pendente') {
+        mandar(frameDeConsentimento(consentimentoRef.current))
+      }
       // A fila local (TEC-348, D4): toda `enviando` da tela, na ordem, e o que
       // a fila tiver alem disso. O mapa deixa cada `messageId` sair uma vez.
       const saindo = new Map<string, Envio>()
@@ -439,6 +502,44 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   // conexao, que o redutor preserva enquanto nada muda -- inclusive no
   // `encerrou` -- entao o timer nao reinicia a cada balao que chega nem
   // quando a visitante encerra no meio da espera.
+  // TEC-352, D3: a visitante ja deu ciencia quando consentiu nesta sessao ou
+  // quando o `historico` da retomada traz uma fala dela -- quem ja escreveu
+  // aqui ja viu o aviso. Ate la, a faixa inteira; depois, so os links.
+  const ciente =
+    conversa.consentimento !== null || conversa.mensagens.some((mensagem) => mensagem.autor === 'visitante')
+
+  // O `exibidoEm` e o instante em que a faixa apareceu (D4); a sessao nova do
+  // encerramento zera o ref, e a faixa que volta marca de novo.
+  useEffect(() => {
+    if (!ciente && exibidoEmRef.current === null) {
+      exibidoEmRef.current = new Date().toISOString()
+    }
+  }, [ciente])
+
+  // O `open` le o consentimento por ref. `darCiencia` o grava antes do render;
+  // aqui o ref acompanha o que o redutor decidiu depois -- registrado ou recusado.
+  useEffect(() => {
+    consentimentoRef.current = conversa.consentimento
+  }, [conversa.consentimento])
+
+  // A primeira mensagem vale como ciencia (TEC-352, D4): o consentimento, com o
+  // checkbox como estiver -- inclusive desmarcado, que o servidor grava como
+  // recusa --, sai antes da mensagem. Sem socket aberto, espera o `open`.
+  function darCiencia() {
+    const consentimento: Consentimento = {
+      marketing,
+      textoExibido: textoExibido(privacidade),
+      exibidoEm: exibidoEmRef.current ?? new Date().toISOString(),
+      estado: 'pendente',
+    }
+    despachar({ tipo: 'deuCiencia', ...consentimento })
+    consentimentoRef.current = consentimento
+    const socket = socketRef.current
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(frameDeConsentimento(consentimento))
+    }
+  }
+
   const espera = conversa.conexao.tipo === 'aguardando' ? conversa.conexao : null
   const queda =
     conversa.conexao.tipo === 'reconectando' || conversa.conexao.tipo === 'offline' ? conversa.conexao : null
@@ -608,6 +709,9 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
 
   // O caminho de toda fala da visitante: o campo e o toque num card (TEC-350).
   function enviarTexto(texto: string) {
+    if (!ciente) {
+      darCiencia()
+    }
     const id = novoMessageId()
     despachar({ tipo: 'enviou', messageId: id, texto })
     transmitir({ id, texto })
@@ -654,6 +758,9 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
   function encerrar() {
     setConfirmando(false)
     setReacoes({})
+    setMarketing(false)
+    exibidoEmRef.current = null
+    consentimentoRef.current = null
     apagarSessao(armazemDoNavegador())
     sessaoRef.current = null
     const aguardando = conversa.conexao.tipo === 'aguardando'
@@ -777,6 +884,18 @@ export function Conversa({ endereco, nome }: { endereco: string; nome: string | 
               ),
             )}
           </ol>
+        </div>
+        {/* TEC-352, D3: antes do campo. Ate a primeira mensagem, a finalidade,
+            os links e o checkbox desmarcado; depois, so os links. */}
+        <div className="conversa__privacidade">
+          {ciente ? null : <p className="conversa__finalidade">{FINALIDADE}</p>}
+          <LinksDePrivacidade privacidade={privacidade} />
+          {ciente ? null : (
+            <label className="conversa__marketing">
+              <input type="checkbox" checked={marketing} onChange={(evento) => setMarketing(evento.target.checked)} />
+              {ROTULO_DO_MARKETING}
+            </label>
+          )}
         </div>
         {/* TEC-351, D2: fora do `log`, que anunciaria o indicador como
             mensagem nova da conversa. */}

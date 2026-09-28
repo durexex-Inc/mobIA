@@ -528,7 +528,13 @@ describe('reduzir', () => {
 
     const depois = reduzir(estado, { tipo: 'encerrou' })
 
-    expect(depois).toEqual({ mensagens: [], conexao: { tipo: 'conectando' }, sessao: null, digitando: null })
+    expect(depois).toEqual({
+      mensagens: [],
+      conexao: { tipo: 'conectando' },
+      sessao: null,
+      digitando: null,
+      consentimento: null,
+    })
   })
 
   it('encerrou durante a espera de muitas_tentativas mantem a espera (Review Focus 5)', () => {
@@ -546,6 +552,7 @@ describe('reduzir', () => {
       conexao: { tipo: 'aguardando', mensagem: 'espera', segundos: 5 },
       sessao: null,
       digitando: null,
+      consentimento: null,
     })
   })
 
@@ -735,6 +742,55 @@ describe('reconexao (TEC-348)', () => {
 
       expect(depois).toBe(estado)
     })
+  })
+})
+
+describe('consentimento (TEC-352, D4)', () => {
+  const CIENCIA = {
+    tipo: 'deuCiencia',
+    marketing: true,
+    textoExibido: 'aviso',
+    exibidoEm: '2026-09-28T12:00:00.000Z',
+  } as const
+
+  it('deuCiencia guarda o consentimento pendente', () => {
+    expect(reduzir(INICIAL, CIENCIA).consentimento).toEqual({
+      marketing: true,
+      textoExibido: 'aviso',
+      exibidoEm: '2026-09-28T12:00:00.000Z',
+      estado: 'pendente',
+    })
+  })
+
+  it('deuCiencia so vale uma vez por sessao', () => {
+    const primeira = reduzir(INICIAL, CIENCIA)
+    expect(reduzir(primeira, { ...CIENCIA, marketing: false })).toBe(primeira)
+  })
+
+  it('consentimento_registrado encerra o pendente', () => {
+    const depois = reduzir(reduzir(INICIAL, CIENCIA), { tipo: 'frame', bruto: frame({ tipo: 'consentimento_registrado' }) })
+    expect(depois.consentimento?.estado).toBe('registrado')
+  })
+
+  it.each(['consentimento_invalido', 'aviso_ausente', 'aviso_longo_demais'])(
+    'o erro %s encerra sem retentar: o mesmo frame daria o mesmo erro',
+    (codigo) => {
+      const depois = reduzir(reduzir(INICIAL, CIENCIA), { tipo: 'frame', bruto: frame({ tipo: 'erro', codigo, mensagem: 'x' }) })
+      expect(depois.consentimento?.estado).toBe('recusado')
+    },
+  )
+
+  it('consentimento_nao_registrado deixa pendente, para o proximo socket', () => {
+    const antes = reduzir(INICIAL, CIENCIA)
+    const depois = reduzir(antes, {
+      tipo: 'frame',
+      bruto: frame({ tipo: 'erro', codigo: 'consentimento_nao_registrado', mensagem: 'x' }),
+    })
+    expect(depois).toBe(antes)
+  })
+
+  it('encerrou zera o consentimento: a sessao nova pergunta de novo', () => {
+    expect(reduzir(reduzir(INICIAL, CIENCIA), { tipo: 'encerrou' }).consentimento).toBeNull()
   })
 })
 
