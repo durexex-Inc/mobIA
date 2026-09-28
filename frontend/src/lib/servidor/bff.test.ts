@@ -76,6 +76,13 @@ describe('caminhoPermitido', () => {
       expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'qualificacao'])).toBeNull()
     })
 
+    it('a eliminacao dos dados do titular entra so como `DELETE` (TEC-342)', () => {
+      expect(caminhoPermitido('DELETE', ['api', 'v1', 'leads', LEAD, 'dados-pessoais'])).toBe(
+        `/api/v1/leads/${LEAD}/dados-pessoais`,
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'leads', LEAD, 'dados-pessoais'])).toBeNull()
+    })
+
     it('o `*` nao abre as outras rotas do lead', () => {
       // O detalhe e a lista continuam fora do alcance do navegador: quem os
       // le e o Server Component.

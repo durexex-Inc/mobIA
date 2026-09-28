@@ -65,6 +65,11 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // Regenerar o resumo (TEC-326, D5): a rota e do handoff, e nao do lead,
   // porque o resumo e dele. O dono e conferido pelo FastAPI.
   { metodo: 'POST', padrao: ['api', 'v1', 'handoffs', '*', 'resumo'] },
+  // Eliminar os dados do titular (TEC-342, D2): ao contrario do download da
+  // TEC-341, a resposta e um JSON pequeno sem cabecalho especial e a chamada
+  // ja sabe o `leadId` de antemao -- sem nada a resolver antes de repassar,
+  // o proxy generico basta.
+  { metodo: 'DELETE', padrao: ['api', 'v1', 'leads', '*', 'dados-pessoais'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */
