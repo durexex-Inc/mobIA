@@ -48,6 +48,7 @@ Decisão do Eduardo, 27/09/2026: o prazo conta **desde a criação** e não reno
 - **O iframe só aceita o aviso do próprio pai:** `event.source === window.parent` e `event.data.tipo === 'mobia:visibilidade'` com `aberto` booleano.
 - **Minimizado, corre um prazo de 30 minutos**, reiniciado por qualquer frame enviado ou recebido. Ao vencer, o chat fecha o socket num estado próprio, `adormecida`, que não aparece como falha e não marca nada como "Não enviada" que não estivesse já pendente.
   - **Nota (27/09/2026):** um socket que já estava fechado quando o prazo vence — uma queda, a espera de `muitas_tentativas` — não dorme: a tela já diz o que houve, e `adormecida` apagaria a espera ou faria o painel reaberto reconectar sozinho depois de uma queda, o que é da TEC-348.
+    - **Nota (TEC-348, 27/09/2026):** com a reconexão automática, a queda também não dorme enquanto a conexão estiver em `reconectando` ou `offline` — inclusive com a tentativa ainda abrindo —, para o sono não marcar como `falhou` a fila que a reconexão vai mandar.
 - **Ao reabrir, reconecta com a sessão**, e o `historico` (D2) traz o que o agente tiver dito nesse meio-tempo.
   - **Nota (27/09/2026):** reabrir o painel só reconecta a partir de `adormecida`. E uma mensagem enviada com o chat em `adormecida` reconecta direto, pelo mesmo caminho de enviar com o socket fechado.
 - O loader continua dentro do teto de 5 KB gzip.
@@ -81,6 +82,7 @@ Decisão do Eduardo, 27/09/2026: o prazo conta **desde a criação** e não reno
 - **L2 — Resposta em duas partes pode voltar como um balão só** no histórico.
 - **L3 — O histórico traz no máximo as 50 últimas falas.**
 - **L4 — Uma mensagem cujo `ack` se perdeu mas que o servidor gravou** aparece no histórico e continua pendente na tela; o reenvio é deduplicado pelo servidor, mas a tela pode mostrá-la duas vezes até recarregar.
+  - **Nota (TEC-348, 27/09/2026):** resolvida pela D5 da TEC-348: a fala nova da visitante no `historico` confirma a primeira pendente de mesmo texto, que vai para a posição dela já `recebida`.
 - **L5 — Encerrar não avisa o servidor.** Apagar dados do titular é o fluxo de direitos do titular (TEC-207/TEC-342), não este botão.
 - **L6 — Recarregar descarta as mensagens pendentes** (`enviando` e `falhou`), que só existiam na memória da página. Se o servidor recebeu uma delas, ela volta no `historico`; se não, some.
 - **L7 — A L3 vale também para as reconexões dentro da página.** Numa conversa com mais de 50 falas, a primeira reconexão troca a tela pelo `historico` e as falas mais antigas saem dela.

@@ -905,6 +905,24 @@ a {
   font-size: 0.9rem;
 }
 
+/* A queda da conexao (TEC-348): acima do campo, que continua de pe. */
+.conversa__conexao {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.conversa__conexao p {
+  margin: 0;
+}
+
+.conversa__conexao span {
+  display: block;
+}
+
 /* --- Controle da conversa (TEC-327) ---------------------------------------- */
 
 .controle-da-conversa {

@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { INICIAL, MAXIMO_DE_CARDS, novoMessageId, reduzir, type Conversa, type Mensagem } from './conversa'
+import {
+  esperaDaTentativa,
+  INICIAL,
+  MAXIMO_DE_CARDS,
+  novoMessageId,
+  reduzir,
+  type Conversa,
+  type Mensagem,
+} from './conversa'
 
 const REGEX_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -391,12 +399,12 @@ describe('reduzir', () => {
     expect(depois).toBe(antes)
   })
 
-  it('fechou marca toda mensagem enviando como falhou e fecha a conexao', () => {
+  it('fechou com 1002 marca toda mensagem enviando como falhou e fecha a conexao, sem reconectar', () => {
     let estado = comVisitanteEnviando('m1')
     estado = reduzir(estado, { tipo: 'enviou', messageId: 'm2', texto: 'outra' })
     estado = reduzir(estado, { tipo: 'abriu' })
 
-    const depois = reduzir(estado, { tipo: 'fechou' })
+    const depois = reduzir(estado, { tipo: 'fechou', codigo: 1002, agora: 0 })
 
     expect(depois.conexao).toEqual({ tipo: 'fechada' })
     expect(depois.mensagens).toEqual([
@@ -410,11 +418,11 @@ describe('reduzir', () => {
       tipo: 'frame',
       bruto: frame({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'espera', aguardeSegundos: 5 }),
     })
-    const depois = reduzir(aguardando, { tipo: 'fechou' })
+    const depois = reduzir(aguardando, { tipo: 'fechou', codigo: 1013, agora: 0 })
     expect(depois.conexao).toEqual({ tipo: 'aguardando', mensagem: 'espera', segundos: 5 })
   })
 
-  it('reabrindo encerra a espera: conectando, e uma queda depois vira fechada', () => {
+  it('reabrindo encerra a espera: conectando, e uma queda depois reconecta', () => {
     const aguardando = reduzir(INICIAL, {
       tipo: 'frame',
       bruto: frame({ tipo: 'erro', codigo: 'muitas_tentativas', mensagem: 'espera', aguardeSegundos: 5 }),
@@ -422,17 +430,17 @@ describe('reduzir', () => {
     const reabrindo = reduzir(aguardando, { tipo: 'reabrindo' })
     expect(reabrindo.conexao).toEqual({ tipo: 'conectando' })
 
-    const depois = reduzir(reabrindo, { tipo: 'fechou' })
-    expect(depois.conexao).toEqual({ tipo: 'fechada' })
+    const depois = reduzir(reabrindo, { tipo: 'fechou', codigo: 1006, agora: 50 })
+    expect(depois.conexao).toEqual({ tipo: 'reconectando', tentativa: 1, desde: 50, instavel: false })
   })
 
-  it('reabrindo acorda do sono: conectando, e uma queda depois vira fechada (D4)', () => {
+  it('reabrindo acorda do sono: conectando, e uma queda depois reconecta (D4)', () => {
     const adormecida = reduzir(INICIAL, { tipo: 'adormeceu' })
     const reabrindo = reduzir(adormecida, { tipo: 'reabrindo' })
     expect(reabrindo.conexao).toEqual({ tipo: 'conectando' })
 
-    const depois = reduzir(reabrindo, { tipo: 'fechou' })
-    expect(depois.conexao).toEqual({ tipo: 'fechada' })
+    const depois = reduzir(reabrindo, { tipo: 'fechou', codigo: 1006, agora: 50 })
+    expect(depois.conexao).toEqual({ tipo: 'reconectando', tentativa: 1, desde: 50, instavel: false })
   })
 
   it('reabrindo com a conexao ja conectando devolve a mesma referencia', () => {
@@ -513,7 +521,7 @@ describe('reduzir', () => {
     let estado = comVisitanteEnviando('m1')
     estado = reduzir(estado, { tipo: 'adormeceu' })
 
-    const depois = reduzir(estado, { tipo: 'fechou' })
+    const depois = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 0 })
 
     expect(depois.conexao).toEqual({ tipo: 'adormecida' })
     expect(depois.mensagens).toEqual([{ autor: 'visitante', messageId: 'm1', texto: 'oi', estado: 'falhou' }])
@@ -521,7 +529,7 @@ describe('reduzir', () => {
 
   it('fechou com a conexao adormecida e nada pendente mantem a mesma referencia', () => {
     const antes = reduzir(INICIAL, { tipo: 'adormeceu' })
-    const depois = reduzir(antes, { tipo: 'fechou' })
+    const depois = reduzir(antes, { tipo: 'fechou', codigo: 1006, agora: 0 })
     expect(depois).toBe(antes)
   })
 
@@ -529,6 +537,160 @@ describe('reduzir', () => {
     const adormecida = reduzir(INICIAL, { tipo: 'adormeceu' })
     const depois = reduzir(adormecida, { tipo: 'abriu' })
     expect(depois.conexao).toEqual({ tipo: 'aberta' })
+  })
+})
+
+describe('esperaDaTentativa (TEC-348, D1)', () => {
+  it.each([
+    [1, 1],
+    [2, 2],
+    [3, 4],
+    [4, 8],
+    [5, 16],
+    [6, 30],
+    [7, 30],
+    [20, 30],
+  ])('a tentativa %i espera %i s', (tentativa, espera) => {
+    expect(esperaDaTentativa(tentativa)).toBe(espera)
+  })
+})
+
+describe('reconexao (TEC-348)', () => {
+  function aberta(): Conversa {
+    return reduzir(comVisitanteEnviando('m1'), { tipo: 'abriu' })
+  }
+
+  it('queda com a conexao aberta reconecta e mantem a pendente enviando', () => {
+    const depois = reduzir(aberta(), { tipo: 'fechou', codigo: 1006, agora: 1000 })
+    expect(depois.conexao).toEqual({ tipo: 'reconectando', tentativa: 1, desde: 1000, instavel: false })
+    expect(depois.mensagens).toEqual([{ autor: 'visitante', messageId: 'm1', texto: 'oi', estado: 'enviando' }])
+  })
+
+  it('a tentativa que nao abre soma uma e mantem o instante da primeira queda', () => {
+    let estado = reduzir(aberta(), { tipo: 'fechou', codigo: 1006, agora: 1000 })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 2000 })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 4000 })
+    expect(estado.conexao).toEqual({ tipo: 'reconectando', tentativa: 3, desde: 1000, instavel: false })
+  })
+
+  it('1011 marca a queda como instavel, e ela continua instavel nas tentativas seguintes', () => {
+    let estado = reduzir(aberta(), { tipo: 'fechou', codigo: 1011, agora: 1000 })
+    expect(estado.conexao).toEqual({ tipo: 'reconectando', tentativa: 1, desde: 1000, instavel: true })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 2000 })
+    expect(estado.conexao).toEqual({ tipo: 'reconectando', tentativa: 2, desde: 1000, instavel: true })
+  })
+
+  it('1011 numa tentativa que nao abre torna a queda instavel dali em diante', () => {
+    let estado = reduzir(aberta(), { tipo: 'fechou', codigo: 1006, agora: 1000 })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1011, agora: 2000 })
+    expect(estado.conexao).toEqual({ tipo: 'reconectando', tentativa: 2, desde: 1000, instavel: true })
+  })
+
+  it('abriu durante a reconexao zera a contagem: a proxima queda e tentativa 1 de novo', () => {
+    let estado = reduzir(aberta(), { tipo: 'fechou', codigo: 1006, agora: 1000 })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 2000 })
+    estado = reduzir(estado, { tipo: 'abriu' })
+    expect(estado.conexao).toEqual({ tipo: 'aberta' })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 9000 })
+    expect(estado.conexao).toEqual({ tipo: 'reconectando', tentativa: 1, desde: 9000, instavel: false })
+  })
+
+  it('desistiu leva a reconexao a offline, levando o instavel, e mantem a pendente', () => {
+    let estado = reduzir(aberta(), { tipo: 'fechou', codigo: 1011, agora: 1000 })
+    estado = reduzir(estado, { tipo: 'desistiu' })
+    expect(estado.conexao).toEqual({ tipo: 'offline', instavel: true })
+    expect(estado.mensagens).toEqual([{ autor: 'visitante', messageId: 'm1', texto: 'oi', estado: 'enviando' }])
+  })
+
+  it('desistiu fora de uma reconexao devolve a mesma referencia', () => {
+    const antes = aberta()
+    expect(reduzir(antes, { tipo: 'desistiu' })).toBe(antes)
+  })
+
+  it('queda em offline -- a ultima tentativa -- devolve a mesma referencia', () => {
+    let estado = reduzir(aberta(), { tipo: 'fechou', codigo: 1006, agora: 1000 })
+    estado = reduzir(estado, { tipo: 'desistiu' })
+    expect(reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 400_000 })).toBe(estado)
+  })
+
+  it('reabrindo a partir de offline ("Tentar de novo") volta a conectando, e a queda seguinte recomeca a contagem', () => {
+    let estado = reduzir(aberta(), { tipo: 'fechou', codigo: 1006, agora: 1000 })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 2000 })
+    estado = reduzir(estado, { tipo: 'desistiu' })
+    estado = reduzir(estado, { tipo: 'reabrindo' })
+    expect(estado.conexao).toEqual({ tipo: 'conectando' })
+    estado = reduzir(estado, { tipo: 'fechou', codigo: 1006, agora: 500_000 })
+    expect(estado.conexao).toEqual({ tipo: 'reconectando', tentativa: 1, desde: 500_000, instavel: false })
+  })
+
+  it('a primeira conexao que nao abre tambem reconecta', () => {
+    const depois = reduzir(INICIAL, { tipo: 'fechou', codigo: 1006, agora: 1000 })
+    expect(depois.conexao).toEqual({ tipo: 'reconectando', tentativa: 1, desde: 1000, instavel: false })
+  })
+
+  describe('historico confirma a pendente que o servidor ja gravou (D5)', () => {
+    it('a pendente vai para a posicao do historico, recebida, com o mesmo messageId', () => {
+      let estado = reduzir(INICIAL, { tipo: 'frame', bruto: frame({ tipo: 'mensagem', texto: 'Olá!' }) })
+      estado = reduzir(estado, { tipo: 'enviou', messageId: 'm1', texto: 'Tem vaga de garagem?' })
+
+      const depois = reduzir(estado, {
+        tipo: 'frame',
+        bruto: frame({
+          tipo: 'historico',
+          mensagens: [
+            { papel: 'agente', texto: 'Olá!' },
+            { papel: 'lead', texto: 'Tem vaga de garagem?' },
+            { papel: 'agente', texto: 'Tem sim, uma vaga.' },
+          ],
+        }),
+      })
+
+      expect(depois.mensagens).toEqual([
+        { autor: 'agente', chave: 'agente-0', texto: 'Olá!' },
+        { autor: 'visitante', messageId: 'm1', texto: 'Tem vaga de garagem?', estado: 'recebida' },
+        { autor: 'agente', chave: 'agente-1', texto: 'Tem sim, uma vaga.' },
+      ])
+    })
+
+    it('a pendente que falhou tambem e confirmada', () => {
+      let estado = comVisitanteEnviando('m1', 'Aceita pet?')
+      estado = reduzir(estado, { tipo: 'prazoDoAck', messageId: 'm1' })
+
+      const depois = reduzir(estado, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [{ papel: 'lead', texto: 'Aceita pet?' }] }),
+      })
+
+      expect(depois.mensagens).toEqual([{ autor: 'visitante', messageId: 'm1', texto: 'Aceita pet?', estado: 'recebida' }])
+    })
+
+    it('texto repetido casa pela ordem: a primeira fala nova confirma a primeira pendente igual', () => {
+      let estado = comVisitanteEnviando('m1', 'sim')
+      estado = reduzir(estado, { tipo: 'enviou', messageId: 'm2', texto: 'sim' })
+
+      const depois = reduzir(estado, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [{ papel: 'lead', texto: 'sim' }] }),
+      })
+
+      expect(depois.mensagens).toEqual([
+        { autor: 'visitante', messageId: 'm1', texto: 'sim', estado: 'recebida' },
+        { autor: 'visitante', messageId: 'm2', texto: 'sim', estado: 'enviando' },
+      ])
+    })
+
+    it('fala da visitante que ja estava confirmada na tela nao consome a pendente de mesmo texto', () => {
+      let estado = comVisitanteEnviando('m1', 'ok')
+      estado = reduzir(estado, { tipo: 'frame', bruto: frame({ tipo: 'ack', messageId: 'm1' }) })
+      estado = reduzir(estado, { tipo: 'enviou', messageId: 'm2', texto: 'ok' })
+
+      const depois = reduzir(estado, {
+        tipo: 'frame',
+        bruto: frame({ tipo: 'historico', mensagens: [{ papel: 'lead', texto: 'ok' }] }),
+      })
+
+      expect(depois).toBe(estado)
+    })
   })
 })
 

@@ -10,6 +10,7 @@
 - **`chat` (`api/routes/widget.py`) roda duas tarefas** até a primeira terminar: `_ler_do_lead` e `_escrever_do_agente`. Nenhuma tem prazo, então um socket sem tráfego fica aberto até o cliente ir embora.
 - **O cliente só dorme com o painel minimizado** (TEC-347, D4): 30 minutos sem nenhum frame, em nenhum sentido, e ele fecha o socket como `adormecida`. Reabrir o painel reconecta com a sessão, e o `historico` repõe o que faltou. Com o painel aberto, e para clientes antigos ou conexões órfãs, nada fecha.
 - **Qualquer fechamento que não seja o sono vira `fechada`** no cliente, e reabrir o painel não reconecta a partir dela (a reconexão automática é da TEC-348). Enviar uma mensagem reconecta de qualquer estado (`transmitir`).
+  - **Nota (TEC-348, 27/09/2026):** desde a TEC-348 só o `1002` vira `fechada`; os outros fechamentos que não são o sono vão a `reconectando`, e quem reabre o socket é o timer da reconexão, não o painel. Enviar durante a reconexão põe a mensagem na fila em vez de abrir socket.
 
 ## D1 — Uma terceira tarefa vigia a ociosidade
 
