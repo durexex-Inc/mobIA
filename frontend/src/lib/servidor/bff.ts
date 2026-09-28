@@ -99,6 +99,12 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // qualquer metodo.
   { metodo: 'POST', padrao: ['api', 'v1', 'imoveis', 'importar'] },
   { metodo: 'GET', padrao: ['api', 'v1', 'imoveis', 'importacoes', '*'] },
+  // Enviar e ler a foto do imovel (TEC-335, D2/D7). A leitura tambem exige
+  // sessao -- ao contrario da foto que um lead veria no card do chat (que
+  // ainda nao existe), o unico consumidor de hoje e a propria tela de admin,
+  // e por isso `<img>` usa este proxy como qualquer outra leitura autenticada.
+  { metodo: 'POST', padrao: ['api', 'v1', 'imoveis', '*', 'fotos'] },
+  { metodo: 'GET', padrao: ['api', 'v1', 'imoveis', '*', 'fotos', '*'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

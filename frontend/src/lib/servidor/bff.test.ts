@@ -187,6 +187,28 @@ describe('caminhoPermitido', () => {
     })
   })
 
+  describe('fotos do imovel (TEC-335)', () => {
+    const IMOVEL = '6f1c2a4e-0000-4000-8000-000000000003'
+    const FOTO = '6f1c2a4e-0000-4000-8000-000000000005'
+
+    it('o envio entra como POST em `imoveis/*/fotos`', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'imoveis', IMOVEL, 'fotos'])).toBe(
+        `/api/v1/imoveis/${IMOVEL}/fotos`,
+      )
+    })
+
+    it('a leitura entra como GET em `imoveis/*/fotos/*` -- tambem autenticada (D2/D7)', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', IMOVEL, 'fotos', FOTO])).toBe(
+        `/api/v1/imoveis/${IMOVEL}/fotos/${FOTO}`,
+      )
+    })
+
+    it('o envio nao casa com GET, nem a leitura com POST', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'imoveis', IMOVEL, 'fotos'])).toBeNull()
+      expect(caminhoPermitido('POST', ['api', 'v1', 'imoveis', IMOVEL, 'fotos', FOTO])).toBeNull()
+    })
+  })
+
   it('nao casa por PREFIXO, que e o furo classico de allowlist', () => {
     // Se o casamento fosse `startsWith`, esta linha passaria e levaria o
     // FastAPI a `/api/v1/corretores` depois da normalizacao do caminho.

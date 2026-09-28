@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { FotosDoImovel } from '@/components/FotosDoImovel'
 import {
   type CampoDeTexto as CampoDeTextoDoFormulario,
   estaSujo,
@@ -58,6 +59,9 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
   const [recusa, setRecusa] = useState<Recusa>(SEM_RECUSA)
   const [caracteristicaNova, setCaracteristicaNova] = useState('')
   const [avisoDeReindexacao, setAvisoDeReindexacao] = useState<string | null>(null)
+  // TEC-335: as fotos vivem fora de `Formulario` (D1 daquele desenho) --
+  // `onFotosMudaram` atualiza aqui direto, sem esperar o `router.refresh()`.
+  const [fotos, setFotos] = useState<string[]>(() => imovel?.fotos ?? [])
 
   const chaveDoAviso = imovel ? `imovel-${imovel.id}` : 'imovel-novo'
   const sujo = aberto && estaSujo(inicial, atual)
@@ -75,6 +79,7 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
     setRecusa(SEM_RECUSA)
     setCaracteristicaNova('')
     setAvisoDeReindexacao(null)
+    setFotos(imovel?.fotos ?? [])
     setAberto(true)
   }
 
@@ -299,6 +304,12 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
         adicionar={adicionarCaracteristica}
         remover={removerCaracteristica}
       />
+
+      {/* So na edicao: o upload exige um `imovel_id` que o cadastro ainda
+          nao tem (TEC-335). */}
+      {imovel && (
+        <FotosDoImovel imovelId={imovel.id} fotos={fotos} onFotosMudaram={setFotos} />
+      )}
 
       <div className="formulario-de-imovel__acoes">
         <button type="submit" disabled={enviando}>
