@@ -16,6 +16,13 @@ describe('Filtros', () => {
     expect(screen.getByLabelText('Corretor')).toBeInTheDocument()
   })
 
+  it('o filtro por corretor aparece desabilitado com o motivo (TEC-316)', () => {
+    render(<Filtros atuais={PERIODO} />)
+    const corretor = screen.getByLabelText('Corretor')
+    expect(corretor).toBeDisabled()
+    expect(screen.getByText('Disponível após a alocação de corretor.')).toBeInTheDocument()
+  })
+
   it('e um form GET, para funcionar sem JavaScript', () => {
     const { container } = render(<Filtros atuais={PERIODO} />)
     expect(container.querySelector('form')).toHaveAttribute('method', 'get')
@@ -45,37 +52,35 @@ describe('Filtros', () => {
   })
 
   it('preserva o filtro ja aplicado ao redesenhar', () => {
-    render(<Filtros atuais={{ ...PERIODO, canal: 'web', corretorId: 'abc-123' }} />)
+    render(<Filtros atuais={{ ...PERIODO, canal: 'web' }} />)
     expect(screen.getByLabelText('Canal')).toHaveValue('web')
-    expect(screen.getByLabelText('Corretor')).toHaveValue('abc-123')
   })
 })
 
 describe('o 422 ao lado do campo (TEC-313)', () => {
   it('poe a mensagem do backend junto do campo recusado', () => {
-    // Terceiro cenario do Gherkin, na forma que o painel permite exercitar: o
-    // campo citado e `corretorId`, e a mensagem tem de aparecer ali e nao numa
-    // frase solta que obrigue a gerente a descobrir qual campo esta errado.
-    render(
-      <Filtros atuais={PERIODO} erro="valor invalido em corretorId" campos={['corretorId']} />,
-    )
+    // `Filtros` em isolamento: dado um `campos` que aponta `ate`, a mensagem
+    // vai para o label certo. Na pratica, o 422 de "mais de 12 meses"
+    // (TEC-316) NAO chega assim -- `FiltroInvalido` manda `detail` como
+    // string, sem `loc`, entao cai no ramo "acima do formulario" abaixo,
+    // como o de "de > ate" ja fazia. Este teste cobre a capacidade do
+    // componente, nao o pipeline real daquele erro especifico.
+    render(<Filtros atuais={PERIODO} erro="periodo maior que 12 meses" campos={['ate']} />)
 
-    // Busca pelo `name` e nao por `getByLabelText('Corretor')`: a mensagem
-    // entra DENTRO do `<label>`, entao o texto acessivel do campo deixa de ser
-    // exatamente "Corretor" -- e uma consulta por igualdade passaria a nao
-    // achar o campo justamente quando ha erro nele, que e o unico caso que
-    // este teste cobre.
-    const campo = document.querySelector('[name="corretorId"]')?.closest('label')
-    expect(campo).toHaveTextContent('valor invalido em corretorId')
+    // Busca pelo `name` e nao por `getByLabelText('Até')`: a mensagem entra
+    // DENTRO do `<label>`, entao o texto acessivel do campo deixa de ser
+    // exatamente "Até" -- e uma consulta por igualdade passaria a nao achar o
+    // campo justamente quando ha erro nele, que e o unico caso que este teste
+    // cobre.
+    const campo = document.querySelector('[name="ate"]')?.closest('label')
+    expect(campo).toHaveTextContent('periodo maior que 12 meses')
   })
 
   it('nao repete a mesma mensagem acima do formulario', () => {
     // Repetir faria a gerente procurar dois problemas onde ha um.
-    render(
-      <Filtros atuais={PERIODO} erro="valor invalido em corretorId" campos={['corretorId']} />,
-    )
+    render(<Filtros atuais={PERIODO} erro="periodo maior que 12 meses" campos={['ate']} />)
 
-    expect(screen.getAllByText('valor invalido em corretorId')).toHaveLength(1)
+    expect(screen.getAllByText('periodo maior que 12 meses')).toHaveLength(1)
   })
 
   it('erro sem campo identificavel fica acima do formulario', () => {

@@ -31,7 +31,9 @@ function filtrosDaUrl(busca: Busca): FiltrosTipo {
     canal: um(busca.canal),
     intencao: um(busca.intencao),
     temperatura: um(busca.temperatura),
-    corretorId: um(busca.corretorId),
+    // `corretorId` NAO e lido da URL (TEC-316, D3): o campo esta desabilitado
+    // e o backend recusa esse filtro com 422 -- uma URL antiga com
+    // `?corretorId=` nao deve mais chegar a `buscarFunil`.
   }
 }
 

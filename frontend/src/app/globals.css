@@ -79,6 +79,12 @@ a {
   background: color-mix(in srgb, #b23c17 12%, transparent);
 }
 
+/* O motivo do filtro por corretor desabilitado (TEC-316). */
+.filtros-corretor-motivo {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+
 .funil {
   list-style: none;
   padding: 0;
