@@ -12,6 +12,7 @@ configuracao da TEC-198 preenche, e nao tem a clausula de dado nao confiavel,
 que o codigo anexa. A versao 0 e o padrao escrito no codigo.
 """
 
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
@@ -225,7 +226,14 @@ async def reverter(
 
     **`PROMPT_REVERTIDO` na trilha, no mesmo commit.** Reverter um agente nao
     toca o outro: cada ativacao e de um agente so.
+
+    **`tempoDeAtivacaoMs` (TEC-339, D1) e quanto esta chamada levou**, no
+    unico sentido que existe para "tempo ate ativacao" aqui: nao ha cache nem
+    fila para propagar (ver o modulo `repositorio.py`), entao a versao ja
+    esta ativa quando a resposta volta. E a CA-19.2 do SRS (< 30s) e cumprida
+    por uma folga enorme -- este numero e so a escrita sincrona no banco.
     """
+    inicio = time.perf_counter()
     async with get_sessionmaker()() as session:
         try:
             ativacao = await repositorio.reverter(
@@ -246,7 +254,8 @@ async def reverter(
         )
         await session.commit()
         nova = await repositorio.ativa(session, agente)
-    return {"ativa": _ativa_na_api(nova)}
+    tempo_de_ativacao_ms = round((time.perf_counter() - inicio) * 1000)
+    return {"ativa": _ativa_na_api(nova), "tempoDeAtivacaoMs": tempo_de_ativacao_ms}
 
 
 @router.get("/{agente}/historico")

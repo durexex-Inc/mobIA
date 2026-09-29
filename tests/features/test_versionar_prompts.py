@@ -182,6 +182,30 @@ async def test_rollback_para_0_volta_ao_padrao(client: AsyncClient, banco_limpo:
     assert ativa["texto"] == MODELO_DO_AGENTE
 
 
+async def test_rollback_traz_tempo_de_ativacao_nao_negativo(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    """TEC-339, D1: o unico "tempo ate ativacao" que existe e quanto a propria
+    chamada levou -- nao ha cache nem fila para propagar."""
+    await _publicar(client, "AGENTE", _versao_do_agente(1))
+
+    resposta = await client.post(f"{ROTA}/AGENTE/rollback", json={"versao": 0}, headers=_bearer())
+
+    assert resposta.status_code == 200, resposta.text
+    tempo = resposta.json()["tempoDeAtivacaoMs"]
+    assert isinstance(tempo, int)
+    assert tempo >= 0
+
+
+async def test_rollback_recusado_nao_traz_tempo_de_ativacao(
+    client: AsyncClient, banco_limpo: None
+) -> None:
+    resposta = await client.post(f"{ROTA}/AGENTE/rollback", json={"versao": 7}, headers=_bearer())
+
+    assert resposta.status_code == 404
+    assert "tempoDeAtivacaoMs" not in resposta.json()
+
+
 async def test_republicar_depois_do_rollback_compara_com_a_que_valia(
     client: AsyncClient, banco_limpo: None
 ) -> None:

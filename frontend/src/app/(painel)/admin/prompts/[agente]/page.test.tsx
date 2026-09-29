@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { limparArmazem } from '../../../../../../test/armazem-em-memoria'
@@ -169,5 +169,31 @@ describe('PaginaDePrompt (TEC-338)', () => {
 
     expect(screen.getByRole('heading', { name: 'Agente principal' })).toBeInTheDocument()
     expect(await screen.findByLabelText('editor de prompt')).toHaveValue('Você é {assistente}, tom {tom}. V7')
+  })
+
+  describe('reverter (TEC-339)', () => {
+    it('lista "Reverter para esta versão" para as versões que nao sao a ativa, e nao para a ativa', async () => {
+      api('ADMIN')
+
+      const { container } = render(await PaginaDePrompt(props()))
+
+      const lista = within(container.querySelector('.prompts-versoes-anteriores')!)
+      const botoes = lista.getAllByRole('button', { name: 'Reverter para esta versão' })
+      // versao 6 (do historico) e a versao 0 (padrao do codigo) -- a ativa (7) nao ganha botao.
+      expect(botoes).toHaveLength(2)
+      expect(lista.getByText('0 (padrão do código)')).toBeInTheDocument()
+      expect(lista.getByText(/Versão 6 — publicada por Rafael/)).toBeInTheDocument()
+      expect(lista.queryByText(/Versão 7 — publicada por/)).not.toBeInTheDocument()
+    })
+
+    it('a pagina do agente so busca dado do proprio agente (cenario: outros agentes nao mudam)', async () => {
+      const chamadas = api('ADMIN')
+
+      render(await PaginaDePrompt(props()))
+
+      const caminhos = chamadas.mock.calls.map(([url]) => new URL(String(url)).pathname)
+      expect(caminhos.every((caminho) => !caminho.includes('INVESTIDOR'))).toBe(true)
+      expect(caminhos.some((caminho) => caminho.includes('/prompts/AGENTE'))).toBe(true)
+    })
   })
 })
