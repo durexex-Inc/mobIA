@@ -18,7 +18,7 @@ export const metadata: Metadata = {
  * a permissao que ela exerce -- a guarda desta pagina NAO a protege (D3).
  */
 const SECOES: ReadonlyArray<{ nome: string; card: string; href?: string }> = [
-  { nome: 'Prompts do agente', card: 'TEC-338' },
+  { nome: 'Prompts do agente', card: 'TEC-338', href: '/admin/prompts' },
   { nome: 'Configuração do agente', card: 'TEC-337', href: '/admin/configuracao' },
   { nome: 'Corretores', card: 'TEC-332', href: '/admin/corretores' },
   { nome: 'Imóveis', card: 'TEC-333', href: '/admin/imoveis' },
