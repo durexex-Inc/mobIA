@@ -57,8 +57,12 @@ describe('PaginaDeAdministracao', () => {
     render(await PaginaDeAdministracao())
 
     expect(screen.getByRole('heading', { name: 'Administração' })).toBeInTheDocument()
-    expect(screen.getByText('Prompts do agente')).toBeInTheDocument()
-    expect(screen.getAllByText('ainda não disponível')).toHaveLength(1)
+    expect(screen.queryAllByText('ainda não disponível')).toHaveLength(0)
+    // Os prompts do agente (TEC-338).
+    expect(screen.getByRole('link', { name: 'Prompts do agente' })).toHaveAttribute(
+      'href',
+      '/admin/prompts',
+    )
     // A configuracao do agente (TEC-337).
     expect(screen.getByRole('link', { name: 'Configuração do agente' })).toHaveAttribute(
       'href',

@@ -231,6 +231,26 @@ describe('caminhoPermitido', () => {
     })
   })
 
+  describe('prompts do agente (TEC-338)', () => {
+    it('publicar uma versao entra so como POST', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'prompts', 'AGENTE', 'versoes'])).toBe(
+        '/api/v1/prompts/AGENTE/versoes',
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'prompts', 'INVESTIDOR', 'versoes'])).toBe(
+        '/api/v1/prompts/INVESTIDOR/versoes',
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'prompts', 'AGENTE', 'versoes'])).toBeNull()
+    })
+
+    it('a leitura de qualquer rota de prompts nao entra no proxy (D3 do desenho)', () => {
+      expect(caminhoPermitido('GET', ['api', 'v1', 'prompts'])).toBeNull()
+      expect(caminhoPermitido('GET', ['api', 'v1', 'prompts', 'AGENTE'])).toBeNull()
+      expect(
+        caminhoPermitido('GET', ['api', 'v1', 'prompts', 'AGENTE', 'versoes', '7']),
+      ).toBeNull()
+    })
+  })
+
   it('nao casa por PREFIXO, que e o furo classico de allowlist', () => {
     // Se o casamento fosse `startsWith`, esta linha passaria e levaria o
     // FastAPI a `/api/v1/corretores` depois da normalizacao do caminho.

@@ -114,6 +114,12 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   { metodo: 'GET', padrao: ['api', 'v1', 'configuracao', 'agente'] },
   { metodo: 'PATCH', padrao: ['api', 'v1', 'configuracao', 'agente'] },
   { metodo: 'GET', padrao: ['api', 'v1', 'configuracao', 'agente', 'historico'] },
+  // Publicar uma nova versao de prompt (TEC-338, D5). A unica mutacao desta
+  // tela -- a leitura (lista de agentes, versao ativa, texto de qualquer
+  // versao para a comparacao) usa `chamarApi` direto do Server Component,
+  // porque trocar qual par comparar e navegacao por `searchParams`, nao
+  // fetch de cliente (D3 do desenho).
+  { metodo: 'POST', padrao: ['api', 'v1', 'prompts', '*', 'versoes'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */
