@@ -120,6 +120,9 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // porque trocar qual par comparar e navegacao por `searchParams`, nao
   // fetch de cliente (D3 do desenho).
   { metodo: 'POST', padrao: ['api', 'v1', 'prompts', '*', 'versoes'] },
+  // Reverter para uma versao anterior (TEC-339, D2/D4). Mesma tela de
+  // prompts, mutacao de cliente pelo mesmo motivo da publicacao acima.
+  { metodo: 'POST', padrao: ['api', 'v1', 'prompts', '*', 'rollback'] },
 ]
 
 /** `GET` e `HEAD`: os que nao alteram nada do outro lado. */

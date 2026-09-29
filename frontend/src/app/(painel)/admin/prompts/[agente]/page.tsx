@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 
 import { DiffDePrompt } from '@/components/prompts/DiffDePrompt'
 import { EditorDePrompt } from '@/components/prompts/EditorDePrompt'
+import { ReverterVersao } from '@/components/prompts/ReverterVersao'
 import { SeletorDeVersoes } from '@/components/prompts/SeletorDeVersoes'
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { SemPermissao } from '@/components/SemPermissao'
@@ -144,6 +145,27 @@ export default async function PaginaDePrompt({
         rotuloDe={`Versão ${rotuloDaVersao(numeroDe)}`}
         rotuloPara={`Versão ${rotuloDaVersao(numeroPara)}`}
       />
+
+      <h2>Versões anteriores</h2>
+      <ul className="prompts-versoes-anteriores">
+        {ativa !== 0 && (
+          <li>
+            <span>0 (padrão do código)</span>
+            <ReverterVersao agente={agente} versao={0} />
+          </li>
+        )}
+        {versoes
+          .filter((versao) => versao.versao !== ativa)
+          .map((versao) => (
+            <li key={versao.versao}>
+              <span>
+                Versão {versao.versao} — publicada por {versao.autor} em{' '}
+                {new Date(versao.em).toLocaleString('pt-BR')}
+              </span>
+              <ReverterVersao agente={agente} versao={versao.versao} />
+            </li>
+          ))}
+      </ul>
     </main>
   )
 }

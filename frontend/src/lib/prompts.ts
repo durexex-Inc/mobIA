@@ -68,3 +68,15 @@ export type VersaoResumida = {
 
 /** `GET /api/v1/prompts/{agente}/versoes/{numero}`, com o texto (D3 do desenho). */
 export type VersaoComTexto = VersaoResumida & { texto: string; padrao?: boolean }
+
+/**
+ * `POST /api/v1/prompts/{agente}/rollback` (TEC-339, D1).
+ *
+ * `tempoDeAtivacaoMs` e quanto a propria chamada levou -- nao ha cache nem
+ * fila para propagar (D1 do desenho), entao a versao ja esta ativa quando a
+ * resposta volta. So aparece no sucesso: 404/409 nao tem o campo.
+ */
+export type RespostaDoRollback = {
+  ativa: AgenteAtivo
+  tempoDeAtivacaoMs: number
+}

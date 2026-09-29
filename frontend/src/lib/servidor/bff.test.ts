@@ -249,6 +249,16 @@ describe('caminhoPermitido', () => {
         caminhoPermitido('GET', ['api', 'v1', 'prompts', 'AGENTE', 'versoes', '7']),
       ).toBeNull()
     })
+
+    it('reverter entra so como POST (TEC-339)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'prompts', 'AGENTE', 'rollback'])).toBe(
+        '/api/v1/prompts/AGENTE/rollback',
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'prompts', 'INVESTIDOR', 'rollback'])).toBe(
+        '/api/v1/prompts/INVESTIDOR/rollback',
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'prompts', 'AGENTE', 'rollback'])).toBeNull()
+    })
   })
 
   it('nao casa por PREFIXO, que e o furo classico de allowlist', () => {
