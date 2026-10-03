@@ -47,6 +47,9 @@ const cabecalhosDeSeguranca = [
 ];
 
 const nextConfig: NextConfig = {
+  // Build autossuficiente para a imagem Docker: o Next copia so o necessario
+  // para `.next/standalone`, e o runtime nao precisa do node_modules inteiro.
+  output: "standalone",
   async headers() {
     return [
       {

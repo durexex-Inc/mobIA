@@ -16,17 +16,40 @@ import ssl
 from mobia.app.config import ConfiguracaoInsegura, Settings
 
 
-def contexto_tls() -> ssl.SSLContext:
+def contexto_tls(verificar: bool = True) -> ssl.SSLContext:
+    """O contexto TLS de saida para infraestrutura nossa.
+
+    `verificar=True` (o padrao) exige um certificado que encadeia numa CA
+    publica e cujo host bate, e piso TLS 1.3 -- a postura de um banco cujo
+    certificado sabemos validar.
+
+    `verificar=False` cifra sem verificar cadeia nem host, e baixa o piso para
+    TLS 1.2. E o que um provedor gerenciado com certificado auto-assinado
+    (Heroku Postgres, entre outros) exige: sem isso a conexao falha na subida
+    com `CERTIFICATE_VERIFY_FAILED`, embora o trafego ja fosse cifrado. A
+    escolha e de CONFIGURACAO (`DB_SSL_VERIFICAR`), nao um default silencioso:
+    quem desliga a verificacao declara que confia na rede do provedor.
+    """
     contexto = ssl.create_default_context()
-    contexto.minimum_version = ssl.TLSVersion.TLSv1_3
+    if verificar:
+        contexto.minimum_version = ssl.TLSVersion.TLSv1_3
+        return contexto
+    contexto.check_hostname = False
+    contexto.verify_mode = ssl.CERT_NONE
+    contexto.minimum_version = ssl.TLSVersion.TLSv1_2
     return contexto
 
 
 def argumentos_de_conexao_do_banco(settings: Settings) -> dict[str, object]:
-    """`connect_args` do engine: o contexto TLS em producao, nada fora dela."""
-    if not settings.em_producao:
+    """`connect_args` do engine: o contexto TLS em producao, nada fora dela.
+
+    Com `infra_interna_confiavel`, o Postgres esta na rede interna do mesmo
+    host (Docker Compose) e o trafego nao sai da maquina: nao ha rede alheia a
+    proteger, entao a conexao vai sem TLS -- a mesma postura do ambiente local.
+    """
+    if not settings.em_producao or settings.infra_interna_confiavel:
         return {}
-    return {"ssl": contexto_tls()}
+    return {"ssl": contexto_tls(settings.db_ssl_verificar)}
 
 
 def exigir_redis_com_tls(dsn: str) -> None:

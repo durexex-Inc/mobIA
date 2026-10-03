@@ -36,8 +36,26 @@ function urlDoRedis(): string {
 
 let conexao: Promise<Armazem> | null = null
 
+/**
+ * As opcoes do cliente. Com `rediss://` o node-redis liga TLS pelo esquema.
+ * O Key-Value Store gerenciado (Heroku, entre outros) usa certificado
+ * auto-assinado: sem `rejectUnauthorized: false` a conexao falha embora o
+ * trafego ja fosse cifrado. `MOBIA_REDIS_SSL_VERIFICAR=false` dispensa so a
+ * verificacao de cadeia -- espelha `REDIS_SSL_VERIFICAR` do backend, e como
+ * ele e uma escolha de configuracao, nao um default silencioso.
+ */
+function opcoesDoRedis(): Parameters<typeof createClient>[0] {
+  const url = urlDoRedis()
+  const verificar = (process.env.MOBIA_REDIS_SSL_VERIFICAR ?? 'true').toLowerCase()
+  const semVerificacao = verificar === 'false' || verificar === '0'
+  if (url.startsWith('rediss://') && semVerificacao) {
+    return { url, socket: { tls: true, rejectUnauthorized: false } }
+  }
+  return { url }
+}
+
 async function conectar(): Promise<Armazem> {
-  const cliente = createClient({ url: urlDoRedis() })
+  const cliente = createClient(opcoesDoRedis())
   // Sem este ouvinte, um erro de conexao do node-redis vira `uncaughtException`
   // e derruba o processo do Next inteiro. Com ele, o erro aparece em cada
   // operacao, que e onde quem chama sabe o que fazer: a rota de login diz

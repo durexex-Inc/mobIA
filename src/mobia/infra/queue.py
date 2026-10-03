@@ -14,15 +14,24 @@ TRANSCREVER_AUDIO_JOB = "transcrever_audio"
 def redis_settings() -> RedisSettings:
     settings = get_settings()
     redis = RedisSettings.from_dsn(settings.redis_url)
-    if settings.em_producao:
+    if settings.em_producao and not settings.infra_interna_confiavel:
         exigir_redis_com_tls(settings.redis_url)
-        # `from_dsn` liga `ssl` para rediss://, e o default do ARQ 0.28 ja exige
-        # certificado valido (`ssl_cert_reqs="required"`). O que ele nao faz e
-        # conferir que o certificado e do HOST: `ssl_check_hostname` vem False,
-        # e sem ele qualquer certificado valido de outro dominio passaria. O
-        # `ssl_cert_reqs` fica escrito para nao depender do default mudar.
-        redis.ssl_cert_reqs = "required"
-        redis.ssl_check_hostname = True
+        if settings.redis_ssl_verificar:
+            # `from_dsn` liga `ssl` para rediss://, e o default do ARQ 0.28 ja
+            # exige certificado valido (`ssl_cert_reqs="required"`). O que ele
+            # nao faz e conferir que o certificado e do HOST:
+            # `ssl_check_hostname` vem False, e sem ele qualquer certificado
+            # valido de outro dominio passaria. O `ssl_cert_reqs` fica escrito
+            # para nao depender do default mudar.
+            redis.ssl_cert_reqs = "required"
+            redis.ssl_check_hostname = True
+        else:
+            # Redis gerenciado com certificado auto-assinado (o Key-Value Store
+            # do Heroku): a verificacao de cadeia falharia embora o trafego ja
+            # fosse cifrado por `rediss://`. `REDIS_SSL_VERIFICAR=False` dispensa
+            # so a verificacao -- e uma escolha de configuracao, nao um default.
+            redis.ssl_cert_reqs = "none"
+            redis.ssl_check_hostname = False
     return redis
 
 

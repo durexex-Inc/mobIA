@@ -95,6 +95,28 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://mobia:mobia@localhost:5433/mobia"
     redis_url: str = "redis://localhost:6380/0"
 
+    # Verificacao do certificado TLS do Postgres gerenciado. Em producao o
+    # `contexto_tls()` (infra/tls.py) exige, por padrao, um certificado que
+    # encadeia numa CA publica e cujo host bate. Postgres gerenciado (o Heroku
+    # Postgres, entre outros) apresenta certificado auto-assinado que NAO
+    # encadeia numa CA publica: a conexao continua cifrada, mas a verificacao
+    # de cadeia falharia na subida. `False` mantem a cifra e dispensa so a
+    # verificacao de cadeia/host. Fora de producao nao tem efeito -- la nao ha
+    # TLS.
+    db_ssl_verificar: bool = True
+    # O mesmo para o Redis gerenciado (o Key-Value Store do Heroku usa cert
+    # auto-assinado). `True` mantem `ssl_cert_reqs=required` e
+    # `ssl_check_hostname`; `False` cifra sem verificar cadeia nem host.
+    redis_ssl_verificar: bool = True
+    # A API e o worker falam com Postgres e Redis dentro da rede interna do
+    # Docker Compose, e esse trafego nunca sai do host. `True` dispensa, em
+    # producao, o TLS para essa infra interna (o Redis pode ser `redis://`, e a
+    # conexao com o Postgres vai sem contexto TLS) -- porque a protecao que o
+    # TLS daria aqui e contra rede ALHEIA, que nao e o caso de um unico host.
+    # Default `False`: mantem a postura estrita (TLS exigido) de quem fala com
+    # infra gerenciada em rede de terceiros.
+    infra_interna_confiavel: bool = False
+
     whatsapp_app_secret: str = "dev-app-secret"
     whatsapp_verify_token: str = "dev-verify-token"
 
@@ -774,6 +796,37 @@ class Settings(BaseSettings):
     # janela e todo dia, e e por isso que esta frase existe.
     atendimento_horario_inicio: int = 9
     atendimento_horario_fim: int = 19
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalizar_database_url(cls, valor: object) -> object:
+        """Aceita a URL que a plataforma injeta e a poe no formato do driver.
+
+        Plataformas gerenciadas (o Heroku, entre outras) exportam
+        `postgres://...` ou `postgresql://...`, e as vezes anexam `?sslmode=...`,
+        proprio do libpq. O driver deste projeto e o asyncpg, que quer
+        `postgresql+asyncpg://...` e nao entende `sslmode` na URL -- o TLS aqui
+        vem por `connect_args` (infra/tls.py). Traduzir num lugar so evita
+        espalhar a conversao e evita editar a variavel que a plataforma
+        sobrescreve a cada attach do banco.
+        """
+        if not isinstance(valor, str):
+            return valor
+        url = valor
+        ja_no_driver = url.startswith("postgresql+")
+        if not ja_no_driver:
+            for prefixo in ("postgres://", "postgresql://"):
+                if url.startswith(prefixo):
+                    url = "postgresql+asyncpg://" + url[len(prefixo) :]
+                    break
+        if "?" in url:
+            base, consulta = url.split("?", 1)
+            proibidos = {"sslmode", "channel_binding"}
+            mantidos = [
+                par for par in consulta.split("&") if par and par.split("=", 1)[0] not in proibidos
+            ]
+            url = base + ("?" + "&".join(mantidos) if mantidos else "")
+        return url
 
     @property
     def em_producao(self) -> bool:
