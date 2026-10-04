@@ -39,14 +39,14 @@ demora, falta de acompanhamento e sobrecarga do corretor — e por isso trata co
 rigor três propriedades: **não perder mensagem** (durabilidade), **não responder
 duas vezes** (idempotência) e **não vazar dado pessoal** (cifra + LGPD).
 
-| Dimensão | Escolha |
-|---|---|
-| Linguagem/stack | Python 3.13, FastAPI (API), arq (worker assíncrono), Next.js (painel/widget) |
-| Dados | PostgreSQL 16 + `pgvector` (busca vetorial), Redis (fila + rate limit + sessão do painel) |
-| IA | Anthropic Claude (agente/resumo/moderação), OpenAI (embeddings e transcrição) |
-| Canais | WhatsApp Cloud API (Meta), widget web (WebSocket) |
-| Integrações | SMTP, Google Calendar, Webhook de CRM |
-| Deploy | Contêineres Docker atrás de Traefik em VPS (ou Heroku, como alternativa) |
+| Dimensão        | Escolha                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| Linguagem/stack | Python 3.13, FastAPI (API), arq (worker assíncrono), Next.js (painel/widget)              |
+| Dados           | PostgreSQL 16 + `pgvector` (busca vetorial), Redis (fila + rate limit + sessão do painel) |
+| IA              | Anthropic Claude (agente/resumo/moderação), OpenAI (embeddings e transcrição)             |
+| Canais          | WhatsApp Cloud API (Meta), widget web (WebSocket)                                         |
+| Integrações     | SMTP, Google Calendar, Webhook de CRM                                                     |
+| Deploy          | Contêineres Docker atrás de Traefik em VPS (ou Heroku, como alternativa)                  |
 
 ---
 
@@ -158,13 +158,13 @@ flowchart TB
 
 Responsabilidades por container:
 
-| Container | Responsabilidade | Observações |
-|---|---|---|
-| **Frontend (Next.js)** | Painel do corretor/admin e página do widget; BFF que fala com a API | Sessão do painel no Redis; sem segredo exposto ao browser |
-| **API (FastAPI)** | Webhook do WhatsApp, WebSocket do widget, REST do painel, autenticação | Caminho rápido: persiste e enfileira, não bloqueia o lead |
-| **Worker (arq)** | Turno do agente, RAG, resumo, notificação, follow-up, sweeps (cron) | Onde mora o custo (LLM, embeddings) e a recuperação |
-| **PostgreSQL + pgvector** | Verdade do sistema: mensagens, leads, catálogo, vetores, auditoria | Só na rede interna, sem porta pública |
-| **Redis** | Fila do arq, rate limiting, sessão do painel | Só na rede interna |
+| Container                 | Responsabilidade                                                       | Observações                                               |
+| ------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------- |
+| **Frontend (Next.js)**    | Painel do corretor/admin e página do widget; BFF que fala com a API    | Sessão do painel no Redis; sem segredo exposto ao browser |
+| **API (FastAPI)**         | Webhook do WhatsApp, WebSocket do widget, REST do painel, autenticação | Caminho rápido: persiste e enfileira, não bloqueia o lead |
+| **Worker (arq)**          | Turno do agente, RAG, resumo, notificação, follow-up, sweeps (cron)    | Onde mora o custo (LLM, embeddings) e a recuperação       |
+| **PostgreSQL + pgvector** | Verdade do sistema: mensagens, leads, catálogo, vetores, auditoria     | Só na rede interna, sem porta pública                     |
+| **Redis**                 | Fila do arq, rate limiting, sessão do painel                           | Só na rede interna                                        |
 
 ---
 
@@ -485,22 +485,22 @@ Notas de modelagem relevantes para a avaliação:
 O worker arq roda **jobs sob demanda** (enfileirados pela API) e **cron** (varreduras
 periódicas de recuperação e manutenção).
 
-| Job | Tipo | Papel |
-|---|---|---|
-| `process_message` | sob demanda | Turno do agente (o fluxo da seção 6.1) |
-| `gerar_resumo` | sob demanda | Resumo inteligente da conversa para o corretor |
-| `notificar` | sob demanda | Notifica o corretor (SMTP / template WhatsApp) |
-| `baixar_midia` / `transcrever_audio` | sob demanda | Mídia recebida (imagem/doc) e áudio → texto (Whisper) |
-| `exportar_crm` | sob demanda | Exporta lead qualificado via webhook de CRM |
-| `importar_catalogo` / `indexar_catalogo` | demanda / cron 30s | Importa catálogo e gera embeddings incrementais |
-| `sweep_stalled` | cron 30s | Reenfileira mensagens recebidas e não processadas |
-| `sweep_midias_pendentes` | cron | Recupera download/transcrição parados |
-| `sweep_followups` / `sweep_sla` / `sweep_lembretes` | cron | Cadência de follow-up, SLA de aceite, lembretes |
-| `sweep_remarcacoes` / `sweep_lista_de_espera` | cron | Remarcação e fila de espera de agendamento |
-| `sweep_conversas_inativas` | cron diário | Encerra conversas inativas |
-| `sweep_crm_pendentes` | cron 15min | Reenvio de exportações de CRM pendentes |
-| `sweep_importacoes_travadas` | cron | Destrava importações de catálogo paradas |
-| `sweep_retencao_auditoria` / `sweep_retencao_de_leads` / `eliminar_lead` | cron diário | Retenção e eliminação (LGPD) |
+| Job                                                                      | Tipo               | Papel                                                 |
+| ------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------- |
+| `process_message`                                                        | sob demanda        | Turno do agente (o fluxo da seção 6.1)                |
+| `gerar_resumo`                                                           | sob demanda        | Resumo inteligente da conversa para o corretor        |
+| `notificar`                                                              | sob demanda        | Notifica o corretor (SMTP / template WhatsApp)        |
+| `baixar_midia` / `transcrever_audio`                                     | sob demanda        | Mídia recebida (imagem/doc) e áudio → texto (Whisper) |
+| `exportar_crm`                                                           | sob demanda        | Exporta lead qualificado via webhook de CRM           |
+| `importar_catalogo` / `indexar_catalogo`                                 | demanda / cron 30s | Importa catálogo e gera embeddings incrementais       |
+| `sweep_stalled`                                                          | cron 30s           | Reenfileira mensagens recebidas e não processadas     |
+| `sweep_midias_pendentes`                                                 | cron               | Recupera download/transcrição parados                 |
+| `sweep_followups` / `sweep_sla` / `sweep_lembretes`                      | cron               | Cadência de follow-up, SLA de aceite, lembretes       |
+| `sweep_remarcacoes` / `sweep_lista_de_espera`                            | cron               | Remarcação e fila de espera de agendamento            |
+| `sweep_conversas_inativas`                                               | cron diário        | Encerra conversas inativas                            |
+| `sweep_crm_pendentes`                                                    | cron 15min         | Reenvio de exportações de CRM pendentes               |
+| `sweep_importacoes_travadas`                                             | cron               | Destrava importações de catálogo paradas              |
+| `sweep_retencao_auditoria` / `sweep_retencao_de_leads` / `eliminar_lead` | cron diário        | Retenção e eliminação (LGPD)                          |
 
 O `keep_result = 0` e o `_job_id` estável garantem que uma varredura que
 reenfileira **não multiplique** trabalho nem chamadas pagas de LLM/embedding.
@@ -674,16 +674,16 @@ flowchart LR
 
 ## 14. Decisões arquiteturais (ADRs)
 
-| # | Decisão | Motivo | Trade-off aceito |
-|---|---|---|---|
-| 1 | Monólito modular com 3 processos (não microsserviços) | Isolamento de escala sem custo de rede/repos; prioridade é velocidade e simplicidade | Um deploy acopla os três artefatos de código |
-| 2 | Persistir antes de enfileirar + `sweep_stalled` | Nunca perder mensagem do lead | Latência extra de um COMMIT antes do enqueue |
-| 3 | Idempotência via `outbound_dispatches` + `_job_id` | Nunca responder o lead duas vezes | Tabela e chave únicas a manter |
-| 4 | PII cifrada + blind index (sem telefone em claro) | LGPD e vazamento por log/erro | Busca por identidade exige HMAC, não `LIKE` |
-| 5 | RAG com `pgvector` no mesmo Postgres | Uma base só; busca híbrida simples | Indexação incremental a orquestrar (cron) |
-| 6 | Multiagentes com prompt versionado | Qualidade/humanização e rollback de prompt | Mais modelos e configuração a gerir |
-| 7 | Config que recusa subir insegura | Falha de segurança é barulhenta, não silenciosa | Boot aborta se o ambiente estiver incompleto |
-| 8 | VPS + Docker + Traefik (vs. PaaS) | Controle, custo e demonstração de arquitetura/cloud | Operação (backup, patch, firewall) é responsabilidade nossa |
+| #   | Decisão                                               | Motivo                                                                               | Trade-off aceito                                            |
+| --- | ----------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| 1   | Monólito modular com 3 processos (não microsserviços) | Isolamento de escala sem custo de rede/repos; prioridade é velocidade e simplicidade | Um deploy acopla os três artefatos de código                |
+| 2   | Persistir antes de enfileirar + `sweep_stalled`       | Nunca perder mensagem do lead                                                        | Latência extra de um COMMIT antes do enqueue                |
+| 3   | Idempotência via `outbound_dispatches` + `_job_id`    | Nunca responder o lead duas vezes                                                    | Tabela e chave únicas a manter                              |
+| 4   | PII cifrada + blind index (sem telefone em claro)     | LGPD e vazamento por log/erro                                                        | Busca por identidade exige HMAC, não `LIKE`                 |
+| 5   | RAG com `pgvector` no mesmo Postgres                  | Uma base só; busca híbrida simples                                                   | Indexação incremental a orquestrar (cron)                   |
+| 6   | Multiagentes com prompt versionado                    | Qualidade/humanização e rollback de prompt                                           | Mais modelos e configuração a gerir                         |
+| 7   | Config que recusa subir insegura                      | Falha de segurança é barulhenta, não silenciosa                                      | Boot aborta se o ambiente estiver incompleto                |
+| 8   | VPS + Docker + Traefik (vs. PaaS)                     | Controle, custo e demonstração de arquitetura/cloud                                  | Operação (backup, patch, firewall) é responsabilidade nossa |
 
 ---
 
@@ -712,18 +712,18 @@ mobIA/
 
 ## 16. Integrações externas
 
-| Integração | Uso | Direção | Observação |
-|---|---|---|---|
-| **Anthropic Claude** | Agente, moderação, resumo | saída | Modelos configuráveis por agente |
-| **OpenAI** | Embeddings do catálogo + transcrição de áudio | saída | `text-embedding-3-small` (1536d), `whisper-1` |
-| **Meta WhatsApp Cloud API** | Recebe (webhook HMAC) e envia mensagens | entrada/saída | Janela de 24h; templates aprovados |
-| **Widget web** | Canal alternativo ao WhatsApp | entrada/saída | WebSocket (`/widget/chat`) |
-| **SMTP** | Notificação ao corretor | saída | Obrigatório para o worker subir |
-| **Google Calendar** | Agendamento de visitas/reuniões | saída | Opcional (desliga se sem credencial) |
-| **CRM (webhook)** | Exporta lead qualificado | saída | Opcional; assinado; com reenvio |
+| Integração                  | Uso                                           | Direção       | Observação                                    |
+| --------------------------- | --------------------------------------------- | ------------- | --------------------------------------------- |
+| **Anthropic Claude**        | Agente, moderação, resumo                     | saída         | Modelos configuráveis por agente              |
+| **OpenAI**                  | Embeddings do catálogo + transcrição de áudio | saída         | `text-embedding-3-small` (1536d), `whisper-1` |
+| **Meta WhatsApp Cloud API** | Recebe (webhook HMAC) e envia mensagens       | entrada/saída | Janela de 24h; templates aprovados            |
+| **Widget web**              | Canal alternativo ao WhatsApp                 | entrada/saída | WebSocket (`/widget/chat`)                    |
+| **SMTP**                    | Notificação ao corretor                       | saída         | Obrigatório para o worker subir               |
+| **Google Calendar**         | Agendamento de visitas/reuniões               | saída         | Opcional (desliga se sem credencial)          |
+| **CRM (webhook)**           | Exporta lead qualificado                      | saída         | Opcional; assinado; com reenvio               |
 
 ---
 
-*Documento gerado para a entrega do Tech Challenge (Fase 5). Diagramas em Mermaid,
+_Documento gerado para a entrega do Tech Challenge (Fase 5). Diagramas em Mermaid,
 renderizados nativamente pelo GitHub. Para o passo a passo de publicação, ver
-`docs/deploy-vps.md`.*
+`docs/deploy-vps.md`._
