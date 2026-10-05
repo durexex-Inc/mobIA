@@ -1,0 +1,199 @@
+# Producao em VPS unica, atras do Traefik. Um artefato por servico, tag = SHA
+# (IMAGE_TAG no .env). Postgres e Redis vivem SO na rede interna (sem porta
+# publica, sem egress); API, worker e frontend ficam nas duas redes -- interna
+# para falar com banco/fila, web para o Traefik e para as APIs externas.
+#
+# Suba com:  docker compose -f docker-compose.prod.yml up -d
+# As variaveis (${...}) vem do arquivo .env ao lado (ver .env.prod.example).
+
+name: mobia
+
+x-backend-env: &backend-env
+  # Derivadas/fixas aqui; os segredos vem do env_file abaixo.
+  ENVIRONMENT: production
+  INFRA_INTERNA_CONFIAVEL: "true"
+  CONFIAR_EM_FORWARDED_FOR: "true"
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://redis:6379/0
+
+services:
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      # Dashboard fica OFF por padrao. Para ligar, exponha com autenticacao
+      # (ver docs/deploy-vps.md) -- nunca aberto.
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_acme:/letsencrypt
+    networks:
+      - web
+    mem_limit: 128m
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - internal
+    mem_limit: 512m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - internal
+    mem_limit: 256m
+
+  # Passo unico: aplica as migrations (cria extensoes vector/btree_gist e as
+  # tabelas) e sai. API e worker so sobem depois dele terminar com sucesso.
+  migrate:
+    image: ghcr.io/${GHCR_OWNER}/mobia-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+    environment: *backend-env
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  api:
+    image: ghcr.io/${GHCR_OWNER}/mobia-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: *backend-env
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - midia:/app/.midias
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=mobia_web"
+      - "traefik.http.routers.api.rule=Host(`api.${DOMINIO}`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=le"
+      - "traefik.http.services.api.loadbalancer.server.port=8000"
+      - "traefik.http.routers.api.middlewares=seg-headers@docker"
+      - "traefik.http.middlewares.seg-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.seg-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.seg-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.seg-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+    networks:
+      - web
+      - internal
+    mem_limit: 512m
+
+  worker:
+    image: ghcr.io/${GHCR_OWNER}/mobia-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["arq", "mobia.workers.main.WorkerSettings"]
+    environment: *backend-env
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - midia:/app/.midias
+    networks:
+      - web        # egress para Anthropic/OpenAI/WhatsApp/SMTP
+      - internal   # banco e fila
+    mem_limit: 512m
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER}/mobia-frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # Chamada servidor->servidor pela rede interna (nunca passa pelo browser).
+      MOBIA_API_BASE: http://api:8000
+      # Sessao do painel no mesmo Redis interno (sem TLS na rede do host).
+      MOBIA_REDIS_URL: redis://redis:6379/1
+      # O que o browser usa: origem publica do painel e o WebSocket do widget.
+      MOBIA_ORIGEM_DO_PAINEL: https://painel.${DOMINIO}
+      MOBIA_WIDGET_WS_URL: wss://api.${DOMINIO}/widget/chat
+    depends_on:
+      - api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=mobia_web"
+      - "traefik.http.routers.painel.rule=Host(`painel.${DOMINIO}`)"
+      - "traefik.http.routers.painel.entrypoints=websecure"
+      - "traefik.http.routers.painel.tls.certresolver=le"
+      - "traefik.http.services.painel.loadbalancer.server.port=3000"
+    networks:
+      - web
+      - internal
+    mem_limit: 512m
+
+networks:
+  web:
+    name: mobia_web
+  internal:
+    name: mobia_internal
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+  midia:
+  traefik_acme:

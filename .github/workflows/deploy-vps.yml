@@ -1,0 +1,128 @@
+name: Deploy VPS
+
+# Build das imagens (tag = SHA) no GHCR e deploy por SSH na VPS, com migracao
+# antes do app novo e rollback automatico se o healthcheck nao ficar verde.
+#
+# A CI de qualidade (ci.yml) e o gate em PR; este workflow faz o deploy.
+# Dispare manualmente (Actions > Deploy VPS > Run workflow, escolhendo a branch)
+# ou automaticamente a cada push na main.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    name: Build e push (GHCR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ github.sha }}
+      owner_lc: ${{ steps.vars.outputs.owner_lc }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Owner em minusculas (GHCR exige)
+        id: vars
+        run: echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push da API/worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ghcr.io/${{ steps.vars.outputs.owner_lc }}/mobia-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build + push do frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ steps.vars.outputs.owner_lc }}/mobia-frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy na VPS
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          envs: NEW_TAG,GHCR_OWNER,GHCR_USER,GHCR_TOKEN
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_DIR="${APP_DIR:-/opt/app}"
+            cd "$APP_DIR"
+
+            # Puxa imagens privadas do GHCR.
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            # Guarda a tag atual como last-good ANTES de trocar.
+            CUR="$(grep '^IMAGE_TAG=' .env | cut -d= -f2- || true)"
+            [ -n "$CUR" ] && echo "$CUR" > .last-good || true
+
+            # Aponta para a nova tag (SHA).
+            if grep -q '^IMAGE_TAG=' .env; then
+              sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${NEW_TAG}|" .env
+            else
+              echo "IMAGE_TAG=${NEW_TAG}" >> .env
+            fi
+
+            COMPOSE="docker compose -f docker-compose.prod.yml"
+            $COMPOSE pull
+
+            # Migracao ANTES do app novo (retrocompativel -> rollback seguro).
+            $COMPOSE run --rm migrate
+
+            $COMPOSE up -d
+
+            # Espera o healthcheck da API ficar verde.
+            cid="$($COMPOSE ps -q api)"
+            status=starting
+            for _ in $(seq 1 30); do
+              status="$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo starting)"
+              [ "$status" = healthy ] && break
+              sleep 5
+            done
+
+            if [ "$status" != healthy ]; then
+              echo "::error::healthcheck falhou (status=$status) -- rollback"
+              if [ -s .last-good ]; then
+                sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=$(cat .last-good)|" .env
+                $COMPOSE pull
+                $COMPOSE up -d
+              fi
+              exit 1
+            fi
+            echo "deploy ok: IMAGE_TAG=${NEW_TAG}"
+        env:
+          NEW_TAG: ${{ needs.build-push.outputs.tag }}
+          GHCR_OWNER: ${{ needs.build-push.outputs.owner_lc }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
