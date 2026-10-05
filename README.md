@@ -29,15 +29,38 @@ dono do banco a cria). Um Postgres gerenciado com lista de extensões
 permitidas precisa liberá-la antes do `alembic upgrade head`, senão a
 migration falha.
 
+## Deploy em VPS
+
+Alternativa ao Heroku: uma VPS única, tudo em containers atrás do Traefik
+(HTTPS automático via Let's Encrypt). Postgres (pgvector) e Redis ficam só na
+rede interna; API, worker e frontend alcançam banco/fila por ela e a internet
+pela rede web. O pipeline builda imagens por SHA no GHCR e faz deploy por SSH,
+com migração antes do app e rollback automático por healthcheck.
+
+- `docker-compose.prod.yml` — traefik + postgres + redis + migrate (one-shot)
+  + api + worker + frontend.
+- `.github/workflows/deploy-vps.yml` — build+push GHCR, SSH, migrate, rollback.
+- `.env.prod.example` — variáveis de produção, incluindo `INFRA_INTERNA_CONFIAVEL`.
+- `scripts/backup_postgres.sh` — `pg_dump | gzip`, retenção de 14 dias.
+- Runbook completo (provisionar, DNS, firewall, secrets, seed, backup):
+  [`docs/deploy-vps.md`](docs/deploy-vps.md).
+
 ## Comandos
+
+Os três primeiros são os gates estáticos do CI, nesta ordem e neste escopo
+— `evals` e `scripts` entram no lint e no formatador porque de outra forma
+ficariam fora de todo gate, e o `mypy` roda sem argumento porque quem decide
+o escopo dele é `[tool.mypy].files` no `pyproject.toml`:
 
 | O quê | Comando |
 |---|---|
-| Testes | `python -m pytest` |
+| Lint | `python -m ruff check src tests alembic evals scripts` |
+| Formatação (gate) | `python -m ruff format --check src tests alembic evals scripts` |
+| Tipos | `python -m mypy` |
+| Testes (suíte inteira) | `python -m pytest -n 8 --dist loadfile` |
+| Testes unitários (sem Postgres/Redis) | `python -m pytest tests/unit` |
 | Teste de latência | `python -m pytest -m perf` |
 | Orçamento de contexto do prompt | `python -m pytest -q -k margem_do_orcamento -s` |
-| Lint | `python -m ruff check src tests alembic` |
-| Formatação | `python -m ruff format src tests alembic` |
 | Migrations | `python -m alembic upgrade head` |
 | API | `python -m uvicorn mobia.app.main:app --reload` |
 | Worker | `python -m arq mobia.workers.main.WorkerSettings` |
