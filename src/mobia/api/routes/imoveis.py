@@ -49,7 +49,7 @@ from mobia.domain.catalogo.fotos import (
     FOTO_TETO_DE_BYTES,
     chave_do_armazem,
     detectar_formato,
-    mime_da_extensao,
+    ler_bytes,
     mime_e_extensao_de,
 )
 from mobia.domain.catalogo.importacao import registrar
@@ -584,14 +584,9 @@ async def ler_foto(
     """Serve a foto de volta. O `Content-Type` vem da extensao gravada na
     chave do armazem -- a mesma que a validacao do upload (D3) escolheu, nunca
     o que o navegador declarou (D2)."""
-    settings = get_settings()
-    armazem = armazem_da_config(settings)
-    for extensao in ("jpg", "png", "webp"):
-        chave = chave_do_armazem(str(imovel_id), str(foto_id), extensao)
-        try:
-            dados = await armazem.ler(chave)
-        except FileNotFoundError:
-            continue
-        mime = mime_da_extensao(extensao)
-        return Response(content=dados, media_type=mime)
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="foto nao existe")
+    armazem = armazem_da_config(get_settings())
+    encontrada = await ler_bytes(armazem, imovel_id=str(imovel_id), foto_id=str(foto_id))
+    if encontrada is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="foto nao existe")
+    dados, mime = encontrada
+    return Response(content=dados, media_type=mime)

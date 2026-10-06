@@ -69,6 +69,15 @@ describe('CardDeImovel', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   })
 
+  it('com url interna (TEC-388), navega na mesma aba, sem o aviso de nova aba', () => {
+    render(<CardDeImovel imovel={{ ...BASE, url: '/busca/i1' }} />)
+
+    const link = screen.getByRole('link', { name: 'Casa 3 quartos' })
+    expect(link).toHaveAttribute('href', '/busca/i1')
+    expect(link).not.toHaveAttribute('target')
+    expect(link).not.toHaveAttribute('rel')
+  })
+
   it('sem pagina no site, expande a ficha no chat', () => {
     render(<CardDeImovel imovel={BASE} />)
 

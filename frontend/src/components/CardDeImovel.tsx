@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 
 import { contagem, type ImovelCard, type Reacao, reais, textoAlternativo } from '@/lib/imovel'
 
@@ -17,10 +18,18 @@ const ALTURA_DA_FOTO = 240
  * socket nem de estado da conversa.
  *
  * **Clicar abre a pagina do imovel quando ha `url`; sem `url`, expande a
- * ficha no chat** (RN-FE-18.3). Hoje o servidor sempre manda `url` nulo (L1 da
- * TEC-364), entao o caminho de uso real e o de expandir. Expandir tira o corte
- * de linhas do diferencial e aumenta a foto; os dados sao os mesmos, porque o
- * card fechado ja os mostra todos (RN-FE-18.1).
+ * ficha no chat** (RN-FE-18.3). No chat, o servidor sempre manda `url` nulo
+ * (L1 da TEC-364), entao ali o caminho de uso real e o de expandir. Expandir
+ * tira o corte de linhas do diferencial e aumenta a foto; os dados sao os
+ * mesmos, porque o card fechado ja os mostra todos (RN-FE-18.1).
+ *
+ * **`url` interna (comecando com `/`) e externa tem comportamento diferente**
+ * (TEC-388, D5). Externa (`http(s)://...`, pagina de outro site, hoje nunca
+ * emitida) abre em nova aba com `target="_blank"` e o aviso oculto "(abre o
+ * site em nova aba)" -- a visitante sai do mobIA. Interna (o portal publico
+ * da TEC-387 linkando para o detalhe da TEC-388, `/busca/{id}`) navega na
+ * mesma aba, por `next/link`, sem o aviso: e a mesma aplicacao, so outra
+ * pagina dela.
  *
  * **O card inteiro e clicavel, e o controle e um so: o do titulo.** Um
  * `<button>` nao pode conter titulo, lista e paragrafos -- so conteudo de
@@ -76,7 +85,11 @@ export function CardDeImovel({
         </div>
       )}
       <h3 className="card-imovel__titulo">
-        {imovel.url ? (
+        {imovel.url?.startsWith('/') ? (
+          <Link className="card-imovel__acao" href={imovel.url}>
+            {imovel.titulo}
+          </Link>
+        ) : imovel.url ? (
           <a className="card-imovel__acao" href={imovel.url} target="_blank" rel="noopener noreferrer">
             {imovel.titulo}
             <span className="card-imovel__oculto"> (abre o site em nova aba)</span>
