@@ -61,6 +61,17 @@ ROTAS_PUBLICAS: dict[str, str] = {
         "a vitrine publica do catalogo; busca anonima, sem login, reaproveita "
         "a mesma busca interna de RF-09 (TEC-387)"
     ),
+    "/portal/imoveis/{imovel_id}": (
+        "detalhe publico de um imovel disponivel -- descricao, caracteristicas "
+        "e as duas colunas de preco (TEC-388); so o que a TEC-387 ja lista na "
+        "vitrine, com mais campos do mesmo imovel"
+    ),
+    "/portal/imoveis/{imovel_id}/fotos/{foto_id}": (
+        "os bytes da foto de um imovel disponivel, sem sessao -- a rota "
+        "administrativa (`GERIR_CATALOGO`) nao filtra por status e serve "
+        "qualquer imovel; esta e a vitrine, so do que esta a venda/aluguel "
+        "(TEC-388)"
+    ),
     "/api/v1/auth/login": "produz a credencial que esta guarda valida",
     "/api/v1/auth/mfa": "idem -- troca o desafio pelo par de tokens",
     "/api/v1/auth/refresh": "autentica-se pelo proprio refresh apresentado",

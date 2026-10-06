@@ -12,6 +12,8 @@ python-magic): as tres assinaturas sao curtas e a checagem e codigo puro, no
 espirito de `parser.py` (que ja valida a mao em vez de trazer uma lib de CSV).
 """
 
+from mobia.domain.midia.armazem import ArmazemDeMidia
+
 FOTO_TETO_DE_BYTES = 5 * 1024 * 1024
 FOTO_LIMITE_POR_IMOVEL = 15
 
@@ -64,3 +66,25 @@ def mime_da_extensao(extensao: str) -> str | None:
 
 def chave_do_armazem(imovel_id: str, foto_id: str, extensao: str) -> str:
     return f"{PREFIXO_DO_ARMAZEM}/{imovel_id}/{foto_id}.{extensao}"
+
+
+async def ler_bytes(
+    armazem: ArmazemDeMidia, *, imovel_id: str, foto_id: str
+) -> tuple[bytes, str] | None:
+    """Os bytes e o mime da foto, tentando as tres extensoes aceitas.
+
+    Extraida de `api/routes/imoveis.py::ler_foto` na TEC-388, para a rota
+    publica nova (`api/routes/portal.py`) servir a mesma foto sem duplicar o
+    loop. Nenhuma extensao e guardada a parte do nome do arquivo no armazem --
+    e por isso as tres sao tentadas em ordem ate uma existir.
+    """
+    for extensao in ("jpg", "png", "webp"):
+        chave = chave_do_armazem(imovel_id, foto_id, extensao)
+        try:
+            dados = await armazem.ler(chave)
+        except FileNotFoundError:
+            continue
+        mime = mime_da_extensao(extensao)
+        assert mime is not None  # toda extensao de `chave_do_armazem` tem mime
+        return dados, mime
+    return None
