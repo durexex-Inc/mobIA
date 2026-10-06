@@ -55,7 +55,7 @@ from mobia.domain.catalogo.fotos import (
 from mobia.domain.catalogo.importacao import registrar
 from mobia.domain.catalogo.models import Imovel, Importacao
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
-from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca
+from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca, ResultadoDaBusca
 from mobia.domain.midia.armazem import armazem_da_config
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.db import get_sessionmaker
@@ -322,6 +322,17 @@ async def busca(
             session, filtro, consulta_texto=pedido.consulta_texto, limite=pedido.limite
         )
 
+    return payload_da_busca(resultado)
+
+
+def payload_da_busca(resultado: ResultadoDaBusca) -> dict[str, object]:
+    """O corpo HTTP da secao 6.3, a partir do `ResultadoDaBusca` do dominio.
+
+    Extraida de `busca()` na TEC-387 para que `api/routes/portal.py` devolva
+    exatamente o mesmo formato -- a vitrine publica reaproveita esta mesma
+    funcao de busca, e a serializacao nao deveria divergir so porque a guarda
+    de permissao mudou.
+    """
     return {
         "itens": [
             {

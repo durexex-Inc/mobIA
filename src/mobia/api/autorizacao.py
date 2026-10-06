@@ -57,6 +57,10 @@ ROTAS_PUBLICAS: dict[str, str] = {
         "traz; quem pede e o servidor do Next pelo loader, antes de qualquer "
         "visitante se identificar (TEC-344)"
     ),
+    "/portal/imoveis": (
+        "a vitrine publica do catalogo; busca anonima, sem login, reaproveita "
+        "a mesma busca interna de RF-09 (TEC-387)"
+    ),
     "/api/v1/auth/login": "produz a credencial que esta guarda valida",
     "/api/v1/auth/mfa": "idem -- troca o desafio pelo par de tokens",
     "/api/v1/auth/refresh": "autentica-se pelo proprio refresh apresentado",
