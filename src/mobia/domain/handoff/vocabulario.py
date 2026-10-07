@@ -51,6 +51,11 @@ class Gatilho(StrEnum):
     # filtro do corretor no dashboard (TEC-192) e nao muda depois de criada,
     # entao reusar a de outra fila a tornaria mentirosa para sempre.
     SEM_DISPONIBILIDADE = "SEM_DISPONIBILIDADE"
+    # TEC-389. O cliente pediu contato sobre um imovel pelo portal, sem
+    # nenhuma conversa -- nao e LEAD_QUENTE (aquele vem de score/temperatura
+    # calculados sobre qualificacao conversacional, que este pedido nao tem) e
+    # nao e PEDIDO_DE_HUMANO (o lead nao pediu uma pessoa, pediu um imovel).
+    INTERESSE_PORTAL = "INTERESSE_PORTAL"
 
 
 class Prioridade(StrEnum):
@@ -92,6 +97,7 @@ ETIQUETA_DE: dict[Gatilho, str] = {
     Gatilho.LIMITE_DE_PERGUNTAS: "qualificacao-parcial",
     Gatilho.ERRO_DO_AGENTE: "erro-do-agente",
     Gatilho.SEM_DISPONIBILIDADE: "sem-disponibilidade",
+    Gatilho.INTERESSE_PORTAL: "interesse-portal",
 }
 
 PRIORIDADE_DE: dict[Gatilho, Prioridade] = {
@@ -104,6 +110,7 @@ PRIORIDADE_DE: dict[Gatilho, Prioridade] = {
     Gatilho.LIMITE_DE_PERGUNTAS: Prioridade.NORMAL,
     Gatilho.ERRO_DO_AGENTE: Prioridade.NORMAL,
     Gatilho.SEM_DISPONIBILIDADE: Prioridade.NORMAL,
+    Gatilho.INTERESSE_PORTAL: Prioridade.NORMAL,
 }
 
 

@@ -363,6 +363,14 @@ class Settings(BaseSettings):
     rate_limit_mensagens_por_minuto: int = 20
     rate_limit_requisicoes_por_ip_por_minuto: int = 100
 
+    # TEC-389. O formulario de interesse do portal nao tem sessao nem
+    # conversa -- so o IP (ja coberto pelo middleware) e o telefone
+    # informado. Mesmo escopo (`ESCOPO_NUMERO`) e mesma janela de um minuto
+    # do limite de mensagens, limite proprio porque um pedido de interesse e
+    # uma acao rara: 20 por minuto seria generoso demais para flood do
+    # mesmo telefone em imoveis diferentes.
+    rate_limit_interesse_por_minuto: int = 3
+
     # O atraso aplicado ao excedente por numero, no lugar da janela de
     # debounce. Fixo e nao "ate a janela abrir": a versao precisa chegaria a
     # 60s e estouraria a folga da invariante da TEC-128 -- ver
@@ -1158,6 +1166,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "rate_limit_requisicoes_por_ip_por_minuto nao pode ser negativo; recebi "
                 f"{self.rate_limit_requisicoes_por_ip_por_minuto}. Use 0 para desligar."
+            )
+        if self.rate_limit_interesse_por_minuto < 0:
+            raise ValueError(
+                "rate_limit_interesse_por_minuto nao pode ser negativo; recebi "
+                f"{self.rate_limit_interesse_por_minuto}. Use 0 para desligar o limite."
             )
         if self.atraso_de_backoff_segundos < 0:
             raise ValueError(

@@ -186,6 +186,16 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
         text("UPDATE handoffs SET resumo = NULL WHERE channel = :c AND conversation_key = :k"),
         par,
     )
+    # TEC-389. `nome` e texto livre que o cliente digitou no formulario --
+    # conteudo que identifica, como o resumo acima. Sem isto sobreviveria em
+    # claro sob o pseudonimo, a unica coluna desta tabela que o faria.
+    conn.execute(
+        text(
+            "UPDATE solicitacoes_de_interesse SET nome = NULL"
+            " WHERE channel = :c AND conversation_key = :k"
+        ),
+        par,
+    )
     # Antes da troca de chave, e num UPDATE so: status e par mudam juntos, e
     # o CHECK `ck_solicitacoes_de_titular_par_com_status` nunca ve metade.
     conn.execute(
