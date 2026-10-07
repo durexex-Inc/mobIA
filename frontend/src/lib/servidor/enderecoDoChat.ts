@@ -23,3 +23,17 @@ export function origemDoChat(): string {
   const url = new URL(enderecoDoChat())
   return `${url.protocol}//${url.host}`
 }
+
+/**
+ * Onde a pagina do simulador de WhatsApp abre o WebSocket (ferramenta de
+ * desenvolvimento). Mesma origem de `enderecoDoChat` -- so o caminho muda --,
+ * entao `connect-src` (que olha so a origem) nao precisa de uma segunda
+ * entrada: `origemDoChat()` ja cobre as duas rotas. Nao le `MOBIA_WIDGET_WS_URL`:
+ * aquela variavel e o endereco completo do `/widget/chat`, caminho incluso.
+ */
+export function enderecoDoSimulador(): string {
+  const api = new URL(process.env.MOBIA_API_BASE ?? 'http://localhost:8000')
+  api.protocol = api.protocol === 'https:' ? 'wss:' : 'ws:'
+  api.pathname = '/dev/simulador-whatsapp/chat'
+  return api.toString()
+}

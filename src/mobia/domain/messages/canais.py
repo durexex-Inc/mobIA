@@ -32,6 +32,17 @@ CANAL_WEB = "web"
 # distinguir sessao de chat de pedido de formulario por fora da coluna.
 CANAL_PORTAL = "portal"
 
+# O simulador de WhatsApp (`api/routes/simulador.py`), ferramenta de
+# desenvolvimento para conversar com o agente sem a Cloud API da Meta. Canal
+# proprio, e nao `CANAL_WHATSAPP`: aquele faz o roteador de saida escolher
+# `WhatsAppOutbound`, que tenta bater na API real.
+CANAL_SIMULADOR = "simulador"
+
+# Mesmo papel de `REMETENTE_DO_WIDGET`, para o simulador: sem numero de
+# origem, e o indicador de digitacao e o aviso de janela humana leem este
+# campo como o remetente do canal.
+REMETENTE_DO_SIMULADOR = "simulador"
+
 # O "de" do canal web. Nao ha numero de origem, e a coluna precisa de valor:
 # `indicador_de_digitacao` desiste cedo quando `recipient_external_id` e nulo,
 # e `_avisar_lead_da_janela_humana` le esse campo como o remetente do canal.

@@ -57,18 +57,24 @@ async def test_ca01_pedido_valido_registra_e_notifica_corretor(
     assert resposta.json() == {"recebido": True}
 
     handoffs = (
-        await session.execute(text("SELECT gatilho, etiqueta, status FROM handoffs"))
-    ).mappings().all()
+        (await session.execute(text("SELECT gatilho, etiqueta, status FROM handoffs")))
+        .mappings()
+        .all()
+    )
     assert len(handoffs) == 1
     assert handoffs[0]["gatilho"] == "INTERESSE_PORTAL"
     assert handoffs[0]["etiqueta"] == "interesse-portal"
     assert handoffs[0]["status"] == "PENDENTE"
 
     solicitacoes = (
-        await session.execute(
-            text("SELECT imovel_id, nome, channel FROM solicitacoes_de_interesse")
+        (
+            await session.execute(
+                text("SELECT imovel_id, nome, channel FROM solicitacoes_de_interesse")
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     assert len(solicitacoes) == 1
     assert str(solicitacoes[0]["imovel_id"]) == str(identificador)
     assert solicitacoes[0]["nome"] == "Maria"
@@ -140,9 +146,7 @@ async def test_ca04_mesmo_telefone_mesmo_imovel_nao_duplica(
     ).scalar_one()
     assert contagem_solicitacoes == 1
 
-    contagem_handoffs = (
-        await session.execute(text("SELECT count(*) FROM handoffs"))
-    ).scalar_one()
+    contagem_handoffs = (await session.execute(text("SELECT count(*) FROM handoffs"))).scalar_one()
     assert contagem_handoffs == 1
 
 
@@ -154,18 +158,14 @@ async def test_mesmo_telefone_imoveis_diferentes_um_handoff_duas_solicitacoes(
     segundo_imovel = await _semear(session)
     telefone = "11988887777"
 
-    await client.post(
-        f"/portal/imoveis/{primeiro_imovel}/interesse", json={"telefone": telefone}
-    )
+    await client.post(f"/portal/imoveis/{primeiro_imovel}/interesse", json={"telefone": telefone})
     resposta = await client.post(
         f"/portal/imoveis/{segundo_imovel}/interesse", json={"telefone": telefone}
     )
 
     assert resposta.status_code == 201
 
-    contagem_handoffs = (
-        await session.execute(text("SELECT count(*) FROM handoffs"))
-    ).scalar_one()
+    contagem_handoffs = (await session.execute(text("SELECT count(*) FROM handoffs"))).scalar_one()
     assert contagem_handoffs == 1
 
     contagem_solicitacoes = (
@@ -188,9 +188,7 @@ async def test_telefones_diferentes_mesmo_imovel_criam_handoffs_separados(
 
     assert resposta.status_code == 201
 
-    contagem_handoffs = (
-        await session.execute(text("SELECT count(*) FROM handoffs"))
-    ).scalar_one()
+    contagem_handoffs = (await session.execute(text("SELECT count(*) FROM handoffs"))).scalar_one()
     assert contagem_handoffs == 2
 
 
