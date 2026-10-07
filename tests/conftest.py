@@ -268,6 +268,9 @@ TABELAS = (
     # TEC-207. UNIQUE parcial pelo par e pelo tipo sobre a linha ABERTA: sem o
     # truncate, a solicitacao de um teste bloqueia a do proximo.
     "solicitacoes_de_titular",
+    # TEC-389. Mutavel como `imoveis`: o UNIQUE por (channel, conversation_key,
+    # imovel_id) faz o pedido de interesse de um teste colidir com o proximo.
+    "solicitacoes_de_interesse",
 )
 
 # Conversa de referencia usada pelos testes de montagem de contexto

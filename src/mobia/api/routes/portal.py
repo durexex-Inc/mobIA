@@ -31,19 +31,36 @@ desenho.
 """
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+import structlog
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from mobia.api.routes.imoveis import payload_da_busca
 from mobia.app.config import get_settings
+from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA
 from mobia.domain.catalogo.enums import Operacao, StatusImovel, TipoImovel
 from mobia.domain.catalogo.fotos import ler_bytes
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca
+from mobia.domain.handoff.repositorio import gravar_resumo, registrar_handoff
+from mobia.domain.handoff.vocabulario import Gatilho
+from mobia.domain.identidade.indice import chave_de
+from mobia.domain.identidade.indice import registrar as registrar_identidade
+from mobia.domain.identidade.telefone import normalizar
+from mobia.domain.limites.eventos import registrar_bloqueio
+from mobia.domain.limites.models import ESCOPO_NUMERO
+from mobia.domain.messages.canais import CANAL_PORTAL
 from mobia.domain.midia.armazem import armazem_da_config
+from mobia.domain.notificacao.envio import NOTIFICAR_JOB
+from mobia.domain.portal.interesse import registrar_interesse
 from mobia.infra.db import get_sessionmaker
+from mobia.infra.rate_limit import JANELA_DE_UM_MINUTO, chave_de_numero, consumir
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["portal"])
 
@@ -190,3 +207,139 @@ async def foto_do_imovel(imovel_id: uuid.UUID, foto_id: uuid.UUID) -> Response:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="foto nao existe")
     dados, mime = encontrada
     return Response(content=dados, media_type=mime)
+
+
+# TEC-389. `extra="forbid"`, no molde de `CorpoDoImovel`: um campo a mais no
+# corpo e sintoma de integracao errada, nao algo a ignorar em silencio.
+class PedidoDeInteresse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    telefone: str = Field(min_length=1, max_length=20)
+    nome: str | None = Field(default=None, max_length=160)
+    email: str | None = Field(default=None, max_length=254)
+
+
+def _resumo_do_interesse(
+    imovel: Imovel, *, telefone: str, nome: str | None, email: str | None
+) -> str:
+    """Texto fixo do resumo do handoff (D3 do desenho).
+
+    Nunca passa por `handoff/geracao.py`: aquele pipeline le um `Dossie`
+    montado de qualificacao de CONVERSA, que um pedido de formulario nao tem
+    -- e, sem essa mudanca, o corretor leria "sem dossie" no lugar exato onde
+    precisa do telefone e do imovel. `gravar_resumo` cifra este texto do
+    mesmo jeito que cifraria um resumo de LLM; nao ha diferenca de tratamento
+    de dado sensivel entre os dois caminhos.
+    """
+    return "\n".join(
+        (
+            "PEDIDO DE INTERESSE (portal, sem conversa)",
+            f"imovel: {imovel.titulo} (codigo {imovel.codigo})",
+            f"nome: {nome or 'nao informado'}",
+            f"telefone: {telefone}",
+            f"e-mail: {email or 'nao informado'}",
+        )
+    )
+
+
+@router.post("/portal/imoveis/{imovel_id}/interesse", status_code=status.HTTP_201_CREATED)
+async def solicitar_interesse(
+    imovel_id: uuid.UUID, pedido: PedidoDeInteresse, request: Request
+) -> dict[str, object]:
+    """Registra o interesse e notifica o corretor responsavel (TEC-389).
+
+    Reaproveita o MESMO handoff/notificacao do fluxo conversacional (D3/B2 do
+    desenho) -- so que com um gatilho proprio (`Gatilho.INTERESSE_PORTAL`) e
+    um resumo escrito na hora, sem LLM. CA-01/02/03/04 vivem aqui: contato
+    invalido e 422, imovel indisponivel e o mesmo 404 da TEC-388, e um pedido
+    repetido do mesmo telefone para o mesmo imovel nao duplica nada (D2/L3).
+    """
+    telefone = normalizar(pedido.telefone)
+    if telefone is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="telefone invalido",
+        )
+
+    imovel = await _imovel_disponivel(imovel_id)
+
+    conversation_key = chave_de(CANAL_PORTAL, telefone)
+    pool = getattr(request.app.state, "redis_pool", None)
+    settings = get_settings()
+
+    consumo = await consumir(
+        pool,
+        chave=chave_de_numero(CANAL_PORTAL, conversation_key),
+        limite=settings.rate_limit_interesse_por_minuto,
+        janela_segundos=JANELA_DE_UM_MINUTO,
+    )
+    if not consumo.permitido:
+        log.warning(
+            "ratelimit.blocked",
+            escopo=ESCOPO_NUMERO,
+            conversation_key=conversation_key,
+            channel=CANAL_PORTAL,
+            volume=consumo.volume,
+            limite=settings.rate_limit_interesse_por_minuto,
+        )
+        await registrar_bloqueio(
+            get_sessionmaker(),
+            pool,
+            escopo=ESCOPO_NUMERO,
+            chave=conversation_key,
+            channel=CANAL_PORTAL,
+            volume=consumo.volume,
+            limite=settings.rate_limit_interesse_por_minuto,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="muitos pedidos em pouco tempo -- tente de novo em instantes",
+        )
+
+    async with get_sessionmaker()() as session:
+        await registrar_identidade(session, CANAL_PORTAL, telefone)
+        registro = await registrar_handoff(
+            session,
+            channel=CANAL_PORTAL,
+            conversation_key=conversation_key,
+            gatilho=Gatilho.INTERESSE_PORTAL,
+            ator=ATOR_SISTEMA,
+        )
+        await registrar_interesse(
+            session,
+            imovel_id=imovel.id,
+            channel=CANAL_PORTAL,
+            conversation_key=conversation_key,
+            nome=pedido.nome,
+            agora=datetime.now(UTC),
+        )
+        if registro.criado:
+            # So escreve o resumo quando o handoff NASCE aqui -- D4: um
+            # telefone que ja tem handoff aberto (de qualquer gatilho) so
+            # acumula em `gatilhos_adicionais`; reescrever o resumo apagaria
+            # o que ja levou o corretor a esse lead.
+            texto = _resumo_do_interesse(
+                imovel, telefone=telefone, nome=pedido.nome, email=pedido.email
+            )
+            await gravar_resumo(
+                session, handoff_id=registro.id, texto=texto, modelo=None, fallback=True
+            )
+        await session.commit()
+
+    if registro.criado:
+        if pool is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="sem pool do Redis no app: a notificacao nao foi enfileirada",
+            )
+        try:
+            await pool.enqueue_job(
+                NOTIFICAR_JOB, str(registro.id), _job_id=f"notificar:{registro.id}"
+            )
+        except Exception as erro:  # ampla de proposito -- mesmo argumento de `titular.py`
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"falha ao enfileirar o job: {type(erro).__name__}",
+            ) from erro
+
+    return {"recebido": True}

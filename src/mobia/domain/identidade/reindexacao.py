@@ -77,6 +77,10 @@ TABELAS_COM_CHAVE_DE_LEAD = (
     "optout_events",
     "recomendacoes",
     "referencias_de_lead",
+    # TEC-389. Guarda o par para sempre (nao so enquanto aberta, ao contrario
+    # da vizinha de baixo): a rotacao a arrasta junto como qualquer outra
+    # tabela com `conversation_key`.
+    "solicitacoes_de_interesse",
     # TEC-207. Guarda o par so enquanto ABERTA (D2 do desenho); a rotacao a
     # arrasta junto como qualquer outra tabela com `conversation_key`.
     "solicitacoes_de_titular",

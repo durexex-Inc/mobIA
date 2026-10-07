@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
+import { FormularioDeInteresse } from '@/components/FormularioDeInteresse'
 import { contagem, reais } from '@/lib/imovel'
 import { buscarDetalheDoImovel, ErroDoPortal } from '@/lib/servidor/vitrinePublica'
 
@@ -106,6 +107,7 @@ export default async function DetalheDoImovel({ params }: PageProps<'/busca/[id]
           ))}
         </ul>
       )}
+      <FormularioDeInteresse imovelId={detalhe.id} />
     </main>
   )
 }

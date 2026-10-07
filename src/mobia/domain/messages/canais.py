@@ -26,6 +26,12 @@ coluna nao ganhou linha nenhuma por causa dela.
 CANAL_WHATSAPP = "whatsapp"
 CANAL_WEB = "web"
 
+# TEC-389. O pedido de interesse do portal publico nao e uma mensagem nem uma
+# sessao de chat -- e um formulario, sem conversa nenhuma por tras. Um canal
+# proprio evita que uma leitura futura de "mensagens do canal web" precise
+# distinguir sessao de chat de pedido de formulario por fora da coluna.
+CANAL_PORTAL = "portal"
+
 # O "de" do canal web. Nao ha numero de origem, e a coluna precisa de valor:
 # `indicador_de_digitacao` desiste cedo quando `recipient_external_id` e nulo,
 # e `_avisar_lead_da_janela_humana` le esse campo como o remetente do canal.

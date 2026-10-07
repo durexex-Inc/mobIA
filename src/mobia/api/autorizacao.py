@@ -72,6 +72,13 @@ ROTAS_PUBLICAS: dict[str, str] = {
         "qualquer imovel; esta e a vitrine, so do que esta a venda/aluguel "
         "(TEC-388)"
     ),
+    "/portal/imoveis/{imovel_id}/interesse": (
+        "o cliente pede contato sobre um imovel disponivel sem nenhuma "
+        "conversa previa -- so quem teria credencial para chamar isto e quem "
+        "ja esta logado, e o portal e exatamente para quem nao esta (TEC-389); "
+        "rate limit por telefone, alem do limite por IP do middleware, cobre "
+        "o abuso que a ausencia de sessao abre"
+    ),
     "/api/v1/auth/login": "produz a credencial que esta guarda valida",
     "/api/v1/auth/mfa": "idem -- troca o desafio pelo par de tokens",
     "/api/v1/auth/refresh": "autentica-se pelo proprio refresh apresentado",
