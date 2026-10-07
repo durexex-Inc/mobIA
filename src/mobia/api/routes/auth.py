@@ -60,16 +60,13 @@ def _recusar() -> HTTPException:
 
 @router.post("/login")
 async def login(pedido: PedidoDeLogin) -> dict[str, object]:
-    """Senha correta devolve o par de tokens -- ou um desafio, se houver MFA.
+    """Senha correta devolve o par de tokens direto, sem exigir MFA do ADMIN.
 
-    **O ADMIN com MFA nao recebe tokens aqui.** Ele recebe `mfa_requerido` e um
-    desafio; so `POST /auth/mfa` emite o par. E a D5: a regra vale no login, e
-    nao espalhada por rota.
-
-    **ADMIN sem `mfa_habilitado` nao entra.** Nao e lacuna, e a RNF-11 -- e por
-    isso nao ha ramo que o deixe passar. Ver a lacuna L2 do desenho: nao ha
-    rota que habilite TOTP nesta card, entao o primeiro ADMIN precisa nascer
-    com a semente gravada.
+    **A exigencia de MFA para ADMIN (RNF-11, D5) esta desligada de proposito.**
+    `POST /auth/mfa` e `tokens.emitir_desafio` continuam existindo -- um ADMIN
+    com `mfa_habilitado` ainda pode completar o desafio se outra rota o
+    emitir --, mas o login nao o exige nem o emite mais. Decisao explicita
+    para o ambiente de desenvolvimento local, nao lacuna.
     """
     settings = get_settings()
 
@@ -86,25 +83,6 @@ async def login(pedido: PedidoDeLogin) -> dict[str, object]:
         if not senha.confere(pedido.senha, hash_para_conferir) or usuario is None:
             log.warning("auth.login_recusado", email=pedido.email)
             raise _recusar()
-
-        if usuario.papel == "ADMIN":
-            if not usuario.mfa_habilitado:
-                # Falha ALTA e com motivo proprio: e configuracao incompleta,
-                # nao credencial errada, e quem administra precisa distinguir
-                # as duas ao ler o log.
-                log.error("auth.admin_sem_mfa", usuario_id=str(usuario.id))
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="administradores precisam de MFA habilitado",
-                )
-            desafio = tokens.emitir_desafio(
-                usuario.id,
-                usuario.papel,
-                minutos=MINUTOS_DO_DESAFIO,
-                corretor_id=usuario.corretor_id,
-                settings=settings,
-            )
-            return {"mfa_requerido": True, "desafio": desafio}
 
         emitido = await sessoes.emitir(session, usuario_id=usuario.id, settings=settings)
         await session.commit()
