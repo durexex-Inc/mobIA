@@ -50,9 +50,11 @@ function mensagemDe(bruto: string | undefined): string | null {
  * A tela de login, nas duas etapas: e-mail e senha, e o codigo TOTP de quem e
  * ADMIN.
  *
- * **Sem JavaScript de cliente.** Os dois formularios sao `method="post"` para
- * Route Handlers (`/login/entrar` e `/login/mfa`), que respondem com `303`. A
- * D4 do desenho diz por que nao sao Server Actions.
+ * **O envio nao depende de JavaScript de cliente.** Os dois formularios sao
+ * `method="post"` para Route Handlers (`/login/entrar` e `/login/mfa`), que
+ * respondem com `303`. A D4 do desenho diz por que nao sao Server Actions. O
+ * unico JS e o mostrar/ocultar de `CampoDeSenha` (TEC-391): sem ele, o campo
+ * continua sendo um `type="password"` comum.
  *
  * O `returnTo` e filtrado AQUI, antes de ir para o campo escondido: a rota de
  * POST filtra de novo na chegada, e as duas checagens sao a mesma funcao.

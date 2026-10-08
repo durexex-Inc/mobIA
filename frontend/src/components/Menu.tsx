@@ -1,3 +1,6 @@
+import { BotaoDeTema } from '@/components/BotaoDeTema'
+import { LinkDoMenu } from '@/components/LinkDoMenu'
+import { Botao } from '@/components/ui/Botao'
 import { itensDoMenu, nomeDoPapel } from '@/lib/navegacao'
 import type { QuemSou } from '@/lib/servidor/quemSou'
 
@@ -16,24 +19,33 @@ export function Menu({ quem }: { quem: QuemSou }) {
   const itens = itensDoMenu(quem.permissoes)
   return (
     <header className="menu">
-      <nav aria-label="Menu principal">
-        <ul>
-          {itens.map((item) => (
-            <li key={item.href}>
-              <a href={item.href}>{item.rotulo}</a>
-            </li>
-          ))}
-        </ul>
-      </nav>
-      <div className="menu-conta">
-        <p className="menu-papel">{nomeDoPapel(quem.papel)}</p>
-        {/* Formulario, e nao link: sair e POST (TEC-310, D6). Sem JavaScript --
-            o painel so tem JS de cliente onde nao ha alternativa: o aviso de
-            inatividade (TEC-311), a busca da lista de leads (TEC-321) e a
-            conversa do lead (TEC-324) e o controle dela (TEC-327). */}
-        <form method="post" action="/sair">
-          <button type="submit">Sair</button>
-        </form>
+      <div className="menu-conteudo">
+        <nav aria-label="Menu principal">
+          <ul>
+            {itens.map((item) => (
+              <li key={item.href}>
+                <LinkDoMenu href={item.href}>{item.rotulo}</LinkDoMenu>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <div className="menu-conta">
+          <p className="menu-papel">
+            <span className="ponto-de-status" aria-hidden="true" />
+            {nomeDoPapel(quem.papel)}
+          </p>
+          <BotaoDeTema />
+          {/* Formulario, e nao link: sair e POST (TEC-310, D6). Sem JavaScript --
+              o painel so tem JS de cliente onde nao ha alternativa: o aviso de
+              inatividade (TEC-311), a busca da lista de leads (TEC-321), a
+              conversa do lead (TEC-324) e o controle dela (TEC-327), o item
+              ativo do menu e o botao de tema (TEC-393). */}
+          <form method="post" action="/sair">
+            <Botao type="submit" variante="contorno" tamanho="pequeno">
+              Sair
+            </Botao>
+          </form>
+        </div>
       </div>
     </header>
   )

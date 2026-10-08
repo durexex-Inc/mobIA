@@ -1,4 +1,5 @@
 import { Skeleton } from '@/components/estado/Skeleton'
+import { Cartao } from '@/components/ui/Cartao'
 
 /**
  * O estado "carregando" da rota (TEC-313, RN-FE-04.1).
@@ -20,7 +21,9 @@ export default function Carregando() {
   return (
     <main className="painel" aria-busy="true" aria-label="Carregando o painel de funil">
       <h1>Funil de leads</h1>
-      <Skeleton linhas={6} />
+      <Cartao>
+        <Skeleton linhas={6} />
+      </Cartao>
     </main>
   )
 }

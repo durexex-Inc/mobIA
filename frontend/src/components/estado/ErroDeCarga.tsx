@@ -5,7 +5,8 @@
  * **"Tentar de novo" e um link, nao um botao.** Este componente e Server
  * Component, e o painel so tem JS de cliente onde nao ha alternativa -- o
  * aviso de inatividade da TEC-311, a busca da TEC-321, a conversa da TEC-324
- * e o controle dela da TEC-327;
+ * e o controle dela da TEC-327, e o item ativo do menu e o botao de tema da
+ * TEC-393;
  * a TEC-302 registra que isso e deliberado. Um botao
  * exigiria `'use client'` e hidratacao para fazer o que um `<a>` para a URL
  * atual ja faz: recarregar a rota e refazer a busca. De quebra, funciona sem

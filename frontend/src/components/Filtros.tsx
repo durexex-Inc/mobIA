@@ -1,3 +1,5 @@
+import { Botao } from '@/components/ui/Botao'
+import { Cartao } from '@/components/ui/Cartao'
 import type { Filtros as FiltrosTipo } from '@/lib/metricas'
 
 // Espelham os enums do backend: `Temperatura` em `context/temperatura.py` e
@@ -38,14 +40,16 @@ function Selecao({
   return (
     <label>
       {rotulo}
-      <select name={nome} defaultValue={valor ?? ''}>
-        <option value="">{vazio}</option>
-        {opcoes.map((opcao) => (
-          <option key={opcao} value={opcao}>
-            {opcao}
-          </option>
-        ))}
-      </select>
+      <span className="campo-selecao">
+        <select name={nome} defaultValue={valor ?? ''}>
+          <option value="">{vazio}</option>
+          {opcoes.map((opcao) => (
+            <option key={opcao} value={opcao}>
+              {opcao}
+            </option>
+          ))}
+        </select>
+      </span>
     </label>
   )
 }
@@ -127,53 +131,59 @@ export function Filtros({
   const erroSolto = erro && comCampo.size === 0 ? erro : undefined
 
   return (
-    <form method="get" aria-label="Filtros do painel" className="filtros">
-      {erroSolto && (
-        <p role="alert" className="filtros-erro">
-          {erroSolto}
-        </p>
-      )}
-      <label>
-        De
-        <input type="date" name="de" defaultValue={atuais.de} required />
-        <ErroDoCampo nome="de" campos={comCampo} mensagem={erro} />
-      </label>
-      <label>
-        Até
-        <input type="date" name="ate" defaultValue={atuais.ate} required />
-        <ErroDoCampo nome="ate" campos={comCampo} mensagem={erro} />
-      </label>
-      <Selecao nome="canal" rotulo="Canal" opcoes={CANAIS} valor={atuais.canal} vazio="Todos" />
-      <Selecao
-        nome="intencao"
-        rotulo="Intenção"
-        opcoes={INTENCOES}
-        valor={atuais.intencao}
-        vazio="Todas"
-      />
-      <Selecao
-        nome="temperatura"
-        rotulo="Temperatura"
-        opcoes={TEMPERATURAS}
-        valor={atuais.temperatura}
-        vazio="Todas"
-      />
-      {/* TEC-316, D2: desabilitado ate existir alocacao de corretor no
-          handoff (a TEC-166 aloca ao agendamento, nao ao handoff -- ver a
-          descoberta do desenho). Nao envia `corretorId` nenhum: o backend
-          continua recusando esse filtro com 422, e ninguem mais digita um
-          valor para mandar. Molde identico ao `modo: 'indisponivel'` de
-          `FiltrosDeLeads` (TEC-322, D5). */}
-      <label>
-        Corretor
-        <select disabled aria-describedby="filtros-corretor-motivo">
-          <option>Todos</option>
-        </select>
-      </label>
-      <span id="filtros-corretor-motivo" className="filtros-corretor-motivo">
-        Disponível após a alocação de corretor.
-      </span>
-      <button type="submit">Aplicar</button>
-    </form>
+    <Cartao className="filtros-cartao">
+      <form method="get" aria-label="Filtros do painel" className="filtros">
+        {erroSolto && (
+          <p role="alert" className="filtros-erro">
+            {erroSolto}
+          </p>
+        )}
+        <label>
+          De
+          <input type="date" name="de" defaultValue={atuais.de} required />
+          <ErroDoCampo nome="de" campos={comCampo} mensagem={erro} />
+        </label>
+        <label>
+          Até
+          <input type="date" name="ate" defaultValue={atuais.ate} required />
+          <ErroDoCampo nome="ate" campos={comCampo} mensagem={erro} />
+        </label>
+        <Selecao nome="canal" rotulo="Canal" opcoes={CANAIS} valor={atuais.canal} vazio="Todos" />
+        <Selecao
+          nome="intencao"
+          rotulo="Intenção"
+          opcoes={INTENCOES}
+          valor={atuais.intencao}
+          vazio="Todas"
+        />
+        <Selecao
+          nome="temperatura"
+          rotulo="Temperatura"
+          opcoes={TEMPERATURAS}
+          valor={atuais.temperatura}
+          vazio="Todas"
+        />
+        {/* TEC-316, D2: desabilitado ate existir alocacao de corretor no
+            handoff (a TEC-166 aloca ao agendamento, nao ao handoff -- ver a
+            descoberta do desenho). Nao envia `corretorId` nenhum: o backend
+            continua recusando esse filtro com 422, e ninguem mais digita um
+            valor para mandar. Molde identico ao `modo: 'indisponivel'` de
+            `FiltrosDeLeads` (TEC-322, D5). */}
+        <label>
+          Corretor
+          <span className="campo-selecao">
+            <select disabled aria-describedby="filtros-corretor-motivo">
+              <option>Todos</option>
+            </select>
+          </span>
+        </label>
+        <div className="filtros-rodape">
+          <Botao type="submit">Aplicar</Botao>
+          <span id="filtros-corretor-motivo" className="filtros-corretor-motivo">
+            Disponível após a alocação de corretor.
+          </span>
+        </div>
+      </form>
+    </Cartao>
   )
 }
