@@ -13,7 +13,7 @@ from mobia.domain.crm.webhook import CrmWebhook
 from mobia.domain.handoff.agendador import AgendadorArq
 from mobia.domain.handoff.recuperacao import ReenfileiradorArq
 from mobia.domain.handoff.resumo import RedatorAnthropic
-from mobia.domain.messages.canais import CANAL_WEB, CANAL_WHATSAPP
+from mobia.domain.messages.canais import CANAL_SIMULADOR, CANAL_WEB, CANAL_WHATSAPP
 from mobia.domain.midia.armazem import armazem_da_config
 from mobia.domain.outbound.email import EmailSmtp
 from mobia.domain.outbound.roteador import RoteadorPorCanal
@@ -152,6 +152,11 @@ async def startup(ctx: dict[str, Any]) -> None:
             # Mesmo `ctx["redis"]` do agendador logo abaixo -- o ARQ ja o
             # gravou antes deste hook, e um segundo pool seria redundante.
             CANAL_WEB: WebOutbound(session_factory, ctx["redis"]),
+            # O simulador de WhatsApp (`api/routes/simulador.py`) reaproveita
+            # o MESMO adaptador do web: a entrega e so publicar no Redis sob
+            # a `conversation_key` da linha, e `WebOutbound` nao olha o nome
+            # do canal para decidir isso.
+            CANAL_SIMULADOR: WebOutbound(session_factory, ctx["redis"]),
         },
     )
     # TEC-274 e TEC-124. Dicionario e nao instancia unica: no web os dois
@@ -167,6 +172,7 @@ async def startup(ctx: dict[str, Any]) -> None:
         # ganhou `para`, que no web e a sessao, e com ela da para publicar.
         # Mesmo `ctx["redis"]` do `WebOutbound` logo acima, pela mesma razao.
         CANAL_WEB: WebIndicador(ctx["redis"]),
+        CANAL_SIMULADOR: WebIndicador(ctx["redis"]),
     }
     ctx["classificador"] = ClassificadorAnthropic()
     ctx["resumidor"] = ResumidorAnthropic()

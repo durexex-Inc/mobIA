@@ -52,6 +52,11 @@ ROTAS_PUBLICAS: dict[str, str] = {
     "/health": "probe de liveness; um 403 aqui derrubaria o processo",
     "/webhooks/whatsapp": "quem chama e a Meta, autenticada por assinatura HMAC (RNF-15)",
     "/widget/chat": "o chat do site; quem o abre e visitante anonima (TEC-124)",
+    "/dev/simulador-whatsapp/chat": (
+        "ferramenta de desenvolvimento -- conversar com o agente sem a Cloud API "
+        "da Meta. Nao verifica credencial nenhuma; a guarda de verdade e "
+        "`settings.em_producao`, conferida dentro da propria rota"
+    ),
     "/widget/aparencia": (
         "cor, lado e nome do botao do chat do site, e o slug que o snippet ja "
         "traz; quem pede e o servidor do Next pelo loader, antes de qualquer "

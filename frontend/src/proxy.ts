@@ -89,7 +89,11 @@ export function politicaDeSeguranca(
     embed && embed.ancestrais.length > 0
       ? `frame-ancestors ${embed.ancestrais.join(' ')}`
       : "frame-ancestors 'none'",
-    'upgrade-insecure-requests',
+    // Terceira concessao de dev, que faltava ao lado das outras duas acima: o
+    // `next dev` so fala HTTP. Incondicional, esta diretiva faz o navegador
+    // reescrever fonte, form-action e navegacao para https, e todas quebram
+    // com ERR_SSL_PROTOCOL_ERROR contra um servidor sem TLS.
+    ...(isDev ? [] : ['upgrade-insecure-requests']),
   ].join('; ')
 }
 
@@ -109,9 +113,31 @@ function rotaDoEmbed(caminho: string): boolean {
 }
 
 /**
+ * O portal publico de busca de imoveis (TEC-387/388/389). Casamento por
+ * segmento, mesma razao de `rotaDoEmbed`.
+ *
+ * **Achado corrigindo aqui, nao numa card propria**: ate esta correcao,
+ * `/busca` e `/busca/[id]` nao estavam em `rotaPublica`, entao todo visitante
+ * sem cookie de sessao era redirecionado para `/login` antes de a pagina
+ * sequer renderizar -- o portal publico, construido para abrir sem login,
+ * nunca abria para ninguem que nao estivesse logado no painel. As rotas de
+ * API (`/portal/*`, backend) sempre foram publicas; so o proxy do Next e que
+ * barrava a pagina.
+ */
+function rotaDoPortal(caminho: string): boolean {
+  return caminho === '/busca' || caminho.startsWith('/busca/')
+}
+
+/** A ferramenta de desenvolvimento que simula o WhatsApp. Casamento por segmento. */
+function rotaDoSimulador(caminho: string): boolean {
+  return caminho === '/dev/simulador-whatsapp' || caminho.startsWith('/dev/simulador-whatsapp/')
+}
+
+/**
  * As rotas que abrem sem sessao (TEC-309, D5): o login, o chat embutido no
- * site da imobiliaria, que e do visitante e nao do painel (TEC-344), e o
- * `/sair` (TEC-310, D6) e o batimento `/sessao/atividade` (TEC-311, D3). Os
+ * site da imobiliaria, que e do visitante e nao do painel (TEC-344), o portal
+ * publico de busca (TEC-387), o simulador de WhatsApp (ferramenta de dev), e
+ * o `/sair` (TEC-310, D6) e o batimento `/sessao/atividade` (TEC-311, D3). Os
  * dois ultimos porque quem chega sem cookie tem de receber a resposta do
  * proprio handler: redirecionado daqui, levaria `307`, que repete o POST no
  * destino -- e o batimento e um `fetch`, que espera `401`, nao uma pagina.
@@ -125,6 +151,8 @@ function rotaPublica(caminho: string): boolean {
     caminho === '/login' ||
     caminho.startsWith('/login/') ||
     rotaDoEmbed(caminho) ||
+    rotaDoPortal(caminho) ||
+    rotaDoSimulador(caminho) ||
     caminho === '/sair' ||
     caminho === '/sessao/atividade'
   )
@@ -181,9 +209,18 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   //
   // So o embed espera pela API: o painel nao tem ancestral a conferir, e nao
   // paga a chamada.
-  const embed = rotaDoEmbed(request.nextUrl.pathname)
+  //
+  // **O simulador entra no mesmo ramo, sem ancestrais.** Ele abre um
+  // WebSocket para a MESMA origem do chat (`conectarDoEmbed` reusa
+  // `origemDoChat`, e CSP `connect-src` so olha origem, nunca caminho), mas
+  // ninguem deve enquadra-lo -- `ancestrais: []` fecha `frame-ancestors`
+  // igual ao padrao do painel.
+  const caminho = request.nextUrl.pathname
+  const embed = rotaDoEmbed(caminho)
     ? { ancestrais: await dominiosDoEmbed(), conectarA: conectarDoEmbed() }
-    : undefined
+    : rotaDoSimulador(caminho)
+      ? { ancestrais: [], conectarA: conectarDoEmbed() }
+      : undefined
   const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', { embed })
 
   // O nonce vai no cabecalho da REQUISICAO tambem, e nao so no da resposta: e

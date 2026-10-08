@@ -68,6 +68,20 @@ describe('politicaDeSeguranca', () => {
     expect(desenvolvimento).toContain("style-src 'self' 'unsafe-inline'")
   })
 
+  it('nao forca https em desenvolvimento', () => {
+    // O `next dev` so fala HTTP. Com `upgrade-insecure-requests` incondicional,
+    // o navegador reescreve fonte, form-action e navegacao para https e todas
+    // quebram com ERR_SSL_PROTOCOL_ERROR contra um servidor sem TLS -- visto ao
+    // acessar o painel por um IP (ex: 172.17.128.1, o host do WSL) em vez de
+    // `localhost`, que alguns navegadores isentam da regra por tratamento
+    // especial de loopback.
+    expect(politicaDeSeguranca('abc', true)).not.toContain('upgrade-insecure-requests')
+  })
+
+  it('forca https em producao', () => {
+    expect(politicaDeSeguranca('abc', false)).toContain('upgrade-insecure-requests')
+  })
+
   it('prende o envio do formulario de filtros na propria origem', () => {
     // O painel e `<form method="get">`; sem esta diretiva uma injecao poderia
     // apontar o envio para outro host.

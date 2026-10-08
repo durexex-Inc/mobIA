@@ -7,6 +7,7 @@ from mobia.api.middleware import CorrelacaoDeRequisicao, RateLimitPorIP
 from mobia.api.routes.aparencia_do_widget import router as aparencia_do_widget_router
 from mobia.api.routes.auth import router as auth_router
 from mobia.api.routes.portal import router as portal_router
+from mobia.api.routes.simulador import router as simulador_router
 from mobia.api.routes.whatsapp import router as whatsapp_router
 from mobia.api.routes.widget import router as widget_router
 from mobia.app.config import get_settings
@@ -83,6 +84,10 @@ def create_app() -> FastAPI:
     # TEC-387. Publica pelo mesmo motivo: e a vitrine do portal, e quem busca
     # e visitante anonima, antes de qualquer login.
     app.include_router(portal_router)
+    # Ferramenta de desenvolvimento (simulador de WhatsApp). Publica porque
+    # nao ha credencial nenhuma para exigir aqui -- a guarda de verdade e
+    # `settings.em_producao`, conferida dentro da propria rota.
+    app.include_router(simulador_router)
 
     # **A condicional da TEC-156 caiu na TEC-201, porque a premissa dela caiu.**
     #

@@ -1,8 +1,14 @@
-"""Os cinco cenarios do Gherkin da TEC-201, contra banco de verdade.
+"""Os cenarios do Gherkin da TEC-201, contra banco de verdade.
 
 Mais o que o desenho acrescentou: o reuso de refresh (D4). A convivencia com
 o token compartilhado (D2) foi exercitada aqui ate a TEC-382 apagar o ramo
 que a produzia -- o que sobra dela e a garantia de que so o JWT autentica.
+
+**O quarto cenario (ADMIN exige MFA no login, RNF-11) esta desligado de
+proposito** -- decisao explicita para o ambiente de desenvolvimento local,
+documentada em `auth.py::login`. Os testes de MFA que restam aqui cobrem
+`POST /auth/mfa` isolado, com um desafio emitido direto por
+`tokens.emitir_desafio` em vez de vir do login.
 """
 
 import uuid
@@ -14,7 +20,8 @@ from httpx import AsyncClient
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mobia.domain.usuarios import senha, totp
+from mobia.app.config import get_settings
+from mobia.domain.usuarios import senha, tokens, totp
 from mobia.domain.usuarios.models import SessaoDeRefresh, Usuario
 
 SENHA = "senha-de-teste-correta"
@@ -106,13 +113,15 @@ async def test_usuario_desativado_nao_entra(
     assert resposta.status_code == 401
 
 
-async def test_admin_sem_segundo_fator_nao_recebe_token(
+async def test_admin_recebe_token_direto_mesmo_com_mfa_habilitado(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
-    """Quarto cenario do Gherkin.
+    """A RNF-11 (ADMIN exige MFA no login) esta desligada de proposito.
 
-    O login devolve um DESAFIO, nao o par de tokens: a regra vale no login, e
-    nao espalhada por rota (D5).
+    Decisao explicita para o ambiente de desenvolvimento local (ver o
+    docstring de `auth.py::login`): o ADMIN recebe o par de tokens direto,
+    como qualquer outro papel, mesmo com `mfa_habilitado=True`. `POST
+    /auth/mfa` continua existindo para quem receber um desafio por outra via.
     """
     await _semear(session, email="admin@x.com", papel="ADMIN", com_mfa=True)
 
@@ -122,56 +131,58 @@ async def test_admin_sem_segundo_fator_nao_recebe_token(
 
     assert resposta.status_code == 200
     corpo = resposta.json()
-    assert corpo["mfa_requerido"] is True
-    assert corpo["desafio"]
-    assert "access" not in corpo
+    assert corpo["access"]
+    assert corpo["refresh"]
+    assert "mfa_requerido" not in corpo
 
 
-async def test_admin_conclui_com_o_codigo_do_momento(
+async def test_admin_recebe_token_direto_sem_mfa_habilitado(
     session: AsyncSession, client: AsyncClient, banco_limpo: None
 ) -> None:
-    _, semente = await _semear(session, email="admin2@x.com", papel="ADMIN", com_mfa=True)
-    assert semente is not None
-
-    login = await client.post("/api/v1/auth/login", json={"email": "admin2@x.com", "senha": SENHA})
-    resposta = await client.post(
-        "/api/v1/auth/mfa",
-        json={"desafio": login.json()["desafio"], "codigo": pyotp.TOTP(semente).now()},
-    )
-
-    assert resposta.status_code == 200
-    assert resposta.json()["access"]
-
-
-async def test_admin_com_codigo_errado_nao_entra(
-    session: AsyncSession, client: AsyncClient, banco_limpo: None
-) -> None:
-    await _semear(session, email="admin3@x.com", papel="ADMIN", com_mfa=True)
-
-    login = await client.post("/api/v1/auth/login", json={"email": "admin3@x.com", "senha": SENHA})
-    resposta = await client.post(
-        "/api/v1/auth/mfa", json={"desafio": login.json()["desafio"], "codigo": "000000"}
-    )
-
-    assert resposta.status_code == 401
-
-
-async def test_admin_sem_mfa_habilitado_e_barrado_com_motivo_proprio(
-    session: AsyncSession, client: AsyncClient, banco_limpo: None
-) -> None:
-    """Nao e lacuna, e a RNF-11: ADMIN sem segundo fator nao entra.
-
-    403 e nao 401, e com mensagem propria: e configuracao incompleta, nao
-    credencial errada, e quem administra precisa distinguir as duas.
-    """
+    """Mesma decisao de cima, sem `mfa_habilitado` nenhum: nao ha mais 403."""
     await _semear(session, email="admin4@x.com", papel="ADMIN", com_mfa=False)
 
     resposta = await client.post(
         "/api/v1/auth/login", json={"email": "admin4@x.com", "senha": SENHA}
     )
 
-    assert resposta.status_code == 403
-    assert "MFA" in resposta.json()["detail"]
+    assert resposta.status_code == 200
+    assert resposta.json()["access"]
+
+
+async def test_mfa_continua_funcionando_para_quem_recebe_um_desafio(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    """`POST /auth/mfa` nao foi removido -- so o login parou de emitir desafio.
+
+    O desafio aqui vem de `tokens.emitir_desafio` direto, e nao do login,
+    porque o login nao o emite mais para ADMIN nenhum.
+    """
+    usuario_id, semente = await _semear(session, email="admin2@x.com", papel="ADMIN", com_mfa=True)
+    assert semente is not None
+    desafio = tokens.emitir_desafio(
+        usuario_id, "ADMIN", minutos=5, corretor_id=None, settings=get_settings()
+    )
+
+    resposta = await client.post(
+        "/api/v1/auth/mfa", json={"desafio": desafio, "codigo": pyotp.TOTP(semente).now()}
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.json()["access"]
+
+
+async def test_mfa_com_codigo_errado_nao_entra(
+    session: AsyncSession, client: AsyncClient, banco_limpo: None
+) -> None:
+    usuario_id, _ = await _semear(session, email="admin3@x.com", papel="ADMIN", com_mfa=True)
+    desafio = tokens.emitir_desafio(
+        usuario_id, "ADMIN", minutos=5, corretor_id=None, settings=get_settings()
+    )
+
+    resposta = await client.post("/api/v1/auth/mfa", json={"desafio": desafio, "codigo": "000000"})
+
+    assert resposta.status_code == 401
 
 
 async def test_refresh_renova_sem_novo_login(
