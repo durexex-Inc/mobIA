@@ -84,6 +84,7 @@ export function BuscaDeLeads({
       <input
         type="search"
         name="busca"
+        className="campo"
         aria-label="Buscar por telefone ou bairro"
         placeholder="Buscar por telefone ou bairro"
         value={texto}

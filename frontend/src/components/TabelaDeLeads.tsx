@@ -1,4 +1,5 @@
 import { DadoRevelavel } from '@/components/DadoRevelavel'
+import { Cartao } from '@/components/ui/Cartao'
 import {
   canalLegivel,
   dataAbsoluta,
@@ -63,70 +64,72 @@ export function TabelaDeLeads({
   quantasAnteriores?: number
 }) {
   return (
-    <table className="leads-tabela">
-      <thead>
-        <tr>
-          <th scope="col">Lead</th>
-          <th scope="col">Temperatura</th>
-          <CabecalhoOrdenavel
-            rotulo="Score"
-            esta={ordem}
-            ordem="score_desc"
-            busca={busca}
-            filtros={filtros}
-            origemDoFunil={origemDoFunil}
-          />
-          <th scope="col">Status</th>
-          <th scope="col">Canal</th>
-          <CabecalhoOrdenavel
-            rotulo="Última interação"
-            esta={ordem}
-            ordem="ultima_interacao_desc"
-            busca={busca}
-            filtros={filtros}
-            origemDoFunil={origemDoFunil}
-          />
-        </tr>
-      </thead>
-      <tbody>
-        {itens.map((lead, i) => (
-          <tr
-            key={lead.leadId}
-            data-testid="lead"
-            className={i < quantasAnteriores ? 'leads-pagina-anterior' : undefined}
-          >
-            <td data-rotulo="Lead" className="leads-celula-lead">
-              {/* Sem telefone, o texto e o "Visitante do site" ou o
-                  "Telefone indisponível" de `identificacaoDoLead`, e sem
-                  mascara nao ha o que revelar. */}
-              <DadoRevelavel
-                leadId={lead.leadId}
-                campo="telefone"
-                mascarado={lead.telefone}
-                vazio={identificacaoDoLead(lead)}
-                podeRevelar={podeRevelar}
-                href={abreDetalhe ? `/leads/${encodeURIComponent(lead.leadId)}` : undefined}
-              />
-            </td>
-            <td data-rotulo="Temperatura" className="leads-celula-destaque">
-              {temperaturaLegivel(lead.temperatura)}
-            </td>
-            {/* Sem score e travessao, e nao zero: "ainda nao pontuado" nao e
-                "pontuou zero" (D4 da TEC-192). */}
-            <td data-rotulo="Score" className="leads-score leads-celula-destaque">
-              {lead.score ?? '—'}
-            </td>
-            <td data-rotulo="Status">{statusLegivel(lead.status)}</td>
-            <td data-rotulo="Canal">{canalLegivel(lead.channel)}</td>
-            <td data-rotulo="Última interação">
-              <time dateTime={lead.ultimaInteracaoEm} title={dataAbsoluta(lead.ultimaInteracaoEm)}>
-                {tempoRelativo(lead.ultimaInteracaoEm, agora)}
-              </time>
-            </td>
+    <Cartao className="leads-tabela-cartao">
+      <table className="leads-tabela">
+        <thead>
+          <tr>
+            <th scope="col">Lead</th>
+            <th scope="col">Temperatura</th>
+            <CabecalhoOrdenavel
+              rotulo="Score"
+              esta={ordem}
+              ordem="score_desc"
+              busca={busca}
+              filtros={filtros}
+              origemDoFunil={origemDoFunil}
+            />
+            <th scope="col">Status</th>
+            <th scope="col">Canal</th>
+            <CabecalhoOrdenavel
+              rotulo="Última interação"
+              esta={ordem}
+              ordem="ultima_interacao_desc"
+              busca={busca}
+              filtros={filtros}
+              origemDoFunil={origemDoFunil}
+            />
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {itens.map((lead, i) => (
+            <tr
+              key={lead.leadId}
+              data-testid="lead"
+              className={i < quantasAnteriores ? 'leads-pagina-anterior' : undefined}
+            >
+              <td data-rotulo="Lead" className="leads-celula-lead">
+                {/* Sem telefone, o texto e o "Visitante do site" ou o
+                    "Telefone indisponível" de `identificacaoDoLead`, e sem
+                    mascara nao ha o que revelar. */}
+                <DadoRevelavel
+                  leadId={lead.leadId}
+                  campo="telefone"
+                  mascarado={lead.telefone}
+                  vazio={identificacaoDoLead(lead)}
+                  podeRevelar={podeRevelar}
+                  href={abreDetalhe ? `/leads/${encodeURIComponent(lead.leadId)}` : undefined}
+                />
+              </td>
+              <td data-rotulo="Temperatura" className="leads-celula-destaque">
+                {temperaturaLegivel(lead.temperatura)}
+              </td>
+              {/* Sem score e travessao, e nao zero: "ainda nao pontuado" nao e
+                  "pontuou zero" (D4 da TEC-192). */}
+              <td data-rotulo="Score" className="leads-score leads-celula-destaque">
+                {lead.score ?? '—'}
+              </td>
+              <td data-rotulo="Status">{statusLegivel(lead.status)}</td>
+              <td data-rotulo="Canal">{canalLegivel(lead.channel)}</td>
+              <td data-rotulo="Última interação">
+                <time dateTime={lead.ultimaInteracaoEm} title={dataAbsoluta(lead.ultimaInteracaoEm)}>
+                  {tempoRelativo(lead.ultimaInteracaoEm, agora)}
+                </time>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Cartao>
   )
 }
 

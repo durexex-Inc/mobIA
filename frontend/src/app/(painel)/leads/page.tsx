@@ -122,7 +122,7 @@ export default async function PaginaDeLeads({ searchParams }: { searchParams: Pr
       <FiltrosDeLeads busca={busca} ordem={ordem} filtros={filtros} corretor={corretor} />
       {erro && <Falha erro={erro} endereco={endereco} primeiraPagina={primeiraComFiltros} />}
       {paginas && itens.length === 0 && (
-        <p>
+        <p className="leads-vazio">
           <Vazio
             texto={
               busca

@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation'
 import type { FormEvent } from 'react'
 
+import { Botao } from '@/components/ui/Botao'
+import { CampoDeSelecao } from '@/components/ui/CampoDeSelecao'
 import {
   CANAIS,
   type FiltrosDaLista,
@@ -86,9 +88,9 @@ export function FiltrosDeLeads({
       {corretor.modo === 'indisponivel' && (
         <label className="leads-filtro">
           Corretor
-          <select disabled aria-describedby="filtro-corretor-motivo">
+          <CampoDeSelecao disabled aria-describedby="filtro-corretor-motivo">
             <option>Todos</option>
-          </select>
+          </CampoDeSelecao>
           <span id="filtro-corretor-motivo" className="leads-filtro-motivo">
             Filtro por corretor indisponível para o seu papel.
           </span>
@@ -105,7 +107,9 @@ export function FiltrosDeLeads({
           </p>
         </>
       )}
-      <button type="submit">Filtrar</button>
+      <Botao type="submit" variante="contorno">
+        Filtrar
+      </Botao>
     </form>
   )
 }
@@ -124,14 +128,14 @@ function Lista({
   return (
     <label className="leads-filtro">
       {rotulo}
-      <select name={nome} defaultValue={valor ?? ''}>
+      <CampoDeSelecao name={nome} defaultValue={valor ?? ''}>
         <option value="">Todos</option>
         {Object.entries(opcoes).map(([chave, texto]) => (
           <option key={chave} value={chave}>
             {texto}
           </option>
         ))}
-      </select>
+      </CampoDeSelecao>
     </label>
   )
 }

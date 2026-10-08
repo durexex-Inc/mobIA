@@ -1,5 +1,6 @@
 import { Botao } from '@/components/ui/Botao'
 import { Cartao } from '@/components/ui/Cartao'
+import { CampoDeSelecao } from '@/components/ui/CampoDeSelecao'
 import type { Filtros as FiltrosTipo } from '@/lib/metricas'
 
 // Espelham os enums do backend: `Temperatura` em `context/temperatura.py` e
@@ -40,16 +41,14 @@ function Selecao({
   return (
     <label>
       {rotulo}
-      <span className="campo-selecao">
-        <select name={nome} defaultValue={valor ?? ''}>
-          <option value="">{vazio}</option>
-          {opcoes.map((opcao) => (
-            <option key={opcao} value={opcao}>
-              {opcao}
-            </option>
-          ))}
-        </select>
-      </span>
+      <CampoDeSelecao name={nome} defaultValue={valor ?? ''}>
+        <option value="">{vazio}</option>
+        {opcoes.map((opcao) => (
+          <option key={opcao} value={opcao}>
+            {opcao}
+          </option>
+        ))}
+      </CampoDeSelecao>
     </label>
   )
 }
@@ -140,12 +139,12 @@ export function Filtros({
         )}
         <label>
           De
-          <input type="date" name="de" defaultValue={atuais.de} required />
+          <input type="date" name="de" defaultValue={atuais.de} required className="campo" />
           <ErroDoCampo nome="de" campos={comCampo} mensagem={erro} />
         </label>
         <label>
           Até
-          <input type="date" name="ate" defaultValue={atuais.ate} required />
+          <input type="date" name="ate" defaultValue={atuais.ate} required className="campo" />
           <ErroDoCampo nome="ate" campos={comCampo} mensagem={erro} />
         </label>
         <Selecao nome="canal" rotulo="Canal" opcoes={CANAIS} valor={atuais.canal} vazio="Todos" />
@@ -171,11 +170,9 @@ export function Filtros({
             `FiltrosDeLeads` (TEC-322, D5). */}
         <label>
           Corretor
-          <span className="campo-selecao">
-            <select disabled aria-describedby="filtros-corretor-motivo">
-              <option>Todos</option>
-            </select>
-          </span>
+          <CampoDeSelecao disabled aria-describedby="filtros-corretor-motivo">
+            <option>Todos</option>
+          </CampoDeSelecao>
         </label>
         <div className="filtros-rodape">
           <Botao type="submit">Aplicar</Botao>
