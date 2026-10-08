@@ -59,6 +59,7 @@ export function PaginacaoDeLeads({
           <Link
             href={urlDaLista({ ...estado, posicao: posicaoDaProxima(posicao, proximoCursor, true) })}
             scroll={false}
+            className="botao botao--contorno botao--padrao"
           >
             Carregar mais
           </Link>

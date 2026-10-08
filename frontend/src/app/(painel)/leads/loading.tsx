@@ -1,4 +1,5 @@
 import { Skeleton } from '@/components/estado/Skeleton'
+import { Cartao } from '@/components/ui/Cartao'
 
 /**
  * O carregamento da lista de leads (TEC-321).
@@ -11,7 +12,9 @@ export default function Carregando() {
   return (
     <main className="painel" aria-busy="true" aria-label="Carregando a lista de leads">
       <h1>Leads</h1>
-      <Skeleton linhas={8} />
+      <Cartao>
+        <Skeleton linhas={8} />
+      </Cartao>
     </main>
   )
 }

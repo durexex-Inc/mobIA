@@ -2,7 +2,27 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { Botao } from './Botao'
+import { CampoDeSelecao } from './CampoDeSelecao'
 import { Cartao } from './Cartao'
+
+describe('CampoDeSelecao', () => {
+  it('repassa tudo ao `<select>`, e o rotulo de fora continua nomeando o campo', () => {
+    render(
+      <label>
+        Canal
+        <CampoDeSelecao name="canal" defaultValue="web" disabled>
+          <option value="">Todos</option>
+          <option value="web">web</option>
+        </CampoDeSelecao>
+      </label>,
+    )
+    const campo = screen.getByLabelText('Canal')
+    expect(campo.tagName).toBe('SELECT')
+    expect(campo).toHaveValue('web')
+    expect(campo).toBeDisabled()
+    expect(campo.parentElement).toHaveClass('campo-selecao')
+  })
+})
 
 describe('Cartao', () => {
   it('e um div por padrao, e repassa classe e atributos', () => {
