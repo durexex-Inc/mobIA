@@ -82,7 +82,7 @@ describe('FormularioDeConfiguracao', () => {
       montar()
 
       digitar('Peso de urgência', '30')
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
 
       expect(api).not.toHaveBeenCalled()
       expect(screen.getByRole('alertdialog')).toHaveTextContent('Peso de urgência: 25 → 30')
@@ -101,17 +101,17 @@ describe('FormularioDeConfiguracao', () => {
       montar()
 
       digitar('Peso de urgência', '30')
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
       await clicar('Cancelar')
 
       expect(api).not.toHaveBeenCalled()
       expect(screen.queryByRole('alertdialog')).toBeNull()
     })
 
-    it('sem mudanca, Salvar nao abre confirmacao nem chama o fetch', async () => {
+    it('sem mudanca, "Salvar configuracoes" nao abre confirmacao nem chama o fetch', async () => {
       montar()
 
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
 
       expect(api).not.toHaveBeenCalled()
       expect(screen.queryByRole('alertdialog')).toBeNull()
@@ -123,7 +123,7 @@ describe('FormularioDeConfiguracao', () => {
       montar()
 
       digitar('Peso de urgência', '-1')
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
 
       expect(api).not.toHaveBeenCalled()
       expect(screen.queryByRole('alertdialog')).toBeNull()
@@ -136,7 +136,7 @@ describe('FormularioDeConfiguracao', () => {
       montar({ limitesIniciais: { ...LIMITES, pesos: { minimo: 0, maximo: 90, somaMaxima: 100 } } })
 
       digitar('Peso de urgência', '80')
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
 
       // 80 estaria fora do teto de 50 do LIMITES padrao, mas passa com o teto de 90.
       expect(api).not.toHaveBeenCalled()
@@ -155,7 +155,7 @@ describe('FormularioDeConfiguracao', () => {
       montar()
 
       digitar('Peso de urgência', '30')
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
       await clicar('Confirmar')
 
       expect(screen.getByRole('alert')).toHaveTextContent('alterada por outra pessoa')
@@ -178,12 +178,12 @@ describe('FormularioDeConfiguracao', () => {
       montar()
 
       digitar('Peso de urgência', '30')
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
       await clicar('Confirmar')
 
       expect(refresh).toHaveBeenCalledOnce()
       // A tela ja nao esta suja: salvar de novo sem mudar nada nao abre diff.
-      await clicar('Salvar')
+      await clicar('Salvar configurações')
       expect(screen.queryByRole('alertdialog')).toBeNull()
       expect(screen.getByLabelText('Peso de urgência')).toHaveValue(30)
     })
@@ -223,16 +223,61 @@ describe('FormularioDeConfiguracao', () => {
   it('renderiza a grade de cadencia com a quantidade de campos de `limites`, nao um numero fixo', () => {
     montar()
 
-    expect(screen.getByLabelText('Quente, intervalo 1')).toBeInTheDocument()
-    expect(screen.getByLabelText('Quente, intervalo 4')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Quente, intervalo 5')).toBeNull()
-    expect(screen.getByLabelText('Morno, intervalo 3')).toBeInTheDocument()
-    expect(screen.getByLabelText('Frio, intervalo 2')).toBeInTheDocument()
+    expect(screen.getByLabelText('Quente, 1º disparo')).toBeInTheDocument()
+    expect(screen.getByLabelText('Quente, 4º disparo')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Quente, 5º disparo')).toBeNull()
+    expect(screen.getByLabelText('Morno, 3º disparo')).toBeInTheDocument()
+    expect(screen.getByLabelText('Frio, 2º disparo')).toBeInTheDocument()
   })
 
   it('a nota sobre a soma dos pesos le `limites.pesos.somaMaxima`, sem "100" escrito no componente', () => {
     montar({ limitesIniciais: { ...LIMITES, pesos: { minimo: 0, maximo: 50, somaMaxima: 77 } } })
 
     expect(screen.getByText(/entre 1 e 77/)).toBeInTheDocument()
+  })
+
+  describe('a soma dos pesos (TEC-396, D2)', () => {
+    it('acompanha a digitacao e compara com `limites.pesos.somaMaxima`', () => {
+      montar()
+
+      expect(screen.getByText('Configuração válida')).toBeInTheDocument()
+
+      digitar('Peso de urgência', '35')
+
+      expect(screen.getByText('105', { selector: 'strong' })).toBeInTheDocument()
+      expect(screen.getByText('Fora da faixa')).toBeInTheDocument()
+    })
+
+    it('e so indicador: soma fora da faixa ainda abre a confirmacao, quem recusa e o backend', async () => {
+      montar()
+
+      digitar('Peso de urgência', '35')
+      await clicar('Salvar configurações')
+
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    })
+  })
+
+  describe('"Redefinir" (TEC-396, D4)', () => {
+    it('fica desabilitado sem mudanca', () => {
+      montar()
+
+      expect(screen.getByRole('button', { name: 'Redefinir' })).toBeDisabled()
+    })
+
+    it('volta ao que foi carregado, limpa a recusa e nao chama o fetch', async () => {
+      montar()
+
+      digitar('Peso de urgência', '-1')
+      await clicar('Salvar configurações')
+      expect(screen.getByLabelText('Peso de urgência')).toHaveAccessibleDescription(/Entre/)
+
+      await clicar('Redefinir')
+
+      expect(screen.getByLabelText('Peso de urgência')).toHaveValue(25)
+      expect(screen.getByLabelText('Peso de urgência')).not.toHaveAccessibleDescription(/Entre/)
+      expect(screen.getByRole('button', { name: 'Redefinir' })).toBeDisabled()
+      expect(api).not.toHaveBeenCalled()
+    })
   })
 })

@@ -12,6 +12,7 @@ import {
   pedidoDeEdicao,
   recusaDe,
   rotuloDeCampo,
+  somaDosPesos,
   validarFormulario,
 } from './configuracao'
 
@@ -143,6 +144,19 @@ describe('validarFormulario / formularioValido (D2 -- faixas vem de limites)', (
     expect(
       validarFormulario({ ...valido, orcamentoMensalUsd: '200000' }, LIMITES).porCampo.orcamentoMensalUsd,
     ).toBeDefined()
+  })
+})
+
+describe('somaDosPesos (TEC-396, D2)', () => {
+  const base = formularioDe(CONFIGURACAO)
+
+  it('soma os cinco pesos do formulario', () => {
+    expect(somaDosPesos(base)).toBe(95)
+  })
+
+  it('campo vazio ou nao numerico conta zero, para o indicador acompanhar a digitacao', () => {
+    expect(somaDosPesos({ ...base, pesoUrgencia: '' })).toBe(70)
+    expect(somaDosPesos({ ...base, pesoUrgencia: 'abc' })).toBe(70)
   })
 })
 

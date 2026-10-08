@@ -5,6 +5,7 @@ import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { FormularioDeConfiguracao } from '@/components/FormularioDeConfiguracao'
 import { HistoricoDaConfiguracao } from '@/components/HistoricoDaConfiguracao'
 import { SemPermissao } from '@/components/SemPermissao'
+import { Trilha } from '@/components/ui/Trilha'
 import type { EntradaDoHistorico } from '@/lib/configuracao'
 import { urlDoLogin } from '@/lib/destino'
 import { paginaInicialDe } from '@/lib/navegacao'
@@ -76,7 +77,17 @@ export default async function PaginaDeConfiguracao() {
 
   return (
     <main className="painel">
+      <Trilha
+        itens={[
+          { rotulo: 'Administração', href: '/admin' },
+          { rotulo: 'Configuração do agente' },
+        ]}
+      />
       <h1>Configuração do agente</h1>
+      <p className="painel__descricao">
+        Tom e limites do assistente, pesos do score de qualificação e intervalos do follow-up
+        automático.
+      </p>
       {erro ? (
         <ErroDeCarga
           mensagem="Não foi possível carregar a configuração do agente."
@@ -98,7 +109,6 @@ export default async function PaginaDeConfiguracao() {
             limitesIniciais={dados.limites}
             versaoInicial={dados.versao}
           />
-          <h2>Histórico de alterações</h2>
           <HistoricoDaConfiguracao itens={historico} />
         </>
       ) : null}
