@@ -3,6 +3,7 @@
 import { useId, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { Botao } from '@/components/ui/Botao'
 import type { AgenteDaRota } from '@/lib/prompts'
 import { nomeDoAgenteNaApi } from '@/lib/prompts'
 
@@ -85,39 +86,40 @@ export function ReverterVersao({ agente, versao }: { agente: AgenteDaRota; versa
 
   return (
     <>
-      <button type="button" onClick={abrir}>
+      <Botao variante="contorno" tamanho="pequeno" onClick={abrir}>
         Reverter para esta versão
-      </button>
+      </Botao>
       <dialog ref={dialogRef} className="reverter-versao">
         {tempoDeAtivacaoMs !== null ? (
           <>
             <p role="status">
               Revertido para a versão {numeroDaVersao} em {tempoDeAtivacaoMs} ms.
             </p>
-            <button type="button" onClick={fecharEAtualizar}>
-              Fechar
-            </button>
+            <div className="reverter-versao__acoes">
+              <Botao onClick={fecharEAtualizar}>Fechar</Botao>
+            </div>
           </>
         ) : (
           <>
             <p>
-              Para confirmar, digite o número da versão: <code>{numeroDaVersao}</code>
+              Para confirmar, digite o número da versão: <code className="marcador">{numeroDaVersao}</code>
             </p>
             <label htmlFor={idDoCampo}>Número da versão</label>
             <input
               id={idDoCampo}
               type="text"
+              className="campo"
               value={digitado}
               onChange={(evento) => setDigitado(evento.target.value)}
               autoComplete="off"
             />
-            <div>
-              <button type="button" onClick={fechar} disabled={enviando}>
+            <div className="reverter-versao__acoes">
+              <Botao variante="contorno" onClick={fechar} disabled={enviando}>
                 Cancelar
-              </button>
-              <button type="button" onClick={confirmar} disabled={enviando || digitado !== numeroDaVersao}>
+              </Botao>
+              <Botao onClick={confirmar} disabled={enviando || digitado !== numeroDaVersao}>
                 Confirmar reversão
-              </button>
+              </Botao>
             </div>
             {aviso && (
               <p role="alert" className="reverter-versao__aviso">

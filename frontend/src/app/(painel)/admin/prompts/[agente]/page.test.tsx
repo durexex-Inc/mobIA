@@ -181,9 +181,12 @@ describe('PaginaDePrompt (TEC-338)', () => {
       const botoes = lista.getAllByRole('button', { name: 'Reverter para esta versão' })
       // versao 6 (do historico) e a versao 0 (padrao do codigo) -- a ativa (7) nao ganha botao.
       expect(botoes).toHaveLength(2)
-      expect(lista.getByText('0 (padrão do código)')).toBeInTheDocument()
-      expect(lista.getByText(/Versão 6 — publicada por Rafael/)).toBeInTheDocument()
-      expect(lista.queryByText(/Versão 7 — publicada por/)).not.toBeInTheDocument()
+      expect(lista.getByText('Padrão do código')).toBeInTheDocument()
+      expect(lista.getByText('Versão 6').closest('li')).toHaveTextContent(/Publicada por Rafael/)
+      // Desde a TEC-395 a ativa aparece na lista, marcada, e sem botao.
+      const ativa = lista.getByText('Versão 7').closest('li')!
+      expect(ativa).toHaveTextContent('Em produção')
+      expect(within(ativa).queryByRole('button')).not.toBeInTheDocument()
     })
 
     it('a pagina do agente so busca dado do proprio agente (cenario: outros agentes nao mudam)', async () => {

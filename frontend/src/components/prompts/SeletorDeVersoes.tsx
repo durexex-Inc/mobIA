@@ -1,3 +1,6 @@
+import { Botao } from '@/components/ui/Botao'
+import { CampoDeSelecao } from '@/components/ui/CampoDeSelecao'
+import { Cartao } from '@/components/ui/Cartao'
 import type { VersaoResumida } from '@/lib/prompts'
 
 /**
@@ -18,30 +21,34 @@ export function SeletorDeVersoes({
   para: number
 }) {
   return (
-    <form method="get" className="seletor-de-versoes">
-      <label>
-        De
-        <select name="de" defaultValue={de}>
-          <option value={0}>0 (padrão do código)</option>
-          {itens.map((versao) => (
-            <option key={versao.versao} value={versao.versao}>
-              {versao.versao}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Para
-        <select name="para" defaultValue={para}>
-          <option value={0}>0 (padrão do código)</option>
-          {itens.map((versao) => (
-            <option key={versao.versao} value={versao.versao}>
-              {versao.versao}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button type="submit">Comparar</button>
-    </form>
+    <Cartao className="seletor-de-versoes-cartao">
+      <form method="get" className="seletor-de-versoes">
+        <label>
+          De
+          <CampoDeSelecao name="de" defaultValue={de}>
+            <option value={0}>0 (padrão do código)</option>
+            {itens.map((versao) => (
+              <option key={versao.versao} value={versao.versao}>
+                {versao.versao}
+              </option>
+            ))}
+          </CampoDeSelecao>
+        </label>
+        <label>
+          Para
+          <CampoDeSelecao name="para" defaultValue={para}>
+            <option value={0}>0 (padrão do código)</option>
+            {itens.map((versao) => (
+              <option key={versao.versao} value={versao.versao}>
+                {versao.versao}
+              </option>
+            ))}
+          </CampoDeSelecao>
+        </label>
+        <Botao type="submit" variante="contorno">
+          Comparar
+        </Botao>
+      </form>
+    </Cartao>
   )
 }

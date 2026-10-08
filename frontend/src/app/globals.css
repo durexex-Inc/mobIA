@@ -2729,3 +2729,387 @@ a {
 .historico-da-configuracao__vazio {
   opacity: 0.7;
 }
+
+/* --- Pecas de pagina do painel (TEC-395) ------------------------------------ */
+
+/* A trilha de navegacao: o "Breadcrumb" do shadcn. */
+.trilha ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--texto-fraco);
+}
+
+.trilha li + li::before {
+  content: "/";
+  margin-right: 0.4rem;
+  color: var(--borda);
+}
+
+.trilha a:hover {
+  color: var(--texto);
+}
+
+.trilha a:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+
+.trilha [aria-current="page"] {
+  color: var(--texto);
+}
+
+/* O "Badge" do shadcn. */
+.selo {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid var(--borda);
+  border-radius: 999px;
+}
+
+.selo--neutro {
+  color: var(--texto-fraco);
+}
+
+.selo--sucesso {
+  color: var(--sucesso);
+  background: color-mix(in srgb, var(--sucesso) 12%, transparent);
+  border-color: color-mix(in srgb, var(--sucesso) 40%, var(--borda));
+}
+
+.selo--perigo {
+  color: #dc2626;
+  background: color-mix(in srgb, #dc2626 12%, transparent);
+  border-color: color-mix(in srgb, #dc2626 40%, var(--borda));
+}
+
+.selo--info {
+  color: var(--primaria);
+  background: color-mix(in srgb, var(--primaria) 12%, transparent);
+  border-color: color-mix(in srgb, var(--primaria) 40%, var(--borda));
+}
+
+/* Um `{marcador}` do prompt, onde aparece fora do editor. */
+.marcador {
+  padding: 0.05rem 0.35rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8em;
+  color: var(--primaria);
+  background: color-mix(in srgb, var(--primaria) 12%, transparent);
+  border-radius: 0.3rem;
+}
+
+.secao {
+  margin-bottom: 2.25rem;
+}
+
+.secao h2 {
+  font-size: 1.15rem;
+  font-weight: 650;
+  margin-bottom: 0.35rem;
+}
+
+.secao__cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.secao__descricao,
+.secao__total {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--texto-fraco);
+}
+
+.secao__total {
+  margin: 0;
+}
+
+/* --- Prompt do agente (TEC-338, visual da TEC-395) ------------------------- */
+
+.editor-de-prompt__resumo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.editor-de-prompt__limites {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--texto-fraco);
+}
+
+.editor-de-prompt__limites strong {
+  color: var(--texto);
+}
+
+.editor-de-prompt__erro,
+.editor-de-prompt__aviso {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.875rem;
+  border-radius: calc(var(--raio) - 2px);
+}
+
+.editor-de-prompt__erro {
+  border-left: 3px solid #b23c17;
+  background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.editor-de-prompt__aviso {
+  border-left: 3px solid var(--primaria);
+  background: color-mix(in srgb, var(--primaria) 10%, transparent);
+}
+
+/* A "janela" em volta do editor: barra em cima, rodape embaixo. */
+.janela {
+  overflow: hidden;
+}
+
+.janela__barra,
+.janela__rodape {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+}
+
+.janela__barra {
+  border-bottom: 1px solid var(--borda);
+}
+
+.janela__rodape {
+  justify-content: space-between;
+  border-top: 1px solid var(--borda);
+}
+
+/* Decorativo: as tres luzes de janela de editor. */
+.janela__luzes {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.janela__luzes span {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+.janela__luzes span:nth-child(2) {
+  background: #f59e0b;
+}
+
+.janela__luzes span:nth-child(3) {
+  background: #22c55e;
+}
+
+.janela__titulo {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8rem;
+  color: var(--texto-fraco);
+}
+
+.janela__meta {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--texto-fraco);
+}
+
+.janela__barra .janela__meta {
+  margin-left: auto;
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.seletor-de-versoes-cartao {
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.seletor-de-versoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.seletor-de-versoes label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.seletor-de-versoes .campo-selecao {
+  min-width: 11rem;
+}
+
+.diff-de-prompt {
+  overflow: hidden;
+}
+
+.diff-de-prompt__rotulos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--borda);
+}
+
+.diff-de-prompt__rotulo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.diff-de-prompt__rotulo + .diff-de-prompt__rotulo {
+  border-left: 1px solid var(--borda);
+}
+
+.diff-de-prompt__rotulo .selo {
+  margin-left: auto;
+}
+
+.diff-de-prompt__ponto {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+}
+
+.diff-de-prompt__ponto--de {
+  background: var(--primaria);
+}
+
+.diff-de-prompt__ponto--para {
+  background: var(--sucesso);
+}
+
+.prompts-versoes-anteriores {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.versao {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+}
+
+.versao + .versao {
+  border-top: 1px solid var(--borda);
+}
+
+.versao__icone {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--texto-fraco);
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: calc(var(--raio) - 2px);
+}
+
+.versao__corpo {
+  flex: 1;
+  min-width: 0;
+}
+
+.versao__titulo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.versao__meta {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--texto-fraco);
+}
+
+.reverter-versao {
+  width: 24rem;
+  max-width: calc(100vw - 2rem);
+  margin: auto;
+  padding: 1.25rem;
+  color: var(--texto);
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.reverter-versao::backdrop {
+  background: rgb(0 0 0 / 0.55);
+}
+
+.reverter-versao p {
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.reverter-versao label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.reverter-versao__acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.reverter-versao__aviso {
+  margin-top: 0.75rem;
+  color: #dc2626;
+}
+
+@media (max-width: 639.98px) {
+  .diff-de-prompt__rotulos {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-de-prompt__rotulo + .diff-de-prompt__rotulo {
+    border-top: 1px solid var(--borda);
+    border-left: 0;
+  }
+
+  .versao {
+    flex-wrap: wrap;
+  }
+}

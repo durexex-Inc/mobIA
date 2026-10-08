@@ -4,6 +4,33 @@ import { describe, expect, it } from 'vitest'
 import { Botao } from './Botao'
 import { CampoDeSelecao } from './CampoDeSelecao'
 import { Cartao } from './Cartao'
+import { Selo } from './Selo'
+import { Trilha } from './Trilha'
+
+describe('Selo', () => {
+  it('aplica a variante como classe', () => {
+    render(<Selo variante="sucesso">Dentro do limite</Selo>)
+    expect(screen.getByText('Dentro do limite')).toHaveClass('selo', 'selo--sucesso')
+  })
+})
+
+describe('Trilha', () => {
+  it('liga os itens anteriores e marca o ultimo como pagina atual, sem link', () => {
+    render(
+      <Trilha
+        itens={[
+          { rotulo: 'Administração', href: '/admin' },
+          { rotulo: 'Prompts', href: '/admin/prompts' },
+          { rotulo: 'Subagente investidor' },
+        ]}
+      />,
+    )
+    const trilha = screen.getByRole('navigation', { name: 'Trilha' })
+    expect(trilha).toContainElement(screen.getByRole('link', { name: 'Prompts' }))
+    expect(screen.queryByRole('link', { name: 'Subagente investidor' })).not.toBeInTheDocument()
+    expect(screen.getByText('Subagente investidor')).toHaveAttribute('aria-current', 'page')
+  })
+})
 
 describe('CampoDeSelecao', () => {
   it('repassa tudo ao `<select>`, e o rotulo de fora continua nomeando o campo', () => {
