@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 
+import { CampoDeSenha } from '@/components/CampoDeSenha'
 import { destinoSeguro, type MotivoDoLogin, urlDoLogin } from '@/lib/destino'
 import { COOKIE_DA_SESSAO, obterSessaoValida } from '@/lib/servidor/sessao'
 
@@ -77,47 +78,107 @@ export default async function PaginaDeLogin({ searchParams }: { searchParams: Pr
 
   return (
     <main className="login">
-      <h1>Entrar no painel</h1>
-
-      {mensagem && (
-        <p className="login-erro" role="alert">
-          {mensagem}
+      <div className="login-cartao">
+        <IconeDoPainel />
+        <h1>Entrar no painel</h1>
+        <p className="login-subtitulo">
+          {etapaDoCodigo
+            ? 'Confirme sua identidade para continuar.'
+            : 'Bem-vindo de volta! Digite suas credenciais para acessar o sistema.'}
         </p>
-      )}
 
-      {etapaDoCodigo ? (
-        <form method="post" action="/login/mfa" className="login-formulario">
-          <input type="hidden" name="returnTo" value={destino} />
-          <p>Digite o código de 6 dígitos do seu aplicativo autenticador.</p>
-          <label>
-            Código
-            <input
-              name="codigo"
-              inputMode="numeric"
-              pattern="[0-9]{6}"
-              maxLength={6}
-              autoComplete="one-time-code"
-              required
-              autoFocus
-            />
-          </label>
-          <button type="submit">Confirmar</button>
-          <a href={urlDoLogin({ returnTo: destino })}>Voltar e entrar com outra conta</a>
-        </form>
-      ) : (
-        <form method="post" action="/login/entrar" className="login-formulario">
-          <input type="hidden" name="returnTo" value={destino} />
-          <label>
-            E-mail
-            <input name="email" type="email" autoComplete="username" required autoFocus />
-          </label>
-          <label>
-            Senha
-            <input name="senha" type="password" autoComplete="current-password" required />
-          </label>
-          <button type="submit">Entrar</button>
-        </form>
-      )}
+        {mensagem && (
+          <p className="login-erro" role="alert">
+            {mensagem}
+          </p>
+        )}
+
+        {etapaDoCodigo ? (
+          <form method="post" action="/login/mfa" className="login-formulario">
+            <input type="hidden" name="returnTo" value={destino} />
+            <p className="login-instrucao">
+              Digite o código de 6 dígitos do seu aplicativo autenticador.
+            </p>
+            <div className="login-campo">
+              <label htmlFor="codigo">Código</label>
+              <input
+                id="codigo"
+                name="codigo"
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                autoComplete="one-time-code"
+                required
+                autoFocus
+                className="login-campo-codigo"
+              />
+            </div>
+            <button type="submit" className="login-botao">
+              Confirmar
+            </button>
+            <a className="login-voltar" href={urlDoLogin({ returnTo: destino })}>
+              Voltar e entrar com outra conta
+            </a>
+          </form>
+        ) : (
+          <form method="post" action="/login/entrar" className="login-formulario">
+            <input type="hidden" name="returnTo" value={destino} />
+            <div className="login-campo">
+              <label htmlFor="email">E-mail</label>
+              <div className="login-campo-com-icone">
+                <EnvelopeIcone />
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="username"
+                  required
+                  autoFocus
+                />
+              </div>
+            </div>
+            <CampoDeSenha />
+            <label className="login-lembrar">
+              <input type="checkbox" name="lembrar" />
+              Lembrar de mim neste dispositivo
+            </label>
+            <button type="submit" className="login-botao">
+              Entrar
+            </button>
+          </form>
+        )}
+      </div>
     </main>
+  )
+}
+
+/** O emblema do painel, no topo do cartao. So enfeite: `aria-hidden`. */
+function IconeDoPainel() {
+  return (
+    <div className="login-icone" aria-hidden="true">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+        <rect x="3" y="3" width="7.5" height="7.5" rx="2" fill="currentColor" />
+        <rect x="13.5" y="3" width="7.5" height="7.5" rx="2" fill="currentColor" />
+        <rect x="3" y="13.5" width="7.5" height="7.5" rx="2" fill="currentColor" />
+        <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2" fill="currentColor" />
+      </svg>
+    </div>
+  )
+}
+
+/** O envelope dentro do campo de e-mail. So enfeite: `aria-hidden`. */
+function EnvelopeIcone() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="login-icone-do-campo"
+    >
+      <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="m4 7 8 6 8-6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }
