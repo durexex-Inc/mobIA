@@ -1,7 +1,12 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { FormEvent } from 'react'
+
+import { Botao } from '@/components/ui/Botao'
+import { CampoDeSelecao } from '@/components/ui/CampoDeSelecao'
+import { Cartao } from '@/components/ui/Cartao'
 
 import { ACOES, type FiltrosDaTrilha, filtrosDaUrl, urlDaLista } from '@/lib/auditoria'
 
@@ -13,7 +18,8 @@ import { ACOES, type FiltrosDaTrilha, filtrosDaUrl, urlDaLista } from '@/lib/aud
  * aplica.
  *
  * **Mudar filtro volta à primeira página**: a URL montada aqui não leva
- * posição.
+ * posição. "Limpar filtros" (D6 da TEC-399) é só um link para a trilha sem
+ * parâmetro, e só aparece com algum filtro ativo.
  */
 export function FiltrosDeAuditoria({ filtros }: { filtros: FiltrosDaTrilha }) {
   const router = useRouter()
@@ -30,39 +36,59 @@ export function FiltrosDeAuditoria({ filtros }: { filtros: FiltrosDaTrilha }) {
     aplicar(evento.currentTarget)
   }
 
+  const algumFiltro = Object.values(filtros).some(Boolean)
+
   return (
-    <form
-      className="auditoria-filtros"
-      method="get"
-      action="/admin/auditoria"
-      aria-label="Filtros"
-      onSubmit={aoEnviar}
-      onChange={(evento) => aplicar(evento.currentTarget)}
-    >
-      <label className="auditoria-filtro">
-        Autor
-        <input type="text" name="ator" defaultValue={filtros.ator ?? ''} placeholder="Identificador do usuário" />
-      </label>
-      <label className="auditoria-filtro">
-        Tipo
-        <select name="acao" defaultValue={filtros.acao ?? ''}>
-          <option value="">Todos</option>
-          {Object.entries(ACOES).map(([chave, texto]) => (
-            <option key={chave} value={chave}>
-              {texto}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="auditoria-filtro">
-        De
-        <input type="date" name="de" defaultValue={filtros.de ?? ''} />
-      </label>
-      <label className="auditoria-filtro">
-        Até
-        <input type="date" name="ate" defaultValue={filtros.ate ?? ''} />
-      </label>
-      <button type="submit">Filtrar</button>
-    </form>
+    <Cartao className="auditoria-filtros-cartao">
+      <div className="auditoria-filtros-cartao__cabecalho">
+        <h2>Filtros</h2>
+        {algumFiltro && (
+          <Link href="/admin/auditoria" className="auditoria-limpar">
+            Limpar filtros
+          </Link>
+        )}
+      </div>
+      <form
+        className="auditoria-filtros"
+        method="get"
+        action="/admin/auditoria"
+        aria-label="Filtros"
+        onSubmit={aoEnviar}
+        onChange={(evento) => aplicar(evento.currentTarget)}
+      >
+        <label className="auditoria-filtro">
+          Autor
+          <input
+            className="campo"
+            type="text"
+            name="ator"
+            defaultValue={filtros.ator ?? ''}
+            placeholder="Identificador do usuário"
+          />
+        </label>
+        <label className="auditoria-filtro">
+          Tipo
+          <CampoDeSelecao name="acao" defaultValue={filtros.acao ?? ''}>
+            <option value="">Todos</option>
+            {Object.entries(ACOES).map(([chave, texto]) => (
+              <option key={chave} value={chave}>
+                {texto}
+              </option>
+            ))}
+          </CampoDeSelecao>
+        </label>
+        <label className="auditoria-filtro">
+          De
+          <input className="campo" type="date" name="de" defaultValue={filtros.de ?? ''} />
+        </label>
+        <label className="auditoria-filtro">
+          Até
+          <input className="campo" type="date" name="ate" defaultValue={filtros.ate ?? ''} />
+        </label>
+        <Botao type="submit" variante="contorno">
+          Filtrar
+        </Botao>
+      </form>
+    </Cartao>
   )
 }

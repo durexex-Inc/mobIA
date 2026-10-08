@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  categoriaDaAcao,
   filtrosDaUrl,
   fimDoDia,
   inicioDoDia,
@@ -70,5 +71,19 @@ describe('inicioDoDia / fimDoDia', () => {
 
   it('vira o ano corretamente', () => {
     expect(fimDoDia('2026-12-31')).toBe('2027-01-01T00:00:00-03:00')
+  })
+})
+
+describe('categoriaDaAcao (TEC-399, D3)', () => {
+  it('recusa e risco, alteracao, e o resto neutro', () => {
+    expect(categoriaDaAcao('ACESSO_NEGADO')).toBe('risco')
+    expect(categoriaDaAcao('INJECAO_DETECTADA')).toBe('risco')
+    expect(categoriaDaAcao('CONFIGURACAO_ALTERADA')).toBe('alteracao')
+    expect(categoriaDaAcao('PROMPT_REVERTIDO')).toBe('alteracao')
+    expect(categoriaDaAcao('DADO_PESSOAL_ACESSADO')).toBe('neutra')
+  })
+
+  it('acao desconhecida cai em neutra', () => {
+    expect(categoriaDaAcao('ACAO_NOVA')).toBe('neutra')
   })
 })

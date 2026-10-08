@@ -91,6 +91,17 @@ describe('PaginaDaAuditoria (TEC-343)', () => {
     expect(within(tabela).getByText('telefone')).toBeInTheDocument()
   })
 
+  it('"Limpar filtros" so aparece com filtro ativo, e volta a trilha sem parametro (TEC-399, D6)', async () => {
+    api('ADMIN', { corpo: { itens: [evento()], proximoCursor: null } })
+    const { unmount } = render(await PaginaDaAuditoria({ searchParams: sp() }))
+    expect(screen.queryByRole('link', { name: 'Limpar filtros' })).toBeNull()
+    unmount()
+
+    api('ADMIN', { corpo: { itens: [evento()], proximoCursor: null } })
+    render(await PaginaDaAuditoria({ searchParams: sp({ ator: 'u-anelise' }) }))
+    expect(screen.getByRole('link', { name: 'Limpar filtros' })).toHaveAttribute('href', '/admin/auditoria')
+  })
+
   it('filtra por autor: o parametro chega ao FastAPI', async () => {
     const chamadas = api('ADMIN', { corpo: { itens: [], proximoCursor: null } })
 
