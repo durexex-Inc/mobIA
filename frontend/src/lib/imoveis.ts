@@ -12,8 +12,9 @@
  * `codigo`, `descricao`, `tipo`, `operacao`, `cidade`, `uf`, `suites`,
  * `banheiros` -- porque `parser._converter` os exige. "Diferencial" da card e
  * o campo `caracteristicas`; nao existe coluna `diferencial`. `zona`,
- * `latitude`, `longitude`, `fotos` e `iptuMensal` ficam fora, por serem
- * opcionais no backend e nao exercitados pelo Gherkin.
+ * `latitude`, `longitude` e `fotos` ficam fora, por serem opcionais no
+ * backend e nao exercitados pelo Gherkin. `iptuMensal` tambem ficava, ate a
+ * pagina de edicao da TEC-400 pedir o campo.
  *
  * D2 do desenho: a validacao do lado do cliente e so "campo vazio" -- sem
  * faixa nem plausibilidade, porque o backend ja valida isso com mensagem
@@ -54,9 +55,9 @@ export const STATUS_DO_IMOVEL: Record<StatusImovel, string> = {
 
 /**
  * O imovel como a API devolve (`cadastro.como_api`): camelCase, precos e
- * condominio em CENTAVOS. `zona`/`latitude`/`longitude`/`fotos`/`iptuMensal`
+ * condominio e IPTU em CENTAVOS. `zona`/`latitude`/`longitude`/`fotos`
  * existem no tipo porque a resposta os traz, mesmo que o formulario nao os
- * edite (D1).
+ * edite (D1). `iptuMensal` entrou no formulario na TEC-400.
  */
 export type Imovel = {
   id: string
@@ -88,8 +89,9 @@ export type Imovel = {
 
 /**
  * Os campos do formulario. So os que a tela edita (D1) -- os demais campos de
- * `Imovel` (`zona`, `latitude`, `longitude`, `fotos`, `iptuMensal`) nao tem
- * lugar aqui. Precos e condominio ficam como texto em REAIS: e o que um
+ * `Imovel` (`zona`, `latitude`, `longitude`, `fotos`) nao tem lugar aqui;
+ * `iptuMensal` ganhou lugar na TEC-400. Precos, condominio e IPTU ficam como
+ * texto em REAIS: e o que um
  * `<input>` devolve, e a conversao para centavos so acontece na hora do
  * pedido.
  */
@@ -103,6 +105,7 @@ export type Formulario = {
   precoVenda: string
   precoAluguel: string
   condominio: string
+  iptuMensal: string
   bairro: string
   cidade: string
   uf: string
@@ -123,6 +126,7 @@ export type CampoDeTexto =
   | 'precoVenda'
   | 'precoAluguel'
   | 'condominio'
+  | 'iptuMensal'
   | 'bairro'
   | 'cidade'
   | 'uf'
@@ -142,6 +146,7 @@ const VAZIO: Formulario = {
   precoVenda: '',
   precoAluguel: '',
   condominio: '',
+  iptuMensal: '',
   bairro: '',
   cidade: '',
   uf: '',
@@ -190,6 +195,7 @@ export function formularioDe(imovel: Imovel | null): Formulario {
     precoVenda: centavosParaReais(imovel.precoVenda),
     precoAluguel: centavosParaReais(imovel.precoAluguel),
     condominio: centavosParaReais(imovel.condominio),
+    iptuMensal: centavosParaReais(imovel.iptuMensal),
     bairro: imovel.bairro,
     cidade: imovel.cidade,
     uf: imovel.uf,
@@ -282,8 +288,9 @@ export function formularioValido(formulario: Formulario): boolean {
 
 /**
  * O corpo do `POST` de cadastro (`CorpoDoImovel`). Sempre completo -- os
- * campos fora do escopo desta tela (`zona`, `latitude`, `longitude`, `fotos`,
- * `iptuMensal`) nunca entram, e o backend os trata como ausentes.
+ * campos fora do escopo desta tela (`zona`, `latitude`, `longitude`, `fotos`)
+ * nunca entram, e o backend os trata como ausentes. `iptuMensal` entra
+ * (TEC-400), `null` quando vazio, como o condominio.
  */
 export function pedidoDeCadastro(formulario: Formulario): Record<string, unknown> {
   return {
@@ -296,6 +303,7 @@ export function pedidoDeCadastro(formulario: Formulario): Record<string, unknown
     precoVenda: reaisParaCentavos(formulario.precoVenda),
     precoAluguel: reaisParaCentavos(formulario.precoAluguel),
     condominio: reaisParaCentavos(formulario.condominio),
+    iptuMensal: reaisParaCentavos(formulario.iptuMensal),
     bairro: formulario.bairro.trim(),
     cidade: formulario.cidade.trim(),
     uf: formulario.uf.trim(),
@@ -344,6 +352,9 @@ export function pedidoDeEdicao(inicial: Formulario, atual: Formulario): Record<s
   if (inicial.condominio.trim() !== atual.condominio.trim()) {
     corpo.condominio = reaisParaCentavos(atual.condominio)
   }
+  if (inicial.iptuMensal.trim() !== atual.iptuMensal.trim()) {
+    corpo.iptuMensal = reaisParaCentavos(atual.iptuMensal)
+  }
   if (inicial.bairro.trim() !== atual.bairro.trim()) {
     corpo.bairro = atual.bairro.trim()
   }
@@ -374,6 +385,23 @@ export function pedidoDeEdicao(inicial: Formulario, atual: Formulario): Record<s
   }
 
   return corpo
+}
+
+/**
+ * O custo mensal de quem aluga, em reais: aluguel + condominio + IPTU (TEC-400).
+ * So existe com preco de aluguel -- para venda o total nao significa nada --,
+ * e campo vazio ou nao numerico conta zero, para o valor acompanhar a
+ * digitacao. E so um indicador da tela: nao vai no `PATCH`.
+ */
+export function totalMensalEstimado(formulario: Formulario): number | null {
+  const parcela = (valor: string) => {
+    const numero = Number(valor.trim())
+    return valor.trim() && Number.isFinite(numero) ? numero : 0
+  }
+  if (!formulario.precoAluguel.trim()) {
+    return null
+  }
+  return parcela(formulario.precoAluguel) + parcela(formulario.condominio) + parcela(formulario.iptuMensal)
 }
 
 export function estaSujo(inicial: Formulario, atual: Formulario): boolean {

@@ -69,7 +69,7 @@ const DESCRICOES_DA_TEMPERATURA: Record<string, string> = {
  *
  * **409 (D5) mostra "Recarregar", que so chama `router.refresh()`.** Nao
  * tenta mesclar a edicao com o que a outra pessoa gravou -- a mesma decisao
- * que `RetirarImovel`/`FormularioDeImovel` tomam ao descartar em vez de
+ * que `RetirarImovel`/`EdicaoDeImovel` tomam ao descartar em vez de
  * adivinhar. **Quem descarta a edicao em curso e o `key={versao}` que
  * `admin/configuracao/page.tsx` passa a este componente** -- e nao um
  * `useEffect` que copia prop para estado: essa forma cascateia renders e o

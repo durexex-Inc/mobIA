@@ -8,6 +8,7 @@ import {
   pedidoDeCadastro,
   pedidoDeEdicao,
   recusaDe,
+  totalMensalEstimado,
   validarFormulario,
 } from './imoveis'
 
@@ -51,6 +52,7 @@ describe('formularioDe', () => {
       precoVenda: '350000',
       precoAluguel: '',
       condominio: '850',
+      iptuMensal: '',
       bairro: 'Centro',
       cidade: 'Porto Alegre',
       uf: 'RS',
@@ -170,6 +172,7 @@ describe('pedidoDeCadastro', () => {
       precoVenda: 35_000_000,
       precoAluguel: null,
       condominio: 85_000,
+      iptuMensal: null,
       bairro: 'Centro',
       cidade: 'Porto Alegre',
       uf: 'RS',
@@ -182,18 +185,42 @@ describe('pedidoDeCadastro', () => {
     })
   })
 
-  it('sem zona, latitude, longitude, fotos ou iptuMensal (D1)', () => {
+  it('sem zona, latitude, longitude ou fotos (D1)', () => {
     const corpo = pedidoDeCadastro(formularioDe(IMOVEL))
     expect(corpo).not.toHaveProperty('zona')
     expect(corpo).not.toHaveProperty('latitude')
     expect(corpo).not.toHaveProperty('longitude')
     expect(corpo).not.toHaveProperty('fotos')
-    expect(corpo).not.toHaveProperty('iptuMensal')
+  })
+
+  it('leva o IPTU em centavos quando preenchido (TEC-400)', () => {
+    const corpo = pedidoDeCadastro({ ...formularioDe(IMOVEL), iptuMensal: '320.50' })
+    expect(corpo.iptuMensal).toBe(32_050)
+  })
+})
+
+describe('totalMensalEstimado (TEC-400)', () => {
+  const base = formularioDe(IMOVEL)
+
+  it('soma aluguel, condominio e IPTU, em reais', () => {
+    expect(totalMensalEstimado({ ...base, precoAluguel: '4500', condominio: '850', iptuMensal: '320.5' })).toBe(5670.5)
+  })
+
+  it('sem preco de aluguel nao ha total', () => {
+    expect(totalMensalEstimado({ ...base, precoAluguel: '' })).toBeNull()
+  })
+
+  it('campo vazio ou nao numerico conta zero', () => {
+    expect(totalMensalEstimado({ ...base, precoAluguel: '4500', condominio: '', iptuMensal: 'abc' })).toBe(4500)
   })
 })
 
 describe('pedidoDeEdicao / estaSujo', () => {
   const inicial = formularioDe(IMOVEL)
+
+  it('IPTU mudado vai em centavos (TEC-400)', () => {
+    expect(pedidoDeEdicao(inicial, { ...inicial, iptuMensal: '210' })).toEqual({ iptuMensal: 21_000 })
+  })
 
   it('so o que mudou vai', () => {
     expect(pedidoDeEdicao(inicial, { ...inicial, titulo: 'Novo título' })).toEqual({

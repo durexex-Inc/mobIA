@@ -43,3 +43,17 @@ export async function buscarImoveis(acesso: string): Promise<Imovel[]> {
   const corpo = (await resposta.json()) as { itens: Imovel[]; proximoCursor: string | null }
   return corpo.itens
 }
+
+/**
+ * Um imovel, para a pagina de edicao (TEC-400): `GET /api/v1/imoveis/{id}`,
+ * de qualquer status -- como a listagem, e a visao de quem administra. Um 404
+ * sobe como `ErroDeImoveis` e a pagina o trata como "nao encontrado".
+ */
+export async function buscarImovel(acesso: string, id: string): Promise<Imovel> {
+  const resposta = await chamarApi(`/api/v1/imoveis/${encodeURIComponent(id)}`, { acesso })
+  if (!resposta.ok) {
+    const { mensagem } = await detalheDe(resposta)
+    throw new ErroDeImoveis(resposta.status, mensagem, resposta.headers.get('x-request-id'))
+  }
+  return (await resposta.json()) as Imovel
+}
