@@ -3,8 +3,9 @@ import { notFound, redirect } from 'next/navigation'
 
 import { DiffDePrompt } from '@/components/prompts/DiffDePrompt'
 import { EditorDePrompt } from '@/components/prompts/EditorDePrompt'
-import { ReverterVersao } from '@/components/prompts/ReverterVersao'
+import { ListaDeVersoes } from '@/components/prompts/ListaDeVersoes'
 import { SeletorDeVersoes } from '@/components/prompts/SeletorDeVersoes'
+import { Trilha } from '@/components/ui/Trilha'
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
 import { SemPermissao } from '@/components/SemPermissao'
 import { agenteDaRota, ROTULO_DO_AGENTE, type AgenteDaRota } from '@/lib/prompts'
@@ -127,45 +128,41 @@ export default async function PaginaDePrompt({
 
   return (
     <main className="painel">
+      <Trilha
+        itens={[
+          { rotulo: 'Administração', href: '/admin' },
+          { rotulo: 'Prompts', href: '/admin/prompts' },
+          { rotulo: ROTULO_DO_AGENTE[agente] },
+        ]}
+      />
       <h1>{ROTULO_DO_AGENTE[agente]}</h1>
 
-      <h2>Editar e publicar</h2>
-      <EditorDePrompt
-        key={ativa}
-        agente={agente}
-        textoInicial={dados.ativa.texto}
-        limites={dados.limites}
-      />
+      <section aria-labelledby="editar-e-publicar" className="secao">
+        <h2 id="editar-e-publicar">Editar e publicar</h2>
+        <EditorDePrompt
+          key={ativa}
+          agente={agente}
+          versao={ativa}
+          textoInicial={dados.ativa.texto}
+          limites={dados.limites}
+        />
+      </section>
 
-      <h2>Comparar versões</h2>
-      <SeletorDeVersoes itens={versoes} de={numeroDe} para={numeroPara} />
-      <DiffDePrompt
-        textoDe={textoDe}
-        textoPara={textoPara}
-        rotuloDe={`Versão ${rotuloDaVersao(numeroDe)}`}
-        rotuloPara={`Versão ${rotuloDaVersao(numeroPara)}`}
-      />
+      <section aria-labelledby="comparar-versoes" className="secao">
+        <h2 id="comparar-versoes">Comparar versões</h2>
+        <p className="secao__descricao">
+          Escolha duas versões para ver, lado a lado, o que mudou no texto.
+        </p>
+        <SeletorDeVersoes itens={versoes} de={numeroDe} para={numeroPara} />
+        <DiffDePrompt
+          textoDe={textoDe}
+          textoPara={textoPara}
+          rotuloDe={`Versão ${rotuloDaVersao(numeroDe)}`}
+          rotuloPara={`Versão ${rotuloDaVersao(numeroPara)}`}
+        />
+      </section>
 
-      <h2>Versões anteriores</h2>
-      <ul className="prompts-versoes-anteriores">
-        {ativa !== 0 && (
-          <li>
-            <span>0 (padrão do código)</span>
-            <ReverterVersao agente={agente} versao={0} />
-          </li>
-        )}
-        {versoes
-          .filter((versao) => versao.versao !== ativa)
-          .map((versao) => (
-            <li key={versao.versao}>
-              <span>
-                Versão {versao.versao} — publicada por {versao.autor} em{' '}
-                {new Date(versao.em).toLocaleString('pt-BR')}
-              </span>
-              <ReverterVersao agente={agente} versao={versao.versao} />
-            </li>
-          ))}
-      </ul>
+      <ListaDeVersoes agente={agente} ativa={ativa} versoes={versoes} />
     </main>
   )
 }

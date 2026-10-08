@@ -2,7 +2,10 @@
 
 import dynamic from 'next/dynamic'
 
-import { registrarLinguagemDoPrompt } from '@/components/prompts/linguagemDoPrompt'
+import { registrarLinguagemDoPrompt, TEMA_DO_MONACO } from '@/components/prompts/linguagemDoPrompt'
+import { Cartao } from '@/components/ui/Cartao'
+import { Selo } from '@/components/ui/Selo'
+import { useTemaAtual } from '@/lib/useTemaAtual'
 
 // Mesmo `ssr: false` e mesmo pacote de `EditorDePrompt` -- os dois so
 // aparecem na arvore de modulos da rota de detalhe de prompts (D6 do
@@ -35,11 +38,20 @@ export function DiffDePrompt({
   rotuloDe: string
   rotuloPara: string
 }) {
+  const tema = useTemaAtual()
   return (
-    <div className="diff-de-prompt">
+    <Cartao className="diff-de-prompt">
       <div className="diff-de-prompt__rotulos">
-        <span>{rotuloDe}</span>
-        <span>{rotuloPara}</span>
+        <p className="diff-de-prompt__rotulo">
+          <span className="diff-de-prompt__ponto diff-de-prompt__ponto--de" aria-hidden="true" />
+          <span>{rotuloDe}</span>
+          <Selo>Origem</Selo>
+        </p>
+        <p className="diff-de-prompt__rotulo">
+          <span className="diff-de-prompt__ponto diff-de-prompt__ponto--para" aria-hidden="true" />
+          <span>{rotuloPara}</span>
+          <Selo>Destino</Selo>
+        </p>
       </div>
       <DiffEditor
         height="400px"
@@ -48,8 +60,9 @@ export function DiffDePrompt({
         beforeMount={(monaco) => registrarLinguagemDoPrompt(monaco)}
         originalLanguage="prompt-mobia"
         modifiedLanguage="prompt-mobia"
+        theme={TEMA_DO_MONACO[tema]}
         options={{ readOnly: true, minimap: { enabled: false }, wordWrap: 'on' }}
       />
-    </div>
+    </Cartao>
   )
 }

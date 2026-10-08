@@ -80,3 +80,12 @@ export type RespostaDoRollback = {
   ativa: AgenteAtivo
   tempoDeAtivacaoMs: number
 }
+
+/**
+ * Os marcadores que aparecem no texto, sem repeticao e na ordem em que
+ * aparecem (TEC-395) -- a "Variaveis detectadas" do editor. Mesma forma de
+ * `linguagemDoPrompt.ts` e de `domain/prompts/modelo.py::_MARCADOR`.
+ */
+export function marcadoresNoTexto(texto: string): string[] {
+  return [...new Set(texto.match(/\{[A-Za-z_]+\}/g) ?? [])]
+}

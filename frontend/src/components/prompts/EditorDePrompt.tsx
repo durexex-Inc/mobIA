@@ -5,8 +5,12 @@ import { useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 
 import type { AgenteDaRota, LimitesDoPrompt } from '@/lib/prompts'
-import { nomeDoAgenteNaApi } from '@/lib/prompts'
-import { registrarLinguagemDoPrompt } from '@/components/prompts/linguagemDoPrompt'
+import { marcadoresNoTexto, nomeDoAgenteNaApi } from '@/lib/prompts'
+import { registrarLinguagemDoPrompt, TEMA_DO_MONACO } from '@/components/prompts/linguagemDoPrompt'
+import { Botao } from '@/components/ui/Botao'
+import { Cartao } from '@/components/ui/Cartao'
+import { Selo } from '@/components/ui/Selo'
+import { useTemaAtual } from '@/lib/useTemaAtual'
 
 // `ssr: false`: o Monaco fala com o DOM e o `window` direto, e nao roda no
 // servidor. Este e o UNICO lugar do editor de edicao que importa
@@ -34,14 +38,17 @@ type Resposta =
  */
 export function EditorDePrompt({
   agente,
+  versao,
   textoInicial,
   limites,
 }: {
   agente: AgenteDaRota
+  versao: number
   textoInicial: string
   limites: LimitesDoPrompt
 }) {
   const router = useRouter()
+  const tema = useTemaAtual()
   const [texto, setTexto] = useState(textoInicial)
   const [enviando, setEnviando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -89,31 +96,74 @@ export function EditorDePrompt({
     router.refresh()
   }
 
+  // Indicador, e nao trava (D5): quem recusa o tamanho e o backend, com 422.
+  const dentroDoLimite = texto.length <= limites.maximoDeCaracteres
+  const detectados = marcadoresNoTexto(texto)
+
   return (
     <div className="editor-de-prompt">
-      <p className="editor-de-prompt__limites">
-        Marcadores obrigatórios: {limites.marcadores.join(', ')}. Até {limites.maximoDeCaracteres}{' '}
-        caracteres no pior caso. Caracteres agora: {texto.length}.
-      </p>
-      <Editor
-        height="400px"
-        value={texto}
-        onChange={(valor) => setTexto(valor ?? '')}
-        beforeMount={(monaco) => registrarLinguagemDoPrompt(monaco)}
-        defaultLanguage="prompt-mobia"
-        options={{ minimap: { enabled: false }, wordWrap: 'on' }}
-      />
+      <div className="editor-de-prompt__resumo">
+        <p className="editor-de-prompt__limites">
+          Marcadores obrigatórios:{' '}
+          {limites.marcadores.map((marcador, indice) => (
+            <span key={marcador}>
+              {indice > 0 && ', '}
+              <code className="marcador">{marcador}</code>
+            </span>
+          ))}
+          . Até {limites.maximoDeCaracteres} caracteres no pior caso. Caracteres agora:{' '}
+          <strong>{texto.length}</strong>.
+        </p>
+        <Selo variante={dentroDoLimite ? 'sucesso' : 'perigo'}>
+          {dentroDoLimite ? 'Dentro do limite' : 'Acima do limite'}
+        </Selo>
+      </div>
+      <Cartao className="janela">
+        <div className="janela__barra">
+          <span className="janela__luzes" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          <span className="janela__titulo">
+            {agente} · versão {versao}
+          </span>
+          <span className="janela__meta">Linhas: {texto.split('\n').length}</span>
+        </div>
+        <Editor
+          height="400px"
+          value={texto}
+          onChange={(valor) => setTexto(valor ?? '')}
+          beforeMount={(monaco) => registrarLinguagemDoPrompt(monaco)}
+          defaultLanguage="prompt-mobia"
+          theme={TEMA_DO_MONACO[tema]}
+          options={{ minimap: { enabled: false }, wordWrap: 'on' }}
+        />
+        <div className="janela__rodape">
+          <p className="janela__meta">
+            Variáveis detectadas:{' '}
+            {detectados.length > 0 ? (
+              detectados.map((marcador, indice) => (
+                <span key={marcador}>
+                  {indice > 0 && ' • '}
+                  <code className="marcador">{marcador}</code>
+                </span>
+              ))
+            ) : (
+              <em>nenhuma</em>
+            )}
+          </p>
+          <Botao onClick={publicar} disabled={enviando}>
+            Publicar
+          </Botao>
+        </div>
+      </Cartao>
       {erro && (
         <p className="editor-de-prompt__erro" role="alert">
           {erro}
         </p>
       )}
       {aviso && <p className="editor-de-prompt__aviso">{aviso}</p>}
-      <div className="editor-de-prompt__acoes">
-        <button type="button" onClick={publicar} disabled={enviando}>
-          Publicar
-        </button>
-      </div>
     </div>
   )
 }

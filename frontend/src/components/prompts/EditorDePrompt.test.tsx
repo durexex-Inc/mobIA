@@ -42,7 +42,7 @@ describe('EditorDePrompt', () => {
   it('publicar chama o bff com o texto e atualiza a pagina (cenario: publicar nova versao)', async () => {
     api.mockResolvedValueOnce(responde({ publicada: true, ativa: { versao: 8 } }, 201))
 
-    render(<EditorDePrompt agente="investidor" textoInicial="Você é {assistente}, tom {tom}." limites={LIMITES} />)
+    render(<EditorDePrompt agente="investidor" versao={3} textoInicial="Você é {assistente}, tom {tom}." limites={LIMITES} />)
 
     // `next/dynamic` carrega o Editor de forma assincrona.
     fireEvent.change(await screen.findByLabelText('editor de prompt'), {
@@ -62,7 +62,7 @@ describe('EditorDePrompt', () => {
   it('texto identico ao vigente avisa e nao recarrega', async () => {
     api.mockResolvedValueOnce(responde({ publicada: false, ativa: { versao: 7 } }, 200))
 
-    render(<EditorDePrompt agente="agente" textoInicial="Texto igual" limites={LIMITES} />)
+    render(<EditorDePrompt agente="agente" versao={3} textoInicial="Texto igual" limites={LIMITES} />)
     await clicar('Publicar')
 
     expect(screen.getByText('O texto é igual ao vigente; nada foi publicado.')).toBeInTheDocument()
@@ -74,12 +74,27 @@ describe('EditorDePrompt', () => {
       responde({ detail: 'falta o marcador {tom}: e por ele que a configuracao do agente entra no prompt' }, 422),
     )
 
-    render(<EditorDePrompt agente="agente" textoInicial="Texto sem marcador" limites={LIMITES} />)
+    render(<EditorDePrompt agente="agente" versao={3} textoInicial="Texto sem marcador" limites={LIMITES} />)
     await clicar('Publicar')
 
     expect(
       screen.getByText('falta o marcador {tom}: e por ele que a configuracao do agente entra no prompt'),
     ).toBeInTheDocument()
     expect(refresh).not.toHaveBeenCalled()
+  })
+
+  it('o selo acompanha o limite e o rodape lista os marcadores do texto (TEC-395)', async () => {
+    render(<EditorDePrompt agente="agente" versao={3} textoInicial="Você é {assistente}." limites={LIMITES} />)
+
+    expect(screen.getByText('Dentro do limite')).toBeInTheDocument()
+    const rodape = screen.getByText(/Variáveis detectadas/)
+    expect(rodape).toHaveTextContent('{assistente}')
+    expect(rodape).not.toHaveTextContent('{tom}')
+
+    fireEvent.change(await screen.findByLabelText('editor de prompt'), {
+      target: { value: 'x'.repeat(LIMITES.maximoDeCaracteres + 1) },
+    })
+    expect(screen.getByText('Acima do limite')).toBeInTheDocument()
+    expect(screen.getByText(/Variáveis detectadas/)).toHaveTextContent('nenhuma')
   })
 })

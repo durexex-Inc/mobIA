@@ -1,6 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
-import { agenteDaRota, nomeDoAgenteNaApi, rotaDoAgente } from '@/lib/prompts'
+import { agenteDaRota, marcadoresNoTexto, nomeDoAgenteNaApi, rotaDoAgente } from '@/lib/prompts'
+
+describe('marcadoresNoTexto', () => {
+  it('lista cada marcador uma vez, na ordem em que aparece', () => {
+    expect(marcadoresNoTexto('Voce e {assistente}. Tom {tom}. De novo {assistente}.')).toEqual([
+      '{assistente}',
+      '{tom}',
+    ])
+  })
+
+  it('sem marcador, lista vazia; chave com espaco nao e marcador', () => {
+    expect(marcadoresNoTexto('texto { solto } sem nada')).toEqual([])
+  })
+})
 
 describe('agenteDaRota', () => {
   it('aceita os dois segmentos validos', () => {
