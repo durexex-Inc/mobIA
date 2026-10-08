@@ -1,3 +1,5 @@
+import { Botao } from '@/components/ui/Botao'
+import { Cartao } from '@/components/ui/Cartao'
 import type { LinhaDoDiff } from '@/lib/configuracao'
 
 /**
@@ -18,8 +20,8 @@ export function ConfirmarAlteracaoDaConfiguracao({
   onCancelar: () => void
 }) {
   return (
-    <div className="confirmar-configuracao" role="alertdialog" aria-label="Confirmar alterações">
-      <p>Confirma estas alterações?</p>
+    <Cartao className="confirmar-configuracao" role="alertdialog" aria-label="Confirmar alterações">
+      <p className="confirmar-configuracao__titulo">Confirma estas alterações?</p>
       <ul className="confirmar-configuracao__linhas">
         {linhas.map((linha, indice) => (
           <li key={`${linha.rotulo}-${indice}`}>
@@ -28,13 +30,13 @@ export function ConfirmarAlteracaoDaConfiguracao({
         ))}
       </ul>
       <div className="confirmar-configuracao__acoes">
-        <button type="button" onClick={onCancelar} disabled={enviando}>
+        <Botao variante="contorno" onClick={onCancelar} disabled={enviando}>
           Cancelar
-        </button>
-        <button type="button" onClick={onConfirmar} disabled={enviando}>
+        </Botao>
+        <Botao onClick={onConfirmar} disabled={enviando}>
           Confirmar
-        </button>
+        </Botao>
       </div>
-    </div>
+    </Cartao>
   )
 }

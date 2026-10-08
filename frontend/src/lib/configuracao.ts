@@ -222,6 +222,18 @@ export function formularioValido(formulario: Formulario, limites: Limites): bool
   return Object.keys(validarFormulario(formulario, limites).porCampo).length === 0
 }
 
+/**
+ * A soma dos cinco pesos como estao no formulario, para o indicador da tela
+ * (TEC-396, D2). Campo vazio ou nao numerico conta 0: o indicador acompanha a
+ * digitacao, e quem recusa o valor invalido e `validarFormulario`.
+ */
+export function somaDosPesos(formulario: Formulario): number {
+  return PESOS.reduce((soma, campo) => {
+    const valor = Number(formulario[campo])
+    return soma + (formulario[campo].trim() && Number.isFinite(valor) ? valor : 0)
+  }, 0)
+}
+
 export type LinhaDoDiff = {
   campo: keyof Formulario
   rotulo: string
