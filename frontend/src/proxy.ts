@@ -89,7 +89,11 @@ export function politicaDeSeguranca(
     embed && embed.ancestrais.length > 0
       ? `frame-ancestors ${embed.ancestrais.join(' ')}`
       : "frame-ancestors 'none'",
-    'upgrade-insecure-requests',
+    // Terceira concessao de dev, que faltava ao lado das outras duas acima: o
+    // `next dev` so fala HTTP. Incondicional, esta diretiva faz o navegador
+    // reescrever fonte, form-action e navegacao para https, e todas quebram
+    // com ERR_SSL_PROTOCOL_ERROR contra um servidor sem TLS.
+    ...(isDev ? [] : ['upgrade-insecure-requests']),
   ].join('; ')
 }
 
