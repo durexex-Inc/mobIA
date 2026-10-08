@@ -7,6 +7,9 @@ import { FiltrosDeAuditoria } from '@/components/FiltrosDeAuditoria'
 import { PaginacaoDaAuditoria } from '@/components/PaginacaoDaAuditoria'
 import { SemPermissao } from '@/components/SemPermissao'
 import { TabelaDeAuditoria } from '@/components/TabelaDeAuditoria'
+import { Cartao } from '@/components/ui/Cartao'
+import { Selo } from '@/components/ui/Selo'
+import { Trilha } from '@/components/ui/Trilha'
 import { filtrosDaUrl, posicaoDaUrl, urlDaLista } from '@/lib/auditoria'
 import { urlDoLogin } from '@/lib/destino'
 import { paginaInicialDe } from '@/lib/navegacao'
@@ -67,8 +70,19 @@ export default async function PaginaDaAuditoria({ searchParams }: { searchParams
 
   return (
     <main className="painel">
-      <h1>Trilha de auditoria</h1>
-      <p>Quem viu ou alterou o quê e quando. Somente leitura.</p>
+      <Trilha
+        itens={[
+          { rotulo: 'Administração', href: '/admin' },
+          { rotulo: 'Trilha de auditoria' },
+        ]}
+      />
+      <div className="auditoria-titulo">
+        <h1>Trilha de auditoria</h1>
+        {/* Verdade, e nao enfeite (D2 da TEC-399): o trigger
+            `eventos_auditoria_imutavel` recusa UPDATE e DELETE. */}
+        <Selo variante="info">Imutável</Selo>
+      </div>
+      <p className="painel__descricao">Quem viu ou alterou o quê e quando. Somente leitura.</p>
       <FiltrosDeAuditoria filtros={filtros} />
       {erro && (
         <ErroDeCarga
@@ -77,26 +91,39 @@ export default async function PaginaDaAuditoria({ searchParams }: { searchParams
           urlParaTentarDeNovo={endereco}
         />
       )}
-      {paginas && itens.length === 0 && (
-        <p>
-          <Vazio
-            texto={
-              Object.values(filtros).some(Boolean)
-                ? 'Nenhum evento com estes filtros.'
-                : 'Nenhum evento ainda.'
-            }
-          />
-        </p>
-      )}
-      {paginas && itens.length > 0 && (
-        <>
-          <TabelaDeAuditoria itens={itens} />
-          <PaginacaoDaAuditoria
-            filtros={filtros}
-            posicao={posicao}
-            proximoCursor={ultima?.proximoCursor ?? null}
-          />
-        </>
+      {paginas && (
+        <section aria-labelledby="registros-da-trilha" className="secao">
+          <div className="secao__cabecalho">
+            <h2 id="registros-da-trilha">Registros, do mais recente ao mais antigo</h2>
+            {itens.length > 0 && (
+              <p className="secao__total">
+                {itens.length} {itens.length === 1 ? 'evento carregado' : 'eventos carregados'}
+              </p>
+            )}
+          </div>
+          <Cartao>
+            {itens.length === 0 ? (
+              <p className="auditoria-vazio">
+                <Vazio
+                  texto={
+                    Object.values(filtros).some(Boolean)
+                      ? 'Nenhum evento com estes filtros.'
+                      : 'Nenhum evento ainda.'
+                  }
+                />
+              </p>
+            ) : (
+              <TabelaDeAuditoria itens={itens} />
+            )}
+          </Cartao>
+          {itens.length > 0 && (
+            <PaginacaoDaAuditoria
+              filtros={filtros}
+              posicao={posicao}
+              proximoCursor={ultima?.proximoCursor ?? null}
+            />
+          )}
+        </section>
       )}
     </main>
   )

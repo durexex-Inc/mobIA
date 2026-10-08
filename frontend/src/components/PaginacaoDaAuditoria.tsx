@@ -20,7 +20,11 @@ export function PaginacaoDaAuditoria({
   }
   return (
     <p className="auditoria-carregar-mais">
-      <Link href={urlDaLista({ filtros, posicao: posicaoDaProxima(posicao, proximoCursor) })} scroll={false}>
+      <Link
+        href={urlDaLista({ filtros, posicao: posicaoDaProxima(posicao, proximoCursor) })}
+        scroll={false}
+        className="botao botao--contorno botao--pequeno"
+      >
         Carregar mais
       </Link>
     </p>

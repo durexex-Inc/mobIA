@@ -2191,57 +2191,179 @@ a {
   opacity: 0.8;
 }
 
-/* --- A trilha de auditoria (TEC-343), no molde dos filtros da lista de
-   leads (TEC-322) e da fila do titular (TEC-340) ------------------------- */
+/* --- A trilha de auditoria (TEC-343, visual da TEC-399) -------------------- */
 
-.auditoria-filtros {
+.auditoria-titulo {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 0.75rem 1rem;
-  margin: 0.75rem 0 1rem;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.painel .auditoria-titulo h1 {
+  margin-bottom: 0;
+}
+
+.auditoria-filtros-cartao {
+  margin-bottom: 2rem;
+  padding: 1.1rem 1.25rem 1.25rem;
+}
+
+.auditoria-filtros-cartao__cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.auditoria-filtros-cartao__cabecalho h2 {
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.auditoria-limpar {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--primaria);
+}
+
+.auditoria-limpar:hover {
+  text-decoration: underline;
+}
+
+.auditoria-limpar:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+
+.auditoria-filtros {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1.4fr) minmax(12rem, 1.4fr) minmax(9rem, 1fr) minmax(9rem, 1fr) auto;
+  align-items: end;
+  gap: 1rem;
 }
 
 .auditoria-filtro {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.4rem;
+  min-width: 0;
   font-size: 0.8rem;
+  font-weight: 600;
 }
 
-.auditoria-filtro input,
-.auditoria-filtro select,
-.auditoria-filtros button {
-  padding: 0.35rem 0.5rem;
-  font: inherit;
-  font-size: 0.95rem;
+.auditoria-rolagem {
+  overflow-x: auto;
 }
 
 .auditoria-trilha {
-  display: block;
-  overflow-x: auto;
   width: 100%;
   border-collapse: collapse;
+  font-size: 0.85rem;
 }
 
 .auditoria-trilha th,
 .auditoria-trilha td {
-  padding: 0.5rem 0.75rem;
+  padding: 0.8rem 1rem;
   text-align: left;
+  vertical-align: middle;
+}
+
+.auditoria-trilha th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--texto-fraco);
+  background: var(--superficie-2);
+  border-bottom: 1px solid var(--borda);
+}
+
+.auditoria-trilha tbody tr + tr td {
+  border-top: 1px solid var(--borda);
+}
+
+.auditoria-trilha__quando {
   white-space: nowrap;
-  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.auditoria-trilha__mono {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.78rem;
+}
+
+.auditoria-trilha__detalhes {
+  min-width: 12rem;
+  color: var(--texto-fraco);
+}
+
+/* O ator: a inicial do tipo e, embaixo do tipo, o identificador cortado (D4). */
+.auditoria-ator {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.auditoria-ator__inicial {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--texto-fraco);
+  background: var(--superficie-2);
+  border: 1px solid var(--borda);
+  border-radius: 50%;
+}
+
+.auditoria-ator__texto {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.auditoria-ator__id {
+  max-width: 11rem;
+  overflow: hidden;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.75rem;
+  color: var(--texto-fraco);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auditoria-vazio {
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  color: var(--texto-fraco);
 }
 
 .auditoria-carregar-mais {
+  display: flex;
+  justify-content: center;
   margin-top: 1rem;
 }
 
-.auditoria-carregar-mais a {
-  display: inline-block;
-  padding: 0.5rem 1.2rem;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  text-decoration: none;
+.auditoria-carregar-mais .botao:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
+}
+
+@media (max-width: 899.98px) {
+  .auditoria-filtros {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 479.98px) {
+  .auditoria-filtros {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* --- Corretores (TEC-332, visual da TEC-397) -------------------------------- */

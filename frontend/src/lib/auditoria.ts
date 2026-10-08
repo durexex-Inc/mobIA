@@ -62,6 +62,28 @@ export function acaoLegivel(valor: string): string {
   return ACOES[valor] ?? valor
 }
 
+export type CategoriaDaAcao = 'risco' | 'alteracao' | 'neutra'
+
+const ACOES_DE_RISCO = new Set(['ACESSO_NEGADO', 'INJECAO_DETECTADA', 'TITULAR_RECUSADO'])
+const ACOES_DE_ALTERACAO = new Set([
+  'QUALIFICACAO_ALTERADA',
+  'CONFIGURACAO_ALTERADA',
+  'PROMPT_PUBLICADO',
+  'PROMPT_REVERTIDO',
+])
+
+/**
+ * A cor do selo do tipo de evento (D3 da TEC-399): recusa e risco, alteracao,
+ * ou o resto. So reforca -- o texto do selo continua dizendo o tipo. Acao
+ * desconhecida cai em `neutra`, como cai no texto cru em `acaoLegivel`.
+ */
+export function categoriaDaAcao(valor: string): CategoriaDaAcao {
+  if (ACOES_DE_RISCO.has(valor)) {
+    return 'risco'
+  }
+  return ACOES_DE_ALTERACAO.has(valor) ? 'alteracao' : 'neutra'
+}
+
 export function entidadeLegivel(valor: string): string {
   return ENTIDADES[valor] ?? valor
 }
@@ -180,13 +202,8 @@ export function dataHoraLegivel(iso: string): string {
   return DATA_HORA.format(new Date(iso))
 }
 
-const ATORES: Record<string, string> = { USUARIO: 'Usuário', AGENTE: 'Agente', SISTEMA: 'Sistema' }
-
-/** "Usuário (uuid)", ou só o tipo quando não há id (agente e sistema não têm). */
-export function atorLegivel(evento: Pick<EventoDaTrilha, 'atorTipo' | 'atorId'>): string {
-  const tipo = ATORES[evento.atorTipo] ?? evento.atorTipo
-  return evento.atorId ? `${tipo} (${evento.atorId})` : tipo
-}
+/** O tipo de ator, legivel; o identificador vai a parte (D4 da TEC-399). */
+export const ATORES: Record<string, string> = { USUARIO: 'Usuário', AGENTE: 'Agente', SISTEMA: 'Sistema' }
 
 /** `detalhes` como pares "chave: valor", sem tradução (D6) -- pula os nulos. */
 export function detalhesLegiveis(detalhes: Record<string, string | null> | null): string {
