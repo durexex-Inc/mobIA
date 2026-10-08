@@ -82,22 +82,25 @@ websocket `/_next/hmr` falhando: a página abre, mas não recarrega sozinha.
 São hostnames separados por vírgula, sem esquema nem porta, e a variável é lida
 quando o servidor sobe — mudou, reinicie o `npm run dev` (TEC-392).
 
-**Sozinha ela só conserta o HMR; o login continua quebrado.** No `next dev` a
-origem que as rotas de login enxergam é `localhost:3000`, qualquer que seja o
-endereço no navegador: o POST vindo do IP cai na checagem de `Origin` e é
-mandado de volta para `http://localhost:3000/login`, e a `form-action 'self'`
-da CSP bloqueia esse redirecionamento — o console acusa o envio para
-`/login/entrar`, porque o Chrome reporta a URL original e não o destino. Para
-entrar pelo IP, aponte também `MOBIA_ORIGEM_DO_PAINEL` para ele. Com isso, só o
-IP entra; `localhost` passa a ser recusado.
-
 ```bash
-MOBIA_ORIGENS_DE_DEV=172.17.128.1 MOBIA_ORIGEM_DO_PAINEL=http://172.17.128.1:3000 npm run dev
+MOBIA_ORIGENS_DE_DEV=172.17.128.1 npm run dev
 ```
 
 ```powershell
-$env:MOBIA_ORIGENS_DE_DEV = "172.17.128.1"; $env:MOBIA_ORIGEM_DO_PAINEL = "http://172.17.128.1:3000"; npm run dev
+$env:MOBIA_ORIGENS_DE_DEV = "172.17.128.1"; npm run dev
 ```
+
+**Pelo IP só as rotas públicas funcionam — `/busca` e `/embed/*`. Para o
+painel, use `http://localhost:3000`.** O login pelo IP não fecha, e não por
+configuração que falte: o cookie da sessão é sempre `Secure` (ver
+`opcoesDoCookie` em `src/lib/servidor/sessao.ts`), o Chrome só aceita cookie
+`Secure` sobre HTTP em `localhost`, e no IP ele o descarta em silêncio — a
+senha confere, o `303` leva a `/`, e `/` devolve ao login sem mensagem. Afrouxar
+o `secure` em dev é justamente o que aquele comentário recusa.
+
+Se `localhost` responder com `ERR_SSL_PROTOCOL_ERROR`, o navegador guardou uma
+política HSTS para ele, vinda de outro serviço HTTPS na máquina: apague em
+`chrome://net-internals/#hsts`, em "Delete domain security policies".
 
 ## A sessão (TEC-309)
 
