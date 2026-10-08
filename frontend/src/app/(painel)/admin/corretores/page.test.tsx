@@ -96,7 +96,7 @@ describe('PaginaDeCorretores (TEC-332)', () => {
     render(await PaginaDeCorretores())
 
     expect(screen.getByRole('heading', { name: 'Corretores' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Cadastrar corretor' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Novo cadastro' })).toBeInTheDocument()
     expect(screen.getByRole('table')).toBeInTheDocument()
     expect(screen.getByText('Ana Souza')).toBeInTheDocument()
   })

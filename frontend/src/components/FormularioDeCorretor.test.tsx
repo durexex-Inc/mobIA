@@ -51,6 +51,13 @@ describe('FormularioDeCorretor', () => {
     api = vi.fn(async () => responde({ ...CORRETOR, id: 'c-novo' }, 201))
     vi.stubGlobal('fetch', api)
     refresh.mockClear()
+    // jsdom nao implementa o modal; a edicao abre num `<dialog>` (D2 da TEC-397).
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.setAttribute('open', '')
+    }
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      this.removeAttribute('open')
+    }
   })
   afterEach(() => vi.unstubAllGlobals())
 
@@ -58,7 +65,6 @@ describe('FormularioDeCorretor', () => {
     it('manda o POST completo pelo proxy, sem `gerente` (D4)', async () => {
       render(<FormularioDeCorretor corretor={null} />)
 
-      await clicar('Cadastrar corretor')
       digitar('Nome', 'Bruno Lima')
       digitar('E-mail', 'bruno@imobiliaria.com')
       digitar('Telefone', '11988887777')
@@ -89,7 +95,57 @@ describe('FormularioDeCorretor', () => {
       })
       expect(corpo).not.toHaveProperty('gerente')
       expect(refresh).toHaveBeenCalledOnce()
-      expect(screen.queryByRole('button', { name: 'Cadastrar' })).toBeNull()
+      // O cadastro fica de pe e volta vazio (D1 da TEC-397).
+      expect(screen.getByRole('button', { name: 'Cadastrar' })).toBeInTheDocument()
+      expect(screen.getByLabelText('Nome')).toHaveValue('')
+      expect(screen.queryByText('Centro')).toBeNull()
+    })
+  })
+
+  describe('o cadastro sempre aberto (TEC-397, D1)', () => {
+    it('aparece sem clique, num cartao "Novo cadastro"', () => {
+      render(<FormularioDeCorretor corretor={null} />)
+
+      expect(screen.getByRole('region', { name: 'Novo cadastro' })).toBeInTheDocument()
+      expect(screen.getByLabelText('Nome')).toBeInTheDocument()
+    })
+
+    it('"Cancelar" limpa o que foi digitado, sem chamar a API', async () => {
+      render(<FormularioDeCorretor corretor={null} />)
+
+      digitar('Nome', 'Bruno Lima')
+      await clicar('Cancelar')
+
+      expect(screen.getByLabelText('Nome')).toHaveValue('')
+      expect(api).not.toHaveBeenCalled()
+    })
+
+    it('o asterisco de obrigatorio nao entra no nome acessivel (D4)', () => {
+      render(<FormularioDeCorretor corretor={null} />)
+
+      expect(screen.getByRole('textbox', { name: 'Nome' })).toHaveAttribute('aria-required', 'true')
+      expect(screen.getByRole('textbox', { name: 'CRECI' })).not.toHaveAttribute('aria-required')
+    })
+  })
+
+  describe('a edicao num dialogo (TEC-397, D2)', () => {
+    it('"Editar" abre o modal "Editar corretor" com os dados do corretor', async () => {
+      render(<FormularioDeCorretor corretor={CORRETOR} />)
+
+      await clicar('Editar')
+
+      const dialogo = screen.getByRole('dialog', { name: 'Editar corretor' })
+      expect(dialogo).toHaveAttribute('open')
+      expect(screen.getByLabelText('Nome')).toHaveValue('Ana Souza')
+    })
+
+    it('"Cancelar" fecha o modal', async () => {
+      render(<FormularioDeCorretor corretor={CORRETOR} />)
+
+      await clicar('Editar')
+      await clicar('Cancelar')
+
+      expect(screen.queryByRole('dialog')).toBeNull()
     })
   })
 
@@ -97,7 +153,6 @@ describe('FormularioDeCorretor', () => {
     it('capacidade 21 e recusada na tela, sem chamar a API', async () => {
       render(<FormularioDeCorretor corretor={null} />)
 
-      await clicar('Cadastrar corretor')
       digitar('Nome', 'Bruno Lima')
       digitar('E-mail', 'bruno@imobiliaria.com')
       digitar('Telefone', '11988887777')
@@ -118,7 +173,6 @@ describe('FormularioDeCorretor', () => {
     it('capacidade 0 tambem e recusada', async () => {
       render(<FormularioDeCorretor corretor={null} />)
 
-      await clicar('Cadastrar corretor')
       digitar('Nome', 'Bruno Lima')
       digitar('E-mail', 'bruno@imobiliaria.com')
       digitar('Telefone', '11988887777')

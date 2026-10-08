@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { Botao } from '@/components/ui/Botao'
 import type { Corretor } from '@/lib/corretores'
 
 /**
@@ -61,22 +62,22 @@ export function DesativarCorretor({ corretor }: { corretor: Corretor }) {
 
   return (
     <>
-      <button type="button" onClick={abrir}>
+      <Botao variante="fantasma" tamanho="pequeno" onClick={abrir}>
         Desativar
-      </button>
-      <dialog ref={dialogRef} className="desativar-corretor">
-        <p>Desativar {corretor.nome}?</p>
+      </Botao>
+      <dialog ref={dialogRef} className="dialogo">
+        <p className="dialogo__titulo">Desativar {corretor.nome}?</p>
         <p>O histórico e os leads atribuídos são mantidos; o corretor deixa de receber novas alocações.</p>
-        <div>
-          <button type="button" onClick={fechar} disabled={enviando}>
+        <div className="dialogo__acoes">
+          <Botao variante="contorno" onClick={fechar} disabled={enviando}>
             Cancelar
-          </button>
-          <button type="button" onClick={confirmar} disabled={enviando}>
+          </Botao>
+          <Botao className="botao--perigo" onClick={confirmar} disabled={enviando}>
             Confirmar desativação
-          </button>
+          </Botao>
         </div>
         {aviso && (
-          <p role="alert" className="desativar-corretor__aviso">
+          <p role="alert" className="dialogo__aviso">
             {aviso}
           </p>
         )}
