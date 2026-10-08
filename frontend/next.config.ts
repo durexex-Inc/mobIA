@@ -46,7 +46,20 @@ const cabecalhosDeSeguranca = [
   },
 ];
 
+/**
+ * Hostnames alem de `localhost` que podem pedir os recursos de dev do
+ * `next dev` -- sem isso, abrir o painel pelo IP do WSL derruba o websocket
+ * do HMR (TEC-392). Vem do ambiente, e nao fixo aqui, porque esse IP e de uma
+ * maquina so e muda entre reinicios. So hostname: o Next ignora esquema e
+ * porta (`allowedDevOrigins.md` em `next/dist/docs`).
+ */
+const origensDeDev = (process.env.MOBIA_ORIGENS_DE_DEV ?? '')
+  .split(',')
+  .map((origem) => origem.trim())
+  .filter(Boolean);
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: origensDeDev,
   // Build autossuficiente para a imagem Docker: o Next copia so o necessario
   // para `.next/standalone`, e o runtime nao precisa do node_modules inteiro.
   output: "standalone",

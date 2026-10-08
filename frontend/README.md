@@ -41,6 +41,7 @@ com o código de 6 dígitos (RNF-11). A URI leva a semente em claro.
 | `MOBIA_REDIS_URL` | servidor Next, onde a sessão do painel mora | não (`redis://localhost:6380`, o do `docker compose`) |
 | `MOBIA_ORIGEM_DO_PAINEL` | proxy `/bff/*` e login, na checagem de `Origin` | só atrás de proxy — ver abaixo |
 | `MOBIA_WIDGET_WS_URL` | a página `/embed/chat` e o proxy, no servidor | não (derivada de `MOBIA_API_BASE`) |
+| `MOBIA_ORIGENS_DE_DEV` | `next.config.ts`, só no `next dev` | não — ver abaixo |
 
 **Não há mais token de API no ambiente do Next.** Até a TEC-309 havia o
 `MOBIA_ADMIN_TOKEN`, que ia em toda chamada como `X-Admin-Token` — um ADMIN sem
@@ -73,6 +74,17 @@ passar sem ter procurado nada.
 Component para um Client Component. Ele iria no payload RSC do HTML, que não é
 arquivo estático, e não dispara o `server-only` porque o módulo continua sendo
 importado só do servidor.
+
+**`MOBIA_ORIGENS_DE_DEV` é para abrir o `next dev` por outro endereço que não
+`localhost`** — o IP do WSL, por exemplo. O Next bloqueia os recursos de
+desenvolvimento pedidos de um host que ele não conhece, e o sintoma é o
+websocket `/_next/hmr` falhando: a página abre, mas não recarrega sozinha.
+São hostnames separados por vírgula, sem esquema nem porta, e a variável é lida
+quando o servidor sobe — mudou, reinicie o `npm run dev` (TEC-392):
+
+```bash
+MOBIA_ORIGENS_DE_DEV=172.17.128.1 npm run dev
+```
 
 ## A sessão (TEC-309)
 
