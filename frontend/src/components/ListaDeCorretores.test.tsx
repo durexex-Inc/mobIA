@@ -88,4 +88,26 @@ describe('ListaDeCorretores (D6 do desenho)', () => {
 
     expect(within(linhaDe('Ana Souza')).getByRole('button', { name: 'Editar' })).toBeInTheDocument()
   })
+
+  it('o cabecalho conta os ativos e o total (TEC-397, D7)', () => {
+    render(
+      <ListaDeCorretores
+        corretores={[
+          corretor({ id: 'c-1', nome: 'Ana Souza' }),
+          corretor({ id: 'c-2', nome: 'Bia Alves', ativo: false }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: /Corretores cadastrados/ })).toHaveTextContent('1 ativo')
+    expect(screen.getByText('Total: 2')).toBeInTheDocument()
+  })
+
+  it('lista vazia mostra o estado vazio, sem tabela', () => {
+    render(<ListaDeCorretores corretores={[]} />)
+
+    expect(screen.getByText('Nenhum corretor cadastrado.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.getByRole('heading', { name: /Corretores cadastrados/ })).toHaveTextContent('0 ativos')
+  })
 })

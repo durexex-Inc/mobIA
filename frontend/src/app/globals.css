@@ -2244,112 +2244,357 @@ a {
   text-decoration: none;
 }
 
-/* --- Corretores (TEC-332) -------------------------------------------------- */
+/* --- Corretores (TEC-332, visual da TEC-397) -------------------------------- */
 
-.formulario-de-corretor {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
-  gap: 0.75rem 1.5rem;
-  width: 100%;
-  margin: 1rem 0;
+/* O asterisco de obrigatorio (D4 da TEC-397): desenhado aqui para nao entrar
+   no nome acessivel do campo. */
+.rotulo--obrigatorio::after {
+  content: " *";
+  color: var(--primaria);
 }
 
-.formulario-de-corretor button {
-  padding: 0.4rem 0.9rem;
-  font: inherit;
-  cursor: pointer;
+.cadastro-de-corretor {
+  margin-bottom: 2.25rem;
+  overflow: hidden;
+}
+
+.cadastro-de-corretor__cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--superficie-2);
+  border-bottom: 1px solid var(--borda);
+}
+
+.cadastro-de-corretor__cabecalho h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cadastro-de-corretor__ponto {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--primaria);
+}
+
+.cadastro-de-corretor__legenda {
+  font-size: 0.75rem;
+  color: var(--texto-fraco);
+}
+
+.cadastro-de-corretor__legenda span {
+  color: var(--primaria);
+}
+
+.cadastro-de-corretor .formulario-de-corretor {
+  padding: 1.5rem 1.25rem 1.25rem;
+}
+
+.formulario-de-corretor__grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 1.25rem;
+  align-items: start;
 }
 
 .formulario-de-corretor__campo {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
-.formulario-de-corretor__campo label {
+.formulario-de-corretor__campo > label,
+.formulario-de-corretor__especialidades legend {
   font-size: 0.8rem;
-  opacity: 0.7;
+  font-weight: 600;
 }
 
-.formulario-de-corretor__campo input {
-  padding: 0.35rem 0.5rem;
-  font: inherit;
+.formulario-de-corretor .campo-com-unidade--sufixo .campo {
+  padding-right: 1.75rem;
+}
+
+.formulario-de-corretor__ajuda {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--texto-fraco);
 }
 
 .formulario-de-corretor__especialidades {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  grid-column: span 1;
+  min-width: 0;
+  border: 0;
 }
 
-.formulario-de-corretor__regioes {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  grid-column: span 1;
+.formulario-de-corretor__especialidades legend {
+  margin-bottom: 0.4rem;
 }
 
-.formulario-de-corretor__regioes ul {
+.formulario-de-corretor__caixa {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  margin: 0;
+  gap: 0.6rem;
+  padding: 0.85rem;
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: calc(var(--raio) - 2px);
+}
+
+.formulario-de-corretor__caixa label,
+.formulario-de-corretor__plantao {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.formulario-de-corretor input[type="checkbox"] {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.1rem;
+  accent-color: var(--primaria);
+}
+
+.formulario-de-corretor input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
+}
+
+.formulario-de-corretor__plantao {
+  align-self: center;
+  font-weight: 600;
+}
+
+/* As regioes: um chip por regiao, com o "x" para remover. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.2rem 0 0;
   padding: 0;
   list-style: none;
 }
 
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.3rem 0.15rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--primaria);
+  background: color-mix(in srgb, var(--primaria) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primaria) 40%, var(--borda));
+  border-radius: 0.35rem;
+}
+
+.chip__remover {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+.chip__remover:hover {
+  background: color-mix(in srgb, var(--primaria) 20%, transparent);
+}
+
+.chip__remover:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 1px;
+}
+
 .formulario-de-corretor__erro {
-  font-size: 0.85rem;
-  color: #b23c17;
+  font-size: 0.8rem;
+  color: #dc2626;
+}
+
+.formulario-de-corretor .campo[aria-invalid="true"] {
+  border-color: #dc2626;
 }
 
 .formulario-de-corretor__aviso {
-  grid-column: 1 / -1;
+  margin-bottom: 1rem;
   padding: 0.6rem 0.9rem;
+  font-size: 0.875rem;
   border-left: 3px solid #b23c17;
+  border-radius: calc(var(--raio) - 2px);
   background: color-mix(in srgb, #b23c17 12%, transparent);
 }
 
 .formulario-de-corretor__acoes {
-  grid-column: 1 / -1;
   display: flex;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--borda);
 }
 
-.desativar-corretor__aviso {
-  font-size: 0.85rem;
-  color: #b23c17;
+/* Os dialogos do painel: a edicao do corretor e a desativacao. */
+.dialogo {
+  width: 26rem;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 2rem);
+  margin: auto;
+  padding: 1.25rem;
+  color: var(--texto);
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.dialogo--largo {
+  width: 56rem;
+}
+
+.dialogo::backdrop {
+  background: rgb(0 0 0 / 0.55);
+}
+
+.dialogo p {
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.dialogo__titulo,
+.dialogo p.dialogo__titulo {
+  margin-bottom: 1rem;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.dialogo__acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.dialogo__aviso,
+.dialogo p.dialogo__aviso {
+  margin: 0.75rem 0 0;
+  color: #dc2626;
+}
+
+.botao--perigo {
+  background: #dc2626;
+}
+
+.botao--perigo:hover {
+  background: #b91c1c;
+}
+
+/* A lista */
+.corretores__titulo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.corretores__rolagem {
+  overflow-x: auto;
 }
 
 .lista-de-corretores {
-  display: block;
-  overflow-x: auto;
   width: 100%;
-  margin-top: 1rem;
   border-collapse: collapse;
+  font-size: 0.85rem;
 }
 
 .lista-de-corretores th,
 .lista-de-corretores td {
-  padding: 0.5rem 0.75rem;
+  padding: 0.75rem 1rem;
   text-align: left;
-  white-space: nowrap;
-  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
+  vertical-align: middle;
 }
 
-.lista-de-corretores__inativo {
-  opacity: 0.7;
-}
-
-.lista-de-corretores__rotulo {
-  display: inline-block;
-  margin-right: 0.4rem;
-  padding: 0.1rem 0.5rem;
-  font-size: 0.8rem;
+.lista-de-corretores th {
+  font-size: 0.75rem;
   font-weight: 600;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  color: var(--texto-fraco);
+  background: var(--superficie-2);
+  border-bottom: 1px solid var(--borda);
+}
+
+.lista-de-corretores tbody tr + tr td {
+  border-top: 1px solid var(--borda);
+}
+
+.lista-de-corretores__inativo td {
+  color: var(--texto-fraco);
+}
+
+.lista-de-corretores__nome {
+  display: block;
+  font-weight: 600;
+  color: var(--texto);
+}
+
+.lista-de-corretores__email {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--texto-fraco);
+}
+
+.lista-de-corretores__selos,
+.lista-de-corretores__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.lista-de-corretores__acoes {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+/* O estado vazio de uma lista do painel, dentro do cartao. */
+.estado-vazio-do-painel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 2.5rem 1.5rem;
+  font-size: 0.85rem;
+  text-align: center;
+  color: var(--texto-fraco);
+}
+
+.estado-vazio-do-painel svg {
+  box-sizing: content-box;
+  padding: 0.6rem;
+  margin-bottom: 0.4rem;
+  border: 1px solid var(--borda);
+  border-radius: 50%;
+}
+
+.estado-vazio-do-painel p {
+  max-width: 28rem;
+}
+
+.estado-vazio-do-painel__titulo {
+  font-weight: 600;
+  color: var(--texto);
 }
 
 /* --- Imoveis (TEC-333) ------------------------------------------------------ */

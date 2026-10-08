@@ -2,10 +2,10 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
-import { Vazio } from '@/components/estado/Vazio'
 import { FormularioDeCorretor } from '@/components/FormularioDeCorretor'
 import { ListaDeCorretores } from '@/components/ListaDeCorretores'
 import { SemPermissao } from '@/components/SemPermissao'
+import { Trilha } from '@/components/ui/Trilha'
 import type { Corretor } from '@/lib/corretores'
 import { urlDoLogin } from '@/lib/destino'
 import { paginaInicialDe } from '@/lib/navegacao'
@@ -60,7 +60,17 @@ export default async function PaginaDeCorretores() {
 
   return (
     <main className="painel">
+      <Trilha
+        itens={[
+          { rotulo: 'Administração', href: '/admin' },
+          { rotulo: 'Corretores' },
+        ]}
+      />
       <h1>Corretores</h1>
+      <p className="painel__descricao">
+        Quem recebe os leads, em que especialidades e regiões, e em que horário o agente pode agendar
+        visitas para cada um.
+      </p>
       <FormularioDeCorretor corretor={null} />
       {erro ? (
         <ErroDeCarga
@@ -69,12 +79,7 @@ export default async function PaginaDeCorretores() {
           urlParaTentarDeNovo={ENDERECO}
         />
       ) : null}
-      {corretores && corretores.length === 0 ? (
-        <p>
-          <Vazio texto="Nenhum corretor cadastrado." />
-        </p>
-      ) : null}
-      {corretores && corretores.length > 0 ? <ListaDeCorretores corretores={corretores} /> : null}
+      {corretores ? <ListaDeCorretores corretores={corretores} /> : null}
     </main>
   )
 }

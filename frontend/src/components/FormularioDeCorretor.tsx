@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { Botao } from '@/components/ui/Botao'
+import { Cartao } from '@/components/ui/Cartao'
 import {
   type CampoDeTexto as CampoDeTextoDoFormulario,
   CAPACIDADE_MAXIMA,
@@ -27,20 +29,24 @@ import { registrarAlteracaoNaoSalva } from '@/lib/inatividade'
 const ESPECIALIDADES_ORDENADAS = Object.keys(ESPECIALIDADES) as Especialidade[]
 
 /**
- * Cadastrar e editar corretor no mesmo formulario (D7 do desenho).
+ * Cadastrar e editar corretor com o mesmo formulario (D7 do desenho da
+ * TEC-332).
  *
- * `corretor === null` e o cadastro: `POST` completo pelo `/bff/*`. Com um
- * corretor, e a edicao: `PATCH` so do que mudou -- mesma ideia de
- * `pedidoDaEdicao`/`estaSujo` em `EdicaoDaQualificacao.tsx`, adaptada para os
- * campos do corretor. **Desativar NAO mora aqui** (D5/D7): e
- * `DesativarCorretor.tsx`, um fluxo de confirmacao separado, porque a card
- * pede um texto de confirmacao que este formulario nao tem onde encaixar.
+ * `corretor === null` e o cadastro: `POST` completo pelo `/bff/*`, num cartao
+ * **sempre aberto** (D1 da TEC-397) -- depois de cadastrar, o formulario volta
+ * vazio em vez de fechar. Com um corretor, e a edicao: o botao "Editar" abre
+ * o formulario num `<dialog>` modal (D2 da TEC-397) e manda o `PATCH` so do
+ * que mudou -- mesma ideia de `pedidoDaEdicao`/`estaSujo` em
+ * `EdicaoDaQualificacao.tsx`. **Desativar NAO mora aqui** (D5/D7 da
+ * TEC-332): e `DesativarCorretor.tsx`, um fluxo de confirmacao separado.
  *
  * A validacao de capacidade 1-20 (D3) roda ANTES do `fetch`, porque o teto
  * so existe nesta tela -- o backend so garante `>= 1`.
  */
 export function FormularioDeCorretor({ corretor }: { corretor: Corretor | null }) {
   const router = useRouter()
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const idDoTitulo = useId()
   const [aberto, setAberto] = useState(false)
   const [inicial, setInicial] = useState<Formulario>(() => formularioDe(corretor))
   const [atual, setAtual] = useState<Formulario>(inicial)
@@ -48,8 +54,12 @@ export function FormularioDeCorretor({ corretor }: { corretor: Corretor | null }
   const [recusa, setRecusa] = useState<Recusa>(SEM_RECUSA)
   const [regiaoNova, setRegiaoNova] = useState('')
 
+  // O cadastro nao tem "aberto": esta sempre de pe (D1 da TEC-397).
+  const emEdicao = corretor !== null
+  const visivel = !emEdicao || aberto
+
   const chaveDoAviso = corretor ? `corretor-${corretor.id}` : 'corretor-novo'
-  const sujo = aberto && estaSujo(inicial, atual)
+  const sujo = visivel && estaSujo(inicial, atual)
   useEffect(() => {
     registrarAlteracaoNaoSalva(chaveDoAviso, sujo)
   }, [chaveDoAviso, sujo])
@@ -57,18 +67,36 @@ export function FormularioDeCorretor({ corretor }: { corretor: Corretor | null }
   // continuar dizendo que ha algo a perder.
   useEffect(() => () => registrarAlteracaoNaoSalva(chaveDoAviso, false), [chaveDoAviso])
 
-  function abrir() {
+  // O `<dialog>` so existe enquanto `aberto`; abrir o modal precisa do
+  // elemento ja montado, por isso o efeito e nao o clique.
+  useEffect(() => {
+    if (aberto && dialogRef.current && !dialogRef.current.open) {
+      dialogRef.current.showModal()
+    }
+  }, [aberto])
+
+  function recomecar() {
     const partida = formularioDe(corretor)
     setInicial(partida)
     setAtual(partida)
     setRecusa(SEM_RECUSA)
     setRegiaoNova('')
+  }
+
+  function abrir() {
+    recomecar()
     setAberto(true)
   }
 
   function fechar() {
-    setAberto(false)
-    setRecusa(SEM_RECUSA)
+    if (emEdicao) {
+      dialogRef.current?.close()
+      setAberto(false)
+      setRecusa(SEM_RECUSA)
+      return
+    }
+    // No cadastro, "Cancelar" descarta o que foi digitado (D1 da TEC-397).
+    recomecar()
   }
 
   function mudar(campo: CampoDeTextoDoFormulario, valor: string) {
@@ -148,93 +176,167 @@ export function FormularioDeCorretor({ corretor }: { corretor: Corretor | null }
       return
     }
 
-    setAberto(false)
+    if (emEdicao) {
+      dialogRef.current?.close()
+      setAberto(false)
+    } else {
+      recomecar()
+    }
     router.refresh()
   }
 
-  if (!aberto) {
-    return (
-      <button type="button" onClick={abrir}>
-        {corretor ? 'Editar' : 'Cadastrar corretor'}
-      </button>
-    )
-  }
-
-  return (
+  const formulario = (
     <form className="formulario-de-corretor" onSubmit={salvar} noValidate>
       {recusa.geral && (
         <p className="formulario-de-corretor__aviso" role="alert">
           {recusa.geral}
         </p>
       )}
-      <CampoDeTexto rotulo="Nome" campo="nome" atual={atual} recusa={recusa} mudar={mudar} />
-      <CampoDeTexto rotulo="E-mail" campo="email" atual={atual} recusa={recusa} mudar={mudar} />
-      <CampoDeTexto rotulo="Telefone" campo="telefone" atual={atual} recusa={recusa} mudar={mudar} />
-      <CampoDeTexto rotulo="CRECI" campo="creci" atual={atual} recusa={recusa} mudar={mudar} />
-
-      <CampoDeEspecialidades
-        atual={atual.especialidades}
-        alternar={alternarEspecialidade}
-        erro={recusa.porCampo.especialidades}
-      />
-
-      <CampoDeRegioes
-        regioes={atual.regioesAtuacao}
-        novo={regiaoNova}
-        mudarNovo={setRegiaoNova}
-        adicionar={adicionarRegiao}
-        remover={removerRegiao}
-        erro={recusa.porCampo.regioesAtuacao}
-      />
-
-      <CampoNumerico
-        rotulo="Início do atendimento"
-        campo="horarioInicio"
-        min={HORA_MINIMA}
-        max={HORA_MAXIMA}
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
-      <CampoNumerico
-        rotulo="Fim do atendimento"
-        campo="horarioFim"
-        min={HORA_MINIMA}
-        max={HORA_MAXIMA}
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
-      <CampoNumerico
-        rotulo="Capacidade diária"
-        campo="capacidadeDiaria"
-        min={CAPACIDADE_MINIMA}
-        max={CAPACIDADE_MAXIMA}
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
-
-      <label className="formulario-de-corretor__plantao">
-        <input
-          type="checkbox"
-          checked={atual.plantao}
-          onChange={(evento) =>
-            setAtual((anterior) => ({ ...anterior, plantao: evento.target.checked }))
-          }
+      <div className="formulario-de-corretor__grade">
+        <CampoDeTexto
+          rotulo="Nome"
+          campo="nome"
+          obrigatorio
+          exemplo="Ex.: Carlos Eduardo Silveira"
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
         />
-        Generalista de plantão
-      </label>
+        <CampoDeTexto
+          rotulo="E-mail"
+          campo="email"
+          obrigatorio
+          exemplo="nome@imobiliaria.com"
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+        />
+        <CampoDeTexto
+          rotulo="Telefone"
+          campo="telefone"
+          obrigatorio
+          exemplo="(11) 98765-4321"
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+        />
+        <CampoDeTexto rotulo="CRECI" campo="creci" exemplo="123456-F" atual={atual} recusa={recusa} mudar={mudar} />
+
+        <CampoDeEspecialidades
+          atual={atual.especialidades}
+          alternar={alternarEspecialidade}
+          erro={recusa.porCampo.especialidades}
+        />
+
+        <CampoDeRegioes
+          regioes={atual.regioesAtuacao}
+          novo={regiaoNova}
+          mudarNovo={setRegiaoNova}
+          adicionar={adicionarRegiao}
+          remover={removerRegiao}
+          erro={recusa.porCampo.regioesAtuacao}
+        />
+
+        <CampoNumerico
+          rotulo="Início do atendimento"
+          ajuda="Hora cheia em que a jornada começa."
+          sufixo="h"
+          campo="horarioInicio"
+          min={HORA_MINIMA}
+          max={HORA_MAXIMA}
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+        />
+        <CampoNumerico
+          rotulo="Fim do atendimento"
+          ajuda="Visitas e avisos ao corretor só dentro da jornada."
+          sufixo="h"
+          campo="horarioFim"
+          min={HORA_MINIMA}
+          max={HORA_MAXIMA}
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+        />
+        <CampoNumerico
+          rotulo="Capacidade diária"
+          ajuda={`Máximo de visitas agendadas por dia (${CAPACIDADE_MINIMA} a ${CAPACIDADE_MAXIMA}).`}
+          exemplo="Ex.: 5"
+          campo="capacidadeDiaria"
+          min={CAPACIDADE_MINIMA}
+          max={CAPACIDADE_MAXIMA}
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+        />
+
+        <label className="formulario-de-corretor__plantao">
+          <input
+            type="checkbox"
+            checked={atual.plantao}
+            onChange={(evento) =>
+              setAtual((anterior) => ({ ...anterior, plantao: evento.target.checked }))
+            }
+          />
+          <span>
+            Generalista de plantão
+            <span className="formulario-de-corretor__ajuda">Recebe os leads sem corretor compatível.</span>
+          </span>
+        </label>
+      </div>
 
       <div className="formulario-de-corretor__acoes">
-        <button type="submit" disabled={enviando}>
+        <Botao type="submit" disabled={enviando}>
           {corretor ? 'Salvar' : 'Cadastrar'}
-        </button>
-        <button type="button" onClick={fechar} disabled={enviando}>
+        </Botao>
+        <Botao variante="contorno" onClick={fechar} disabled={enviando}>
           Cancelar
-        </button>
+        </Botao>
       </div>
     </form>
+  )
+
+  if (!emEdicao) {
+    return (
+      <Cartao como="section" aria-labelledby={idDoTitulo} className="cadastro-de-corretor">
+        <div className="cadastro-de-corretor__cabecalho">
+          <h2 id={idDoTitulo}>
+            <span className="cadastro-de-corretor__ponto" aria-hidden="true" />
+            Novo cadastro
+          </h2>
+          <p className="cadastro-de-corretor__legenda">
+            <span aria-hidden="true">*</span> obrigatório
+          </p>
+        </div>
+        {formulario}
+      </Cartao>
+    )
+  }
+
+  return (
+    <>
+      <Botao variante="contorno" tamanho="pequeno" onClick={abrir}>
+        Editar
+      </Botao>
+      {aberto && (
+        <dialog
+          ref={dialogRef}
+          className="dialogo dialogo--largo"
+          aria-labelledby={idDoTitulo}
+          onClose={() => {
+            // Esc fecha o modal sem passar por `fechar` (D2 da TEC-397).
+            setAberto(false)
+            setRecusa(SEM_RECUSA)
+          }}
+        >
+          <h2 id={idDoTitulo} className="dialogo__titulo">
+            Editar corretor
+          </h2>
+          {formulario}
+        </dialog>
+      )}
+    </>
   )
 }
 
@@ -253,23 +355,43 @@ function Erro({ id, texto }: { id: string; texto?: string }) {
   ) : null
 }
 
+/**
+ * O asterisco de obrigatorio sai do CSS (`.rotulo--obrigatorio::after`, D4 da
+ * TEC-397), para nao entrar no nome acessivel: o leitor de tela ouve "Nome"
+ * e o campo leva `aria-required`.
+ */
+function classeDoRotulo(obrigatorio?: boolean) {
+  return obrigatorio ? 'rotulo--obrigatorio' : undefined
+}
+
 function CampoDeTexto({
   rotulo,
   campo,
+  obrigatorio,
+  exemplo,
   atual,
   recusa,
   mudar,
-}: PropsDoCampo & { campo: 'nome' | 'email' | 'telefone' | 'creci' }) {
+}: PropsDoCampo & {
+  campo: 'nome' | 'email' | 'telefone' | 'creci'
+  obrigatorio?: boolean
+  exemplo?: string
+}) {
   const id = useId()
   const erro = recusa.porCampo[campo]
   return (
     <div className="formulario-de-corretor__campo">
-      <label htmlFor={id}>{rotulo}</label>
+      <label htmlFor={id} className={classeDoRotulo(obrigatorio)}>
+        {rotulo}
+      </label>
       <input
         id={id}
+        className="campo"
         type="text"
+        placeholder={exemplo}
         value={atual[campo]}
         onChange={(evento) => mudar(campo, evento.target.value)}
+        aria-required={obrigatorio ? true : undefined}
         aria-invalid={erro ? true : undefined}
         aria-describedby={erro ? `${id}-erro` : undefined}
       />
@@ -289,28 +411,30 @@ function CampoDeEspecialidades({
 }) {
   const id = useId()
   return (
-    <fieldset className="formulario-de-corretor__especialidades">
-      <legend>Especialidades</legend>
-      {ESPECIALIDADES_ORDENADAS.map((especialidade) => (
-        <label key={especialidade}>
-          <input
-            type="checkbox"
-            checked={atual.includes(especialidade)}
-            onChange={() => alternar(especialidade)}
-          />
-          {ESPECIALIDADES[especialidade]}
-        </label>
-      ))}
+    <fieldset className="formulario-de-corretor__especialidades" aria-describedby={erro ? `${id}-erro` : undefined}>
+      <legend className="rotulo--obrigatorio">Especialidades</legend>
+      <div className="formulario-de-corretor__caixa">
+        {ESPECIALIDADES_ORDENADAS.map((especialidade) => (
+          <label key={especialidade}>
+            <input
+              type="checkbox"
+              checked={atual.includes(especialidade)}
+              onChange={() => alternar(especialidade)}
+            />
+            {ESPECIALIDADES[especialidade]}
+          </label>
+        ))}
+      </div>
       <Erro id={`${id}-erro`} texto={erro} />
     </fieldset>
   )
 }
 
 /**
- * Regiao e texto livre, uma por linha/chip (D2 do desenho) -- nao ha
- * `<select>` porque nao existe vocabulario de backend para popular as
+ * Regiao e texto livre, um chip por regiao (D2 do desenho da TEC-332) -- nao
+ * ha `<select>` porque nao existe vocabulario de backend para popular as
  * opcoes. `useId` evita colisao quando varios formularios estao na pagina
- * (a criacao mais uma edicao por linha da lista).
+ * (o cadastro mais uma edicao aberta).
  */
 function CampoDeRegioes({
   regioes,
@@ -329,23 +453,15 @@ function CampoDeRegioes({
 }) {
   const id = useId()
   return (
-    <div className="formulario-de-corretor__regioes">
-      <label htmlFor={id}>Regiões de atuação</label>
-      {regioes.length > 0 && (
-        <ul>
-          {regioes.map((regiao, indice) => (
-            <li key={`${regiao}-${indice}`}>
-              {regiao}{' '}
-              <button type="button" onClick={() => remover(indice)} aria-label={`Remover ${regiao}`}>
-                Remover
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="formulario-de-corretor__campo formulario-de-corretor__regioes">
+      <label htmlFor={id} className="rotulo--obrigatorio">
+        Regiões de atuação
+      </label>
       <input
         id={id}
+        className="campo"
         type="text"
+        placeholder="Ex.: Pinheiros, Itaim Bibi"
         value={novo}
         onChange={(evento) => mudarNovo(evento.target.value)}
         onKeyDown={(evento) => {
@@ -354,17 +470,39 @@ function CampoDeRegioes({
             adicionar()
           }
         }}
+        aria-invalid={erro ? true : undefined}
+        aria-describedby={erro ? `${id}-erro` : undefined}
       />
-      <button type="button" onClick={adicionar}>
-        Adicionar região
-      </button>
+      <Botao variante="contorno" onClick={adicionar}>
+        <span aria-hidden="true">+</span> Adicionar região
+      </Botao>
       <Erro id={`${id}-erro`} texto={erro} />
+      {regioes.length > 0 && (
+        <ul className="chips">
+          {regioes.map((regiao, indice) => (
+            <li key={`${regiao}-${indice}`} className="chip">
+              {regiao}
+              <button
+                type="button"
+                className="chip__remover"
+                onClick={() => remover(indice)}
+                aria-label={`Remover ${regiao}`}
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
 
 function CampoNumerico({
   rotulo,
+  ajuda,
+  sufixo,
+  exemplo,
   campo,
   min,
   max,
@@ -372,6 +510,9 @@ function CampoNumerico({
   recusa,
   mudar,
 }: PropsDoCampo & {
+  ajuda?: string
+  sufixo?: string
+  exemplo?: string
   campo: 'horarioInicio' | 'horarioFim' | 'capacidadeDiaria'
   min: number
   max: number
@@ -380,20 +521,33 @@ function CampoNumerico({
   const erro = recusa.porCampo[campo]
   return (
     <div className="formulario-de-corretor__campo">
-      <label htmlFor={id}>{rotulo}</label>
-      <input
-        id={id}
-        type="number"
-        inputMode="numeric"
-        min={min}
-        max={max}
-        step={1}
-        value={atual[campo]}
-        onChange={(evento) => mudar(campo, evento.target.value)}
-        aria-invalid={erro ? true : undefined}
-        aria-describedby={erro ? `${id}-erro` : undefined}
-      />
+      <label htmlFor={id} className="rotulo--obrigatorio">
+        {rotulo}
+      </label>
+      <span className={sufixo ? 'campo-com-unidade campo-com-unidade--sufixo' : 'campo-com-unidade'}>
+        <input
+          id={id}
+          className="campo"
+          type="number"
+          inputMode="numeric"
+          min={min}
+          max={max}
+          step={1}
+          placeholder={exemplo}
+          value={atual[campo]}
+          onChange={(evento) => mudar(campo, evento.target.value)}
+          aria-required
+          aria-invalid={erro ? true : undefined}
+          aria-describedby={erro ? `${id}-erro` : undefined}
+        />
+        {sufixo && (
+          <span className="campo-com-unidade__sufixo" aria-hidden="true">
+            {sufixo}
+          </span>
+        )}
+      </span>
       <Erro id={`${id}-erro`} texto={erro} />
+      {ajuda && <span className="formulario-de-corretor__ajuda">{ajuda}</span>}
     </div>
   )
 }
