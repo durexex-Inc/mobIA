@@ -2868,6 +2868,17 @@ a {
   color: var(--texto-fraco);
 }
 
+.lista-de-imoveis__mais {
+  display: flex;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.lista-de-imoveis__mais .botao:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
+}
+
 .estado-vazio-do-painel .botao {
   margin-top: 0.75rem;
 }

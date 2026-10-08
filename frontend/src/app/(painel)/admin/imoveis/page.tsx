@@ -7,7 +7,7 @@ import { ImportarImoveis } from '@/components/ImportarImoveis'
 import { ListaDeImoveis } from '@/components/ListaDeImoveis'
 import { SemPermissao } from '@/components/SemPermissao'
 import { Trilha } from '@/components/ui/Trilha'
-import type { Imovel } from '@/lib/imoveis'
+import { type Imovel, paginasDaUrl, urlDaListaDeImoveis } from '@/lib/imoveis'
 import type { Importacao } from '@/lib/importacaoDeImoveis'
 import { urlDoLogin } from '@/lib/destino'
 import { paginaInicialDe } from '@/lib/navegacao'
@@ -19,8 +19,6 @@ import { buscarImoveis, ErroDeImoveis } from '@/lib/servidor/imoveis'
 export const metadata: Metadata = {
   title: 'Imóveis — mobIA',
 }
-
-const ENDERECO = '/admin/imoveis'
 
 /**
  * Cadastrar, editar e retirar imoveis, com aviso de reindexacao (TEC-333).
@@ -39,17 +37,27 @@ const ENDERECO = '/admin/imoveis'
  * proposito central desta tela, a importacao e um extra -- `ImportarImoveis`
  * recebe `null` e a tela funciona igual, so sem a importacao mais recente
  * pre-carregada.
+ *
+ * **`?paginas=` diz quantas paginas da lista estao abertas** (TEC-401, D1):
+ * recarregar ou compartilhar o endereco mostra as mesmas paginas.
  */
-export default async function PaginaDeImoveis() {
-  const { sessao, quem, permitido } = await exigirPermissao(ENDERECO, (p) => p.has('GERIR_CATALOGO'))
+export default async function PaginaDeImoveis({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+} = {}) {
+  const paginas = paginasDaUrl((await searchParams) ?? {})
+  const endereco = urlDaListaDeImoveis(paginas)
+  const { sessao, quem, permitido } = await exigirPermissao(endereco, (p) => p.has('GERIR_CATALOGO'))
   if (!permitido) {
     return <SemPermissao papel={quem.papel} paginaInicial={paginaInicialDe(quem.permissoes)} />
   }
 
   let imoveis: Imovel[] | null = null
+  let haMais = false
   let erro: ErroDeImoveis | null = null
   try {
-    imoveis = await buscarImoveis(sessao.acesso)
+    ;({ itens: imoveis, haMais } = await buscarImoveis(sessao.acesso, paginas))
   } catch (falha) {
     // Backend fora do ar faz o `fetch` LANCAR: sem resposta nao ha status
     // nem codigo para o suporte, como na fila do titular e em corretores.
@@ -60,7 +68,7 @@ export default async function PaginaDeImoveis() {
   // engoliria.
   if (erro?.status === 401) {
     await apagarSessaoDaRequisicao()
-    redirect(urlDoLogin({ returnTo: ENDERECO, erro: 'sessao_expirada' }))
+    redirect(urlDoLogin({ returnTo: endereco, erro: 'sessao_expirada' }))
   }
 
   // A recusa do backend vence a permissao que o painel leu (TEC-312, D4).
@@ -95,10 +103,10 @@ export default async function PaginaDeImoveis() {
         <ErroDeCarga
           mensagem="Não foi possível carregar os imóveis."
           requestId={erro.requestId}
-          urlParaTentarDeNovo={ENDERECO}
+          urlParaTentarDeNovo={endereco}
         />
       ) : null}
-      {imoveis ? <ListaDeImoveis imoveis={imoveis} /> : null}
+      {imoveis ? <ListaDeImoveis imoveis={imoveis} paginas={paginas} haMais={haMais} /> : null}
     </main>
   )
 }

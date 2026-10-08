@@ -4,11 +4,14 @@ import {
   estaSujo,
   formularioDe,
   formularioValido,
+  MAXIMO_DE_PAGINAS,
+  paginasDaUrl,
   type Imovel,
   pedidoDeCadastro,
   pedidoDeEdicao,
   recusaDe,
   totalMensalEstimado,
+  urlDaListaDeImoveis,
   validarFormulario,
 } from './imoveis'
 
@@ -275,5 +278,25 @@ describe('recusaDe (D2)', () => {
     expect(recusaDe(403, null).geral).toMatch(/permissão/)
     expect(recusaDe(404, null).geral).toMatch(/não existe mais/)
     expect(recusaDe(500, null).geral).toBe('Não foi possível salvar. Tente de novo.')
+  })
+})
+
+describe('paginasDaUrl / urlDaListaDeImoveis (TEC-401)', () => {
+  it('sem parametro, ou invalido, e uma pagina', () => {
+    expect(paginasDaUrl({})).toBe(1)
+    expect(paginasDaUrl({ paginas: 'abc' })).toBe(1)
+    expect(paginasDaUrl({ paginas: '0' })).toBe(1)
+    expect(paginasDaUrl({ paginas: '2.5' })).toBe(1)
+  })
+
+  it('le o numero, e corta no teto (D3)', () => {
+    expect(paginasDaUrl({ paginas: '3' })).toBe(3)
+    expect(paginasDaUrl({ paginas: ['4', '9'] })).toBe(4)
+    expect(paginasDaUrl({ paginas: '999' })).toBe(MAXIMO_DE_PAGINAS)
+  })
+
+  it('a primeira pagina nao leva parametro', () => {
+    expect(urlDaListaDeImoveis(1)).toBe('/admin/imoveis')
+    expect(urlDaListaDeImoveis(3)).toBe('/admin/imoveis?paginas=3')
   })
 })

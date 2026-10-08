@@ -1,4 +1,4 @@
-import { type Imovel, STATUS_DO_IMOVEL, TIPOS_DE_IMOVEL } from '@/lib/imoveis'
+import { type Imovel, STATUS_DO_IMOVEL, TIPOS_DE_IMOVEL, urlDaListaDeImoveis } from '@/lib/imoveis'
 import Link from 'next/link'
 
 import { IrParaCadastroDeImovel } from '@/components/FormularioDeImovel'
@@ -14,13 +14,27 @@ import { Selo } from '@/components/ui/Selo'
  * em `ListaDeCorretores.tsx`. Editar leva a pagina do imovel
  * (`admin/imoveis/[id]`, TEC-400); retirar so aparece em linha que nao esta `INATIVO`, porque nao
  * ha reativar por botao dedicado (D4) -- reativar e editar o Status.
+ *
+ * **"Carregar mais" e um link para `paginas + 1`** (TEC-401): quem busca as
+ * paginas e o Server Component, e a tela so diz quantos imoveis estao
+ * carregados -- a API nao devolve total (D4).
  */
-export function ListaDeImoveis({ imoveis }: { imoveis: Imovel[] }) {
+export function ListaDeImoveis({
+  imoveis,
+  paginas = 1,
+  haMais = false,
+}: {
+  imoveis: Imovel[]
+  paginas?: number
+  haMais?: boolean
+}) {
   return (
     <section aria-labelledby="imoveis-cadastrados" className="secao">
       <div className="secao__cabecalho">
         <h2 id="imoveis-cadastrados">Imóveis cadastrados</h2>
-        <p className="secao__total">Total: {imoveis.length}</p>
+        <p className="secao__total">
+          {imoveis.length} {imoveis.length === 1 ? 'imóvel carregado' : 'imóveis carregados'}
+        </p>
       </div>
       <Cartao>
         {imoveis.length === 0 ? (
@@ -92,6 +106,17 @@ export function ListaDeImoveis({ imoveis }: { imoveis: Imovel[] }) {
           </div>
         )}
       </Cartao>
+      {haMais && (
+        <p className="lista-de-imoveis__mais">
+          <Link
+            href={urlDaListaDeImoveis(paginas + 1)}
+            scroll={false}
+            className="botao botao--contorno botao--pequeno"
+          >
+            Carregar mais
+          </Link>
+        </p>
+      )}
     </section>
   )
 }

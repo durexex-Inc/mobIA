@@ -44,10 +44,10 @@ describe('buscarImoveis', () => {
     const api = vi.fn().mockResolvedValue(responde({ itens: [IMOVEL], proximoCursor: null }))
     vi.stubGlobal('fetch', api)
 
-    const imoveis = await buscarImoveis('jwt')
+    const { itens } = await buscarImoveis('jwt')
 
     expect(String(api.mock.calls[0][0])).toBe('http://backend:8000/api/v1/imoveis')
-    expect(imoveis).toEqual([IMOVEL])
+    expect(itens).toEqual([IMOVEL])
   })
 
   it('manda o access token como Bearer', async () => {
@@ -59,15 +59,49 @@ describe('buscarImoveis', () => {
     expect(api.mock.calls[0][1].headers.Authorization).toBe('Bearer jwt-do-admin')
   })
 
-  it('devolve so os itens, sem o proximoCursor (D6 -- sem paginacao nesta versao)', async () => {
+  it('uma pagina so, por padrao: com cursor sobrando, diz que ha mais (TEC-401)', async () => {
     const api = vi
       .fn()
       .mockResolvedValue(responde({ itens: [IMOVEL], proximoCursor: 'AP-050' }))
     vi.stubGlobal('fetch', api)
 
-    const imoveis = await buscarImoveis('jwt')
+    const resultado = await buscarImoveis('jwt')
 
-    expect(imoveis).toEqual([IMOVEL])
+    expect(api).toHaveBeenCalledOnce()
+    expect(resultado).toEqual({ itens: [IMOVEL], haMais: true })
+  })
+
+  it('percorre as paginas em sequencia, cada uma pelo cursor da anterior (TEC-401, D2)', async () => {
+    const api = vi
+      .fn()
+      .mockResolvedValueOnce(responde({ itens: [IMOVEL], proximoCursor: 'c-1' }))
+      .mockResolvedValueOnce(responde({ itens: [{ ...IMOVEL, id: 'i-2' }], proximoCursor: 'c-2' }))
+      .mockResolvedValueOnce(responde({ itens: [{ ...IMOVEL, id: 'i-3' }], proximoCursor: 'c-3' }))
+    vi.stubGlobal('fetch', api)
+
+    const { itens, haMais } = await buscarImoveis('jwt', 3)
+
+    expect(api.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('cursor'))).toEqual([
+      null,
+      'c-1',
+      'c-2',
+    ])
+    expect(itens.map((i) => i.id)).toEqual(['i-1', 'i-2', 'i-3'])
+    expect(haMais).toBe(true)
+  })
+
+  it('para quando a API nao devolve mais cursor, mesmo pedindo mais paginas', async () => {
+    const api = vi
+      .fn()
+      .mockResolvedValueOnce(responde({ itens: [IMOVEL], proximoCursor: 'c-1' }))
+      .mockResolvedValueOnce(responde({ itens: [{ ...IMOVEL, id: 'i-2' }], proximoCursor: null }))
+    vi.stubGlobal('fetch', api)
+
+    const { itens, haMais } = await buscarImoveis('jwt', 5)
+
+    expect(api).toHaveBeenCalledTimes(2)
+    expect(itens).toHaveLength(2)
+    expect(haMais).toBe(false)
   })
 
   it('recusa do backend lanca ErroDeImoveis com status e requestId', async () => {
