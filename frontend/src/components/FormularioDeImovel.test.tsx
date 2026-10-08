@@ -51,7 +51,6 @@ function digitar(rotulo: string, valor: string) {
 }
 
 async function preencherCadastroValido() {
-  await clicar('Cadastrar imóvel')
   digitar('Código', 'AP-002')
   digitar('Título', 'Casa no bairro Bela Vista')
   digitar('Descrição', 'Casa térrea com quintal')
@@ -76,11 +75,18 @@ describe('FormularioDeImovel', () => {
     api = vi.fn(async () => responde({ ...IMOVEL, id: 'i-novo' }, 201))
     vi.stubGlobal('fetch', api)
     refresh.mockClear()
+    // jsdom nao implementa o modal; a edicao abre num `<dialog>` (D2 da TEC-398).
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.setAttribute('open', '')
+    }
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      this.removeAttribute('open')
+    }
   })
   afterEach(() => vi.unstubAllGlobals())
 
   describe('cenario: cadastrar imovel valido, com todos os obrigatorios (D1)', () => {
-    it('manda o POST completo pelo proxy e fecha o formulario', async () => {
+    it('manda o POST completo pelo proxy e volta o formulario vazio', async () => {
       render(<FormularioDeImovel imovel={null} />)
 
       await preencherCadastroValido()
@@ -112,7 +118,9 @@ describe('FormularioDeImovel', () => {
         caracteristicas: [],
       })
       expect(refresh).toHaveBeenCalledOnce()
-      expect(screen.queryByRole('button', { name: 'Cadastrar' })).toBeNull()
+      // O cadastro fica de pe e volta vazio (D1 da TEC-398).
+      expect(screen.getByRole('button', { name: 'Cadastrar' })).toBeInTheDocument()
+      expect(screen.getByLabelText('Código')).toHaveValue('')
     })
   })
 
@@ -132,8 +140,7 @@ describe('FormularioDeImovel', () => {
   describe('cenario: operacao decide o campo de preco (D1)', () => {
     it('Aluguel mostra so o preco de aluguel', async () => {
       render(<FormularioDeImovel imovel={null} />)
-      await clicar('Cadastrar imóvel')
-      digitar('Operação', 'ALUGUEL')
+          digitar('Operação', 'ALUGUEL')
 
       expect(screen.queryByLabelText('Preço de venda (R$)')).toBeNull()
       expect(screen.getByLabelText('Preço de aluguel (R$)')).toBeInTheDocument()
@@ -141,8 +148,7 @@ describe('FormularioDeImovel', () => {
 
     it('Ambos mostra os dois precos', async () => {
       render(<FormularioDeImovel imovel={null} />)
-      await clicar('Cadastrar imóvel')
-      digitar('Operação', 'AMBOS')
+          digitar('Operação', 'AMBOS')
 
       expect(screen.getByLabelText('Preço de venda (R$)')).toBeInTheDocument()
       expect(screen.getByLabelText('Preço de aluguel (R$)')).toBeInTheDocument()
@@ -224,8 +230,7 @@ describe('FormularioDeImovel', () => {
   describe('pre-visualizar card (TEC-336, D2)', () => {
     it('nao existe no cadastro -- so ha imovel salvo na edicao', async () => {
       render(<FormularioDeImovel imovel={null} />)
-      await clicar('Cadastrar imóvel')
-
+    
       expect(screen.queryByRole('button', { name: 'Pré-visualizar card' })).toBeNull()
     })
 
@@ -257,6 +262,34 @@ describe('FormularioDeImovel', () => {
 
       await clicar('Cancelar')
       expect(haAlteracaoNaoSalva()).toBe(false)
+    })
+  })
+
+  describe('o cadastro sempre aberto e a edicao em modal (TEC-398, D1/D2)', () => {
+    it('o cadastro aparece sem clique, no cartao "Cadastrar novo imóvel"', () => {
+      render(<FormularioDeImovel imovel={null} />)
+
+      expect(screen.getByRole('region', { name: 'Cadastrar novo imóvel' })).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: 'Código' })).toHaveAttribute('aria-required', 'true')
+      expect(screen.getByRole('textbox', { name: 'Condomínio (R$)' })).not.toHaveAttribute('aria-required')
+    })
+
+    it('"Cancelar" no cadastro limpa o que foi digitado, sem chamar a API', async () => {
+      render(<FormularioDeImovel imovel={null} />)
+
+      digitar('Título', 'Casa no bairro Bela Vista')
+      await clicar('Cancelar')
+
+      expect(screen.getByLabelText('Título')).toHaveValue('')
+      expect(api).not.toHaveBeenCalled()
+    })
+
+    it('"Editar" abre o modal "Editar imóvel"', async () => {
+      render(<FormularioDeImovel imovel={IMOVEL} />)
+
+      await clicar('Editar')
+
+      expect(screen.getByRole('dialog', { name: 'Editar imóvel' })).toHaveAttribute('open')
     })
   })
 })

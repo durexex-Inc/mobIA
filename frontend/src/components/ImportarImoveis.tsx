@@ -3,8 +3,15 @@
 import { type ChangeEvent, useId, useRef, useState } from 'react'
 
 import { AcompanharImportacao } from '@/components/AcompanharImportacao'
+import { Botao } from '@/components/ui/Botao'
+import { Cartao } from '@/components/ui/Cartao'
+import { Selo } from '@/components/ui/Selo'
 import { previaDoCsv, type PreviaDoCsv } from '@/lib/csv'
-import { TETO_DE_UPLOAD_EM_BYTES, type Importacao } from '@/lib/importacaoDeImoveis'
+import {
+  COLUNAS_OBRIGATORIAS_DO_CSV,
+  TETO_DE_UPLOAD_EM_BYTES,
+  type Importacao,
+} from '@/lib/importacaoDeImoveis'
 
 const LIMITE_EM_MB = TETO_DE_UPLOAD_EM_BYTES / (1024 * 1024)
 const MENSAGEM_DE_ARQUIVO_GRANDE = `O arquivo passa de ${LIMITE_EM_MB} MB; use a CLI de seed.`
@@ -110,8 +117,14 @@ export function ImportarImoveis({ importacaoInicial }: { importacaoInicial: Impo
   }
 
   return (
-    <section className="importar-imoveis">
-      <h2>Importar imóveis</h2>
+    <Cartao como="section" aria-labelledby={`${inputId}-titulo`} className="importar-imoveis">
+      <div className="importar-imoveis__cabecalho">
+        <div>
+          <h2 id={`${inputId}-titulo`}>Importar imóveis</h2>
+          <p className="importar-imoveis__subtitulo">Cadastro e atualização em lote por planilha CSV.</p>
+        </div>
+        <Selo>CSV, até {LIMITE_EM_MB} MB</Selo>
+      </div>
 
       <div className="importar-imoveis__campo">
         <label htmlFor={inputId}>Arquivo CSV</label>
@@ -122,7 +135,17 @@ export function ImportarImoveis({ importacaoInicial }: { importacaoInicial: Impo
           accept=".csv"
           onChange={selecionar}
           disabled={enviando}
+          aria-describedby={`${inputId}-colunas`}
         />
+        <p id={`${inputId}-colunas`} className="importar-imoveis__colunas">
+          O cabeçalho precisa ter as colunas{' '}
+          {COLUNAS_OBRIGATORIAS_DO_CSV.map((coluna, indice) => (
+            <span key={coluna}>
+              <code>{coluna}</code>
+              {indice < COLUNAS_OBRIGATORIAS_DO_CSV.length - 1 ? ', ' : '.'}
+            </span>
+          ))}
+        </p>
       </div>
 
       {erroDeSelecao && (
@@ -139,33 +162,35 @@ export function ImportarImoveis({ importacaoInicial }: { importacaoInicial: Impo
       {previa && previa.colunas.length > 0 && (
         <div className="importar-imoveis__previa">
           <p>Prévia das 10 primeiras linhas:</p>
-          <table>
-            <thead>
-              <tr>
-                {previa.colunas.map((coluna, indice) => (
-                  <th key={`${coluna}-${indice}`}>{coluna}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {previa.linhas.map((linha, indiceDaLinha) => (
-                <tr key={indiceDaLinha}>
-                  {linha.map((valor, indiceDaColuna) => (
-                    <td key={indiceDaColuna}>{valor}</td>
+          <div className="importar-imoveis__rolagem">
+            <table>
+              <thead>
+                <tr>
+                  {previa.colunas.map((coluna, indice) => (
+                    <th key={`${coluna}-${indice}`}>{coluna}</th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <button type="button" onClick={confirmar} disabled={enviando}>
+              </thead>
+              <tbody>
+                {previa.linhas.map((linha, indiceDaLinha) => (
+                  <tr key={indiceDaLinha}>
+                    {linha.map((valor, indiceDaColuna) => (
+                      <td key={indiceDaColuna}>{valor}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Botao onClick={confirmar} disabled={enviando}>
             Confirmar importação
-          </button>
+          </Botao>
         </div>
       )}
 
       {importacaoAtual && (
         <AcompanharImportacao key={importacaoAtual.importacaoId} importacaoInicial={importacaoAtual} />
       )}
-    </section>
+    </Cartao>
   )
 }

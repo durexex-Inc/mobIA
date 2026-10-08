@@ -126,7 +126,7 @@ describe('PaginaDeImoveis (TEC-333)', () => {
     render(await PaginaDeImoveis())
 
     expect(screen.getByRole('heading', { name: 'Imóveis' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Cadastrar imóvel' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Cadastrar novo imóvel' })).toBeInTheDocument()
     expect(screen.getByRole('table')).toBeInTheDocument()
     expect(screen.getByText('Apartamento no Centro')).toBeInTheDocument()
   })

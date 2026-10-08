@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { Botao } from '@/components/ui/Botao'
 import type { Imovel } from '@/lib/imoveis'
 
 const TEXTO_DA_CONFIRMACAO =
@@ -67,22 +68,22 @@ export function RetirarImovel({ imovel }: { imovel: Imovel }) {
 
   return (
     <>
-      <button type="button" onClick={abrir}>
+      <Botao variante="fantasma" tamanho="pequeno" onClick={abrir}>
         Retirar das buscas
-      </button>
-      <dialog ref={dialogRef} className="retirar-imovel">
-        <p>Retirar {imovel.titulo} das buscas?</p>
+      </Botao>
+      <dialog ref={dialogRef} className="dialogo">
+        <p className="dialogo__titulo">Retirar {imovel.titulo} das buscas?</p>
         <p>{TEXTO_DA_CONFIRMACAO}</p>
-        <div>
-          <button type="button" onClick={fechar} disabled={enviando}>
+        <div className="dialogo__acoes">
+          <Botao variante="contorno" onClick={fechar} disabled={enviando}>
             Cancelar
-          </button>
-          <button type="button" onClick={confirmar} disabled={enviando}>
+          </Botao>
+          <Botao className="botao--perigo" onClick={confirmar} disabled={enviando}>
             Confirmar retirada
-          </button>
+          </Botao>
         </div>
         {aviso && (
-          <p role="alert" className="retirar-imovel__aviso">
+          <p role="alert" className="dialogo__aviso">
             {aviso}
           </p>
         )}
