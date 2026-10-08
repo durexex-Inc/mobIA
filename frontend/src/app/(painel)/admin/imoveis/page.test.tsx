@@ -131,6 +131,44 @@ describe('PaginaDeImoveis (TEC-333)', () => {
     expect(screen.getByText('Apartamento no Centro')).toBeInTheDocument()
   })
 
+  it('?paginas=2 abre duas paginas, a segunda pelo cursor da primeira (TEC-401)', async () => {
+    const chamadas = vi.fn<(url: URL | string) => Promise<Response>>(async (url) => {
+      const endereco = new URL(String(url))
+      if (endereco.pathname === '/api/v1/auth/me') {
+        return new Response(
+          JSON.stringify({ usuarioId: 'u-1', papel: 'ADMIN', corretorId: null, permissoes: PERMISSOES.ADMIN }),
+        )
+      }
+      if (endereco.pathname === '/api/v1/imoveis/importacoes') {
+        return new Response(JSON.stringify({ itens: [] }))
+      }
+      const cursor = endereco.searchParams.get('cursor')
+      const corpo = cursor
+        ? { itens: [imovel({ id: 'i-2', titulo: 'Casa na Lagoa' })], proximoCursor: 'c-2' }
+        : { itens: [imovel()], proximoCursor: 'c-1' }
+      return new Response(JSON.stringify(corpo))
+    })
+    vi.stubGlobal('fetch', chamadas)
+
+    render(await PaginaDeImoveis({ searchParams: Promise.resolve({ paginas: '2' }) }))
+
+    expect(screen.getByText('Apartamento no Centro')).toBeInTheDocument()
+    expect(screen.getByText('Casa na Lagoa')).toBeInTheDocument()
+    expect(screen.getByText('2 imóveis carregados')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Carregar mais' })).toHaveAttribute(
+      'href',
+      '/admin/imoveis?paginas=3',
+    )
+  })
+
+  it('a ultima pagina nao oferece "Carregar mais"', async () => {
+    api('ADMIN', { corpo: { itens: [imovel()], proximoCursor: null } })
+
+    render(await PaginaDeImoveis())
+
+    expect(screen.queryByRole('link', { name: 'Carregar mais' })).toBeNull()
+  })
+
   it('lista vazia diz que nao ha imovel cadastrado', async () => {
     api('ADMIN', { corpo: { itens: [], proximoCursor: null } })
 

@@ -435,3 +435,29 @@ export function recusaDe(status: number, detail: unknown): Recusa {
 }
 
 export { SEM_ERRO as SEM_RECUSA }
+
+/**
+ * Quantas paginas da lista a tela pode abrir de uma vez (D3 da TEC-401): um
+ * endereco editado a mao nao dispara centenas de consultas encadeadas. 20
+ * paginas de 50 sao 1000 imoveis, quase o dobro do catalogo do seed.
+ */
+export const MAXIMO_DE_PAGINAS = 20
+
+/**
+ * Quantas paginas a URL pede (`?paginas=`, D1 da TEC-401). Ausente, nao
+ * inteiro ou menor que 1 e 1; acima do teto, o teto.
+ */
+export function paginasDaUrl(parametros: Record<string, string | string[] | undefined>): number {
+  const bruto = Array.isArray(parametros.paginas) ? parametros.paginas[0] : parametros.paginas
+  const numero = Number(bruto)
+  if (!Number.isInteger(numero) || numero < 1) {
+    return 1
+  }
+  return Math.min(numero, MAXIMO_DE_PAGINAS)
+}
+
+/** O endereco da lista com `paginas` abertas; a primeira nao leva parametro. */
+export function urlDaListaDeImoveis(paginas: number): string {
+  return paginas > 1 ? `/admin/imoveis?paginas=${paginas}` : '/admin/imoveis'
+}
+
