@@ -1,10 +1,13 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { FotosDoImovel } from '@/components/FotosDoImovel'
 import { PreviewDoCard } from '@/components/PreviewDoCard'
+import { Botao } from '@/components/ui/Botao'
+import { CampoDeSelecao as Selecao } from '@/components/ui/CampoDeSelecao'
+import { Cartao } from '@/components/ui/Cartao'
 import {
   type CampoDeTexto as CampoDeTextoDoFormulario,
   estaSujo,
@@ -36,24 +39,35 @@ const AVISO_REINDEXA =
 const AVISO_NAO_REINDEXA = 'Alteração salva; não é necessário reindexar.'
 
 /**
- * Cadastrar e editar imovel no mesmo formulario (D1, D2, D3, D5 do desenho).
+ * O `id` do campo "Código" do cadastro: "Cadastrar primeiro imovel", no
+ * estado vazio da lista, leva o foco para ele (D5 da TEC-398).
+ */
+export const ID_DO_CODIGO_NO_CADASTRO = 'cadastro-de-imovel-codigo'
+
+/**
+ * Cadastrar e editar imovel no mesmo formulario (D1, D2, D3, D5 do desenho da
+ * TEC-333).
  *
- * `imovel === null` e o cadastro: `POST` completo pelo `/bff/*`. Com um
- * imovel, e a edicao: `PATCH` so do que mudou. **`codigo` fica desabilitado
- * na edicao** (D5) -- o backend recusa `PATCH` que o mude com
- * `422 codigo_imutavel`. **Retirar NAO mora aqui** (D4): e
+ * `imovel === null` e o cadastro: `POST` completo pelo `/bff/*`, num cartao
+ * **sempre aberto** (D1 da TEC-398) -- depois de cadastrar, o formulario volta
+ * vazio. Com um imovel, e a edicao: o botao "Editar" abre o formulario num
+ * `<dialog>` modal (D2 da TEC-398) e manda o `PATCH` so do que mudou.
+ * **`codigo` fica desabilitado na edicao** (D5) -- o backend recusa `PATCH`
+ * que o mude com `422 codigo_imutavel`. **Retirar NAO mora aqui** (D4): e
  * `RetirarImovel.tsx`, um fluxo de confirmacao separado.
  *
  * **O aviso de reindexacao (D3) so aparece depois de um `PATCH` bem
  * sucedido**, e le o campo `reindexa` da resposta sem calcular nada por
- * conta propria -- o `POST` de criacao nao devolve esse campo, e por isso a
- * criacao fecha o formulario como sempre, sem aviso.
+ * conta propria -- o `POST` de criacao nao devolve esse campo, e por isso o
+ * cadastro so volta vazio, sem aviso.
  *
  * **O erro do backend e mostrado inteiro, como veio** (D2): a resposta de
  * recusa e uma `string` so, nao um erro por campo.
  */
 export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
   const router = useRouter()
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const idDoTitulo = useId()
   const [aberto, setAberto] = useState(false)
   const [inicial, setInicial] = useState<Formulario>(() => formularioDe(imovel))
   const [atual, setAtual] = useState<Formulario>(inicial)
@@ -65,8 +79,12 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
   // `onFotosMudaram` atualiza aqui direto, sem esperar o `router.refresh()`.
   const [fotos, setFotos] = useState<string[]>(() => imovel?.fotos ?? [])
 
+  // O cadastro nao tem "aberto": esta sempre de pe (D1 da TEC-398).
+  const emEdicao = imovel !== null
+  const visivel = !emEdicao || aberto
+
   const chaveDoAviso = imovel ? `imovel-${imovel.id}` : 'imovel-novo'
-  const sujo = aberto && estaSujo(inicial, atual)
+  const sujo = visivel && estaSujo(inicial, atual)
   useEffect(() => {
     registrarAlteracaoNaoSalva(chaveDoAviso, sujo)
   }, [chaveDoAviso, sujo])
@@ -74,7 +92,15 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
   // continuar dizendo que ha algo a perder.
   useEffect(() => () => registrarAlteracaoNaoSalva(chaveDoAviso, false), [chaveDoAviso])
 
-  function abrir() {
+  // O `<dialog>` so existe enquanto `aberto`; abrir o modal precisa do
+  // elemento ja montado, por isso o efeito e nao o clique.
+  useEffect(() => {
+    if (aberto && dialogRef.current && !dialogRef.current.open) {
+      dialogRef.current.showModal()
+    }
+  }, [aberto])
+
+  function recomecar() {
     const partida = formularioDe(imovel)
     setInicial(partida)
     setAtual(partida)
@@ -82,13 +108,23 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
     setCaracteristicaNova('')
     setAvisoDeReindexacao(null)
     setFotos(imovel?.fotos ?? [])
+  }
+
+  function abrir() {
+    recomecar()
     setAberto(true)
   }
 
   function fechar() {
-    setAberto(false)
-    setRecusa(SEM_RECUSA)
-    setAvisoDeReindexacao(null)
+    if (emEdicao) {
+      dialogRef.current?.close()
+      setAberto(false)
+      setRecusa(SEM_RECUSA)
+      setAvisoDeReindexacao(null)
+      return
+    }
+    // No cadastro, "Cancelar" descarta o que foi digitado (D1 da TEC-398).
+    recomecar()
   }
 
   function mudar(campo: CampoDeTextoDoFormulario, valor: string) {
@@ -166,27 +202,22 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
     router.refresh()
 
     if (!imovel) {
-      // Criacao: sem `reindexa` na resposta (D3), nada a avisar -- fecha como
-      // o cadastro de corretor fecha.
-      setAberto(false)
+      // Criacao: sem `reindexa` na resposta (D3), nada a avisar -- o cadastro
+      // volta vazio, pronto para o proximo (D1 da TEC-398).
+      recomecar()
       return
     }
 
-    // Edicao: o formulario permanece aberto so para mostrar o aviso fixo
-    // (D3), e a linha de base passa a ser o que acabou de ser salvo.
+    // Edicao: o modal permanece aberto so para mostrar o aviso fixo (D3), e a
+    // linha de base passa a ser o que acabou de ser salvo.
     setInicial(atual)
     setAvisoDeReindexacao(dados.reindexa ? AVISO_REINDEXA : AVISO_NAO_REINDEXA)
   }
 
-  if (!aberto) {
-    return (
-      <button type="button" onClick={abrir}>
-        {imovel ? 'Editar' : 'Cadastrar imóvel'}
-      </button>
-    )
-  }
+  const vendaVisivel = atual.operacao === 'VENDA' || atual.operacao === 'AMBOS'
+  const aluguelVisivel = atual.operacao === 'ALUGUEL' || atual.operacao === 'AMBOS'
 
-  return (
+  const formulario = (
     <form className="formulario-de-imovel" onSubmit={salvar} noValidate>
       {recusa.geral && (
         <p className="formulario-de-imovel__aviso" role="alert">
@@ -199,113 +230,125 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
         </p>
       )}
 
-      <CampoDeTexto
-        rotulo="Código"
-        campo="codigo"
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-        disabled={imovel !== null}
-      />
-      <CampoDeTexto rotulo="Título" campo="titulo" atual={atual} recusa={recusa} mudar={mudar} />
-      <CampoDeTexto
-        rotulo="Descrição"
-        campo="descricao"
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
-
-      <CampoDeSelecao
-        rotulo="Tipo"
-        valor={atual.tipo}
-        opcoes={TIPOS_ORDENADOS}
-        rotulos={TIPOS_DE_IMOVEL}
-        erro={recusa.porCampo.tipo}
-        mudar={(valor) => setAtual((anterior) => ({ ...anterior, tipo: valor as TipoImovel }))}
-      />
-      <CampoDeSelecao
-        rotulo="Operação"
-        valor={atual.operacao}
-        opcoes={OPERACOES_ORDENADAS}
-        rotulos={OPERACOES}
-        erro={recusa.porCampo.operacao}
-        mudar={(valor) =>
-          setAtual((anterior) => ({ ...anterior, operacao: valor as Operacao }))
-        }
-      />
-      <CampoDeSelecao
-        rotulo="Status"
-        valor={atual.status}
-        opcoes={STATUS_ORDENADOS}
-        rotulos={STATUS_DO_IMOVEL}
-        erro={recusa.porCampo.status}
-        mudar={(valor) =>
-          setAtual((anterior) => ({ ...anterior, status: valor as StatusImovel }))
-        }
-      />
-
-      {(atual.operacao === 'VENDA' || atual.operacao === 'AMBOS') && (
+      <div className="formulario-de-imovel__grade">
         <CampoDeTexto
-          rotulo="Preço de venda (R$)"
-          campo="precoVenda"
+          rotulo="Código"
+          campo="codigo"
+          obrigatorio
+          exemplo="Ex.: AP-1042"
+          id={emEdicao ? undefined : ID_DO_CODIGO_NO_CADASTRO}
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+          disabled={emEdicao}
+        />
+        <CampoDeTexto
+          rotulo="Título"
+          campo="titulo"
+          obrigatorio
+          exemplo="Ex.: Apartamento alto padrão nos Jardins"
           atual={atual}
           recusa={recusa}
           mudar={mudar}
         />
-      )}
-      {(atual.operacao === 'ALUGUEL' || atual.operacao === 'AMBOS') && (
         <CampoDeTexto
-          rotulo="Preço de aluguel (R$)"
-          campo="precoAluguel"
+          rotulo="Descrição"
+          campo="descricao"
+          obrigatorio
+          exemplo="Breve descrição da unidade"
           atual={atual}
           recusa={recusa}
           mudar={mudar}
         />
-      )}
-      <CampoDeTexto
-        rotulo="Condomínio (R$)"
-        campo="condominio"
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
+        <CampoDeSelecao
+          rotulo="Tipo"
+          valor={atual.tipo}
+          opcoes={TIPOS_ORDENADOS}
+          rotulos={TIPOS_DE_IMOVEL}
+          erro={recusa.porCampo.tipo}
+          mudar={(valor) => setAtual((anterior) => ({ ...anterior, tipo: valor as TipoImovel }))}
+        />
 
-      <CampoDeTexto rotulo="Bairro" campo="bairro" atual={atual} recusa={recusa} mudar={mudar} />
-      <CampoDeTexto rotulo="Cidade" campo="cidade" atual={atual} recusa={recusa} mudar={mudar} />
-      <CampoDeTexto rotulo="UF" campo="uf" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeSelecao
+          rotulo="Operação"
+          valor={atual.operacao}
+          opcoes={OPERACOES_ORDENADAS}
+          rotulos={OPERACOES}
+          erro={recusa.porCampo.operacao}
+          mudar={(valor) =>
+            setAtual((anterior) => ({ ...anterior, operacao: valor as Operacao }))
+          }
+        />
+        <CampoDeSelecao
+          rotulo="Status"
+          valor={atual.status}
+          opcoes={STATUS_ORDENADOS}
+          rotulos={STATUS_DO_IMOVEL}
+          erro={recusa.porCampo.status}
+          mudar={(valor) =>
+            setAtual((anterior) => ({ ...anterior, status: valor as StatusImovel }))
+          }
+        />
+        {vendaVisivel && (
+          <CampoDeTexto
+            rotulo="Preço de venda (R$)"
+            campo="precoVenda"
+            obrigatorio={atual.operacao === 'VENDA'}
+            prefixo="R$"
+            exemplo="850.000,00"
+            atual={atual}
+            recusa={recusa}
+            mudar={mudar}
+          />
+        )}
+        {aluguelVisivel && (
+          <CampoDeTexto
+            rotulo="Preço de aluguel (R$)"
+            campo="precoAluguel"
+            obrigatorio={atual.operacao === 'ALUGUEL'}
+            prefixo="R$"
+            exemplo="4.500,00"
+            atual={atual}
+            recusa={recusa}
+            mudar={mudar}
+          />
+        )}
+        <CampoDeTexto
+          rotulo="Condomínio (R$)"
+          campo="condominio"
+          prefixo="R$"
+          exemplo="1.250,00"
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+        />
 
-      <CampoDeTexto
-        rotulo="Área útil (m²)"
-        campo="areaUtilM2"
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
-      <CampoDeTexto
-        rotulo="Quartos"
-        campo="quartos"
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
-      <CampoDeTexto rotulo="Suítes" campo="suites" atual={atual} recusa={recusa} mudar={mudar} />
-      <CampoDeTexto
-        rotulo="Banheiros"
-        campo="banheiros"
-        atual={atual}
-        recusa={recusa}
-        mudar={mudar}
-      />
-      <CampoDeTexto rotulo="Vagas" campo="vagas" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeTexto rotulo="Bairro" campo="bairro" obrigatorio exemplo="Ex.: Jardins" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeTexto rotulo="Cidade" campo="cidade" obrigatorio exemplo="Ex.: São Paulo" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeTexto rotulo="UF" campo="uf" obrigatorio exemplo="Ex.: SP" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeTexto
+          rotulo="Área útil (m²)"
+          campo="areaUtilM2"
+          obrigatorio
+          exemplo="Ex.: 145"
+          atual={atual}
+          recusa={recusa}
+          mudar={mudar}
+        />
 
-      <CampoDeCaracteristicas
-        caracteristicas={atual.caracteristicas}
-        novo={caracteristicaNova}
-        mudarNovo={setCaracteristicaNova}
-        adicionar={adicionarCaracteristica}
-        remover={removerCaracteristica}
-      />
+        <CampoDeTexto rotulo="Quartos" campo="quartos" obrigatorio exemplo="Ex.: 3" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeTexto rotulo="Suítes" campo="suites" obrigatorio exemplo="Ex.: 2" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeTexto rotulo="Banheiros" campo="banheiros" obrigatorio exemplo="Ex.: 4" atual={atual} recusa={recusa} mudar={mudar} />
+        <CampoDeTexto rotulo="Vagas" campo="vagas" obrigatorio exemplo="Ex.: 2" atual={atual} recusa={recusa} mudar={mudar} />
+
+        <CampoDeCaracteristicas
+          caracteristicas={atual.caracteristicas}
+          novo={caracteristicaNova}
+          mudarNovo={setCaracteristicaNova}
+          adicionar={adicionarCaracteristica}
+          remover={removerCaracteristica}
+        />
+      </div>
 
       {/* So na edicao: o upload exige um `imovel_id` que o cadastro ainda
           nao tem (TEC-335). */}
@@ -314,12 +357,12 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
       )}
 
       <div className="formulario-de-imovel__acoes">
-        <button type="submit" disabled={enviando}>
+        <Botao type="submit" disabled={enviando}>
           {imovel ? 'Salvar' : 'Cadastrar'}
-        </button>
-        <button type="button" onClick={fechar} disabled={enviando}>
+        </Botao>
+        <Botao variante="contorno" onClick={fechar} disabled={enviando}>
           {avisoDeReindexacao ? 'Fechar' : 'Cancelar'}
-        </button>
+        </Botao>
         {/* So na edicao (D2 do desenho da TEC-336): sem imovel salvo nao ha
             o que pre-visualizar, e o botao so ativa com o formulario ja
             valido -- assim a pre-visualizacao nunca precisa decidir o que
@@ -334,6 +377,46 @@ export function FormularioDeImovel({ imovel }: { imovel: Imovel | null }) {
         )}
       </div>
     </form>
+  )
+
+  if (!emEdicao) {
+    return (
+      <Cartao como="section" aria-labelledby={idDoTitulo} className="cadastro-de-imovel">
+        <div className="cadastro-de-imovel__cabecalho">
+          <h2 id={idDoTitulo}>Cadastrar novo imóvel</h2>
+          <p className="cadastro-de-imovel__legenda">
+            <span aria-hidden="true">*</span> obrigatório
+          </p>
+        </div>
+        {formulario}
+      </Cartao>
+    )
+  }
+
+  return (
+    <>
+      <Botao variante="contorno" tamanho="pequeno" onClick={abrir}>
+        Editar
+      </Botao>
+      {aberto && (
+        <dialog
+          ref={dialogRef}
+          className="dialogo dialogo--largo"
+          aria-labelledby={idDoTitulo}
+          onClose={() => {
+            // Esc fecha o modal sem passar por `fechar` (D2 da TEC-398).
+            setAberto(false)
+            setRecusa(SEM_RECUSA)
+            setAvisoDeReindexacao(null)
+          }}
+        >
+          <h2 id={idDoTitulo} className="dialogo__titulo">
+            Editar imóvel
+          </h2>
+          {formulario}
+        </dialog>
+      )}
+    </>
   )
 }
 
@@ -352,28 +435,56 @@ function Erro({ id, texto }: { id: string; texto?: string }) {
   ) : null
 }
 
+/**
+ * O asterisco de obrigatorio sai do CSS (`.rotulo--obrigatorio::after`, D4 da
+ * TEC-397), para nao entrar no nome acessivel: o campo leva `aria-required`.
+ */
 function CampoDeTexto({
   rotulo,
   campo,
+  obrigatorio,
+  exemplo,
+  prefixo,
+  id: idFixo,
   atual,
   recusa,
   mudar,
   disabled,
-}: PropsDoCampo & { campo: CampoDeTextoDoFormulario; disabled?: boolean }) {
-  const id = useId()
+}: PropsDoCampo & {
+  campo: CampoDeTextoDoFormulario
+  obrigatorio?: boolean
+  exemplo?: string
+  prefixo?: string
+  id?: string
+  disabled?: boolean
+}) {
+  const idGerado = useId()
+  const id = idFixo ?? idGerado
   const erro = recusa.porCampo[campo]
   return (
     <div className="formulario-de-imovel__campo">
-      <label htmlFor={id}>{rotulo}</label>
-      <input
-        id={id}
-        type="text"
-        value={atual[campo]}
-        onChange={(evento) => mudar(campo, evento.target.value)}
-        disabled={disabled}
-        aria-invalid={erro ? true : undefined}
-        aria-describedby={erro ? `${id}-erro` : undefined}
-      />
+      <label htmlFor={id} className={obrigatorio ? 'rotulo--obrigatorio' : undefined}>
+        {rotulo}
+      </label>
+      <span className={prefixo ? 'campo-com-unidade campo-com-unidade--prefixo' : 'campo-com-unidade'}>
+        {prefixo && (
+          <span className="campo-com-unidade__prefixo" aria-hidden="true">
+            {prefixo}
+          </span>
+        )}
+        <input
+          id={id}
+          className="campo"
+          type="text"
+          placeholder={exemplo}
+          value={atual[campo]}
+          onChange={(evento) => mudar(campo, evento.target.value)}
+          disabled={disabled}
+          aria-required={obrigatorio ? true : undefined}
+          aria-invalid={erro ? true : undefined}
+          aria-describedby={erro ? `${id}-erro` : undefined}
+        />
+      </span>
       <Erro id={`${id}-erro`} texto={erro} />
     </div>
   )
@@ -397,11 +508,14 @@ function CampoDeSelecao<T extends string>({
   const id = useId()
   return (
     <div className="formulario-de-imovel__campo">
-      <label htmlFor={id}>{rotulo}</label>
-      <select
+      <label htmlFor={id} className="rotulo--obrigatorio">
+        {rotulo}
+      </label>
+      <Selecao
         id={id}
         value={valor}
         onChange={(evento) => mudar(evento.target.value)}
+        aria-required
         aria-invalid={erro ? true : undefined}
         aria-describedby={erro ? `${id}-erro` : undefined}
       >
@@ -411,15 +525,16 @@ function CampoDeSelecao<T extends string>({
             {rotulos[opcao]}
           </option>
         ))}
-      </select>
+      </Selecao>
       <Erro id={`${id}-erro`} texto={erro} />
     </div>
   )
 }
 
 /**
- * "Diferencial" da card (D1) -- texto livre, um por linha/chip, no mesmo
- * molde de `CampoDeRegioes` em `FormularioDeCorretor.tsx`.
+ * "Diferencial" da card (D1) -- texto livre, um chip por item, no mesmo
+ * molde de `CampoDeRegioes` em `FormularioDeCorretor.tsx`. Os chips ficam
+ * numa linha propria, embaixo da grade (TEC-398).
  */
 function CampoDeCaracteristicas({
   caracteristicas,
@@ -436,35 +551,64 @@ function CampoDeCaracteristicas({
 }) {
   const id = useId()
   return (
-    <div className="formulario-de-imovel__caracteristicas">
-      <label htmlFor={id}>Diferenciais</label>
+    <>
+      <div className="formulario-de-imovel__campo">
+        <label htmlFor={id}>Diferenciais</label>
+        <input
+          id={id}
+          className="campo"
+          type="text"
+          placeholder="Ex.: Piscina, varanda gourmet"
+          value={novo}
+          onChange={(evento) => mudarNovo(evento.target.value)}
+          onKeyDown={(evento) => {
+            if (evento.key === 'Enter') {
+              evento.preventDefault()
+              adicionar()
+            }
+          }}
+        />
+        <Botao variante="contorno" onClick={adicionar}>
+          <span aria-hidden="true">+</span> Adicionar diferencial
+        </Botao>
+      </div>
       {caracteristicas.length > 0 && (
-        <ul>
-          {caracteristicas.map((item, indice) => (
-            <li key={`${item}-${indice}`}>
-              {item}{' '}
-              <button type="button" onClick={() => remover(indice)} aria-label={`Remover ${item}`}>
-                Remover
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="formulario-de-imovel__diferenciais">
+          <p>Diferenciais selecionados:</p>
+          <ul className="chips">
+            {caracteristicas.map((item, indice) => (
+              <li key={`${item}-${indice}`} className="chip">
+                {item}
+                <button
+                  type="button"
+                  className="chip__remover"
+                  onClick={() => remover(indice)}
+                  aria-label={`Remover ${item}`}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
-      <input
-        id={id}
-        type="text"
-        value={novo}
-        onChange={(evento) => mudarNovo(evento.target.value)}
-        onKeyDown={(evento) => {
-          if (evento.key === 'Enter') {
-            evento.preventDefault()
-            adicionar()
-          }
-        }}
-      />
-      <button type="button" onClick={adicionar}>
-        Adicionar diferencial
-      </button>
-    </div>
+    </>
+  )
+}
+
+/**
+ * "Cadastrar primeiro imovel", no estado vazio da lista (D5 da TEC-398): o
+ * cadastro ja esta aberto na mesma tela, entao o botao so leva o foco (e a
+ * rolagem) ao campo "Codigo".
+ */
+export function IrParaCadastroDeImovel() {
+  return (
+    <Botao
+      variante="contorno"
+      tamanho="pequeno"
+      onClick={() => document.getElementById(ID_DO_CODIGO_NO_CADASTRO)?.focus()}
+    >
+      <span aria-hidden="true">+</span> Cadastrar primeiro imóvel
+    </Botao>
   )
 }

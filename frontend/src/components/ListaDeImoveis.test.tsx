@@ -1,7 +1,8 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Imovel } from '@/lib/imoveis'
+import { ID_DO_CODIGO_NO_CADASTRO } from './FormularioDeImovel'
 import { ListaDeImoveis } from './ListaDeImoveis'
 
 const refresh = vi.fn()
@@ -99,5 +100,21 @@ describe('ListaDeImoveis (D6 do desenho)', () => {
     render(<ListaDeImoveis imoveis={[imovel({ status: 'INATIVO', titulo: 'Retirado' })]} />)
 
     expect(within(linhaDe('Retirado')).getByRole('button', { name: 'Editar' })).toBeInTheDocument()
+  })
+
+  it('lista vazia mostra o estado vazio, e o botao leva o foco ao "Codigo" do cadastro (TEC-398, D5)', () => {
+    render(
+      <>
+        <input id={ID_DO_CODIGO_NO_CADASTRO} aria-label="Código" />
+        <ListaDeImoveis imoveis={[]} />
+      </>,
+    )
+
+    expect(screen.getByText('Nenhum imóvel cadastrado.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cadastrar primeiro imóvel' }))
+
+    expect(screen.getByLabelText('Código')).toHaveFocus()
   })
 })

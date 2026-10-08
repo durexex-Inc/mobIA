@@ -27,7 +27,7 @@ export function ListaDeCorretores({ corretores }: { corretores: Corretor[] }) {
         </h2>
         <p className="secao__total">Total: {corretores.length}</p>
       </div>
-      <Cartao className="corretores__cartao">
+      <Cartao>
         {corretores.length === 0 ? (
           <div className="estado-vazio-do-painel">
             <svg

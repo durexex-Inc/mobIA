@@ -2,11 +2,11 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 
 import { ErroDeCarga } from '@/components/estado/ErroDeCarga'
-import { Vazio } from '@/components/estado/Vazio'
 import { FormularioDeImovel } from '@/components/FormularioDeImovel'
 import { ImportarImoveis } from '@/components/ImportarImoveis'
 import { ListaDeImoveis } from '@/components/ListaDeImoveis'
 import { SemPermissao } from '@/components/SemPermissao'
+import { Trilha } from '@/components/ui/Trilha'
 import type { Imovel } from '@/lib/imoveis'
 import type { Importacao } from '@/lib/importacaoDeImoveis'
 import { urlDoLogin } from '@/lib/destino'
@@ -79,7 +79,16 @@ export default async function PaginaDeImoveis() {
 
   return (
     <main className="painel">
+      <Trilha
+        itens={[
+          { rotulo: 'Administração', href: '/admin' },
+          { rotulo: 'Imóveis' },
+        ]}
+      />
       <h1>Imóveis</h1>
+      <p className="painel__descricao">
+        O catálogo que o agente busca e recomenda: cadastro de unidades e importação em lote por CSV.
+      </p>
       <FormularioDeImovel imovel={null} />
       <ImportarImoveis importacaoInicial={importacaoRecente} />
       {erro ? (
@@ -89,12 +98,7 @@ export default async function PaginaDeImoveis() {
           urlParaTentarDeNovo={ENDERECO}
         />
       ) : null}
-      {imoveis && imoveis.length === 0 ? (
-        <p>
-          <Vazio texto="Nenhum imóvel cadastrado." />
-        </p>
-      ) : null}
-      {imoveis && imoveis.length > 0 ? <ListaDeImoveis imoveis={imoveis} /> : null}
+      {imoveis ? <ListaDeImoveis imoveis={imoveis} /> : null}
     </main>
   )
 }
