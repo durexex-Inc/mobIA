@@ -1,13 +1,59 @@
+/* --- Tema (TEC-393) ---------------------------------------------------------
+   O claro e o padrao; o escuro vale quando o sistema pede e ninguem escolheu
+   claro, ou quando alguem escolheu escuro no botao do menu (`data-tema`, que o
+   layout raiz le do cookie). O bloco escuro aparece duas vezes porque media
+   query e atributo nao se combinam num seletor so.
+
+   `--background` e `--foreground` sao os tokens que as telas antigas usam: eles
+   apontam para os novos, e assim acompanham o tema sem serem redesenhadas. */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --fundo: #ffffff;
+  --superficie: #ffffff;
+  --superficie-2: #f4f4f5;
+  --borda: #e4e4e7;
+  --texto: #09090b;
+  --texto-fraco: #71717a;
+  --primaria: #2563eb;
+  --primaria-texto: #ffffff;
+  --sucesso: #10b981;
+  --aviso: #92400e;
+  --raio: 0.625rem;
+
+  --etapa-novo: #3b82f6;
+  --etapa-em-conversa: #6366f1;
+  --etapa-qualificado: #06b6d4;
+  --etapa-recomendado: #f59e0b;
+  --etapa-agendado: #a855f7;
+  --etapa-handoff: #10b981;
+
+  --background: var(--fundo);
+  --foreground: var(--texto);
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-tema="claro"]) {
+    --fundo: #0e0f11;
+    --superficie: #141518;
+    --superficie-2: #1c1e22;
+    --borda: #26282d;
+    --texto: #f4f4f5;
+    --texto-fraco: #9aa3b5;
+    --aviso: #fbbf24;
+    color-scheme: dark;
   }
+}
+
+:root[data-tema="escuro"] {
+  --fundo: #0e0f11;
+  --superficie: #141518;
+  --superficie-2: #1c1e22;
+  --borda: #26282d;
+  --texto: #f4f4f5;
+  --texto-fraco: #9aa3b5;
+  --aviso: #fbbf24;
+  color-scheme: dark;
 }
 
 html {
@@ -42,132 +88,397 @@ a {
   text-decoration: none;
 }
 
+/* --- Pecas do painel (TEC-393): o "Card" e o "Button" do shadcn ------------- */
+
+.cartao {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+}
+
+.cartao > .skeleton {
+  padding: 1.25rem;
+}
+
+.botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font: inherit;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: calc(var(--raio) - 2px);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.botao--padrao {
+  height: 2.25rem;
+  padding: 0 1rem;
+  font-size: 0.875rem;
+}
+
+.botao--pequeno {
+  height: 2rem;
+  padding: 0 0.75rem;
+  font-size: 0.8rem;
+}
+
+.botao--primario {
+  color: var(--primaria-texto);
+  background: var(--primaria);
+}
+
+.botao--primario:hover {
+  background: color-mix(in srgb, var(--primaria) 85%, #000);
+}
+
+.botao--contorno {
+  color: var(--texto);
+  background: var(--superficie);
+  border-color: var(--borda);
+}
+
+.botao--contorno:hover,
+.botao--fantasma:hover {
+  color: var(--texto);
+  background: var(--superficie-2);
+}
+
+.botao--fantasma {
+  color: var(--texto-fraco);
+  background: transparent;
+}
+
+.botao:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
+}
+
+.botao:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Decorativo (TEC-393): o texto ao lado ja diz tudo; o ponto e `aria-hidden`. */
+.ponto-de-status {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--sucesso);
+}
+
+/* O botao de tema mostra o tema para onde ele leva: sol no escuro, lua no
+   claro. Mesmos seletores do bloco de tokens, pela mesma razao. */
+.icone-tema--sol {
+  display: none;
+}
+
 @media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
+  :root:not([data-tema="claro"]) .icone-tema--sol {
+    display: block;
+  }
+
+  :root:not([data-tema="claro"]) .icone-tema--lua {
+    display: none;
   }
 }
 
-/* --- Painel de funil (TEC-190) ------------------------------------------ */
+:root[data-tema="escuro"] .icone-tema--sol {
+  display: block;
+}
+
+:root[data-tema="escuro"] .icone-tema--lua {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .botao,
+  .funil-linha,
+  .menu-link {
+    transition: none;
+  }
+}
+
+/* --- Painel de funil (TEC-190, visual da TEC-393) ----------------------------- */
+
+/* Geist so no painel (TEC-393, D6): o chat embutido no site da imobiliaria
+   nao deve mudar de fonte por causa desta tela. */
+.painel,
+.menu {
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
 
 .painel {
-  max-width: 64rem;
+  width: 100%;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 2rem 1rem;
+  padding: 2rem 1.5rem 3rem;
+}
+
+.painel h1 {
+  margin-bottom: 1.5rem;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.filtros-cartao {
+  padding: 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .filtros {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1rem;
-  align-items: flex-end;
-  margin-bottom: 2rem;
 }
 
 .filtros label {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.4rem;
   font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.filtros label:has(select:disabled) {
+  color: var(--texto-fraco);
+}
+
+.filtros input,
+.campo-selecao select {
+  width: 100%;
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--texto);
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: calc(var(--raio) - 2px);
+}
+
+.filtros input:focus-visible,
+.campo-selecao select:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 1px;
+}
+
+/* `<select>` nativo, e nao o Select do shadcn (D1): a seta e desenhada aqui,
+   num pseudo-elemento do invólucro, porque `<select>` nao tem `::after`. */
+.campo-selecao {
+  position: relative;
+  display: block;
+}
+
+.campo-selecao select {
+  appearance: none;
+  padding-right: 2rem;
+  cursor: pointer;
+}
+
+.campo-selecao select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.campo-selecao::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0.85rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid var(--texto-fraco);
+  border-bottom: 1.5px solid var(--texto-fraco);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
 }
 
 .filtros-erro {
-  flex-basis: 100%;
-  margin: 0;
+  grid-column: 1 / -1;
   padding: 0.75rem;
   border-left: 3px solid #b23c17;
+  border-radius: 0.375rem;
   background: color-mix(in srgb, #b23c17 12%, transparent);
+}
+
+.filtros-erro-campo {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #b23c17;
+}
+
+.filtros-rodape {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--borda);
 }
 
 /* O motivo do filtro por corretor desabilitado (TEC-316). */
 .filtros-corretor-motivo {
   font-size: 0.8rem;
-  opacity: 0.75;
+  font-style: italic;
+  color: var(--texto-fraco);
 }
 
 /* O relogio da atualizacao automatica (TEC-317). */
 .funil-atualizacao {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
   font-size: 0.8rem;
-  opacity: 0.75;
-  margin: 0 0 0.5rem;
+  color: var(--texto-fraco);
+}
+
+.funil-cartao {
+  padding: 0.5rem 1rem;
+  margin-bottom: 1.5rem;
 }
 
 .funil {
   list-style: none;
   padding: 0;
-  margin: 0 0 2.5rem;
+  margin: 0;
 }
 
-.funil-etapa {
+.funil-etapa + .funil-etapa {
+  border-top: 1px solid var(--borda);
+}
+
+/* A linha e o proprio link (D5), para o anel de foco desenhar em volta dela. */
+.funil-linha {
   display: grid;
-  grid-template-columns: 10rem 8rem 5rem;
-  grid-template-areas: 'nome quantidade conversao' 'barra barra barra';
-  gap: 0.25rem 1rem;
-  padding: 0.6rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 0.5rem;
+  border-radius: calc(var(--raio) - 4px);
+  transition: background-color 0.15s;
 }
 
-/* A etapa clicavel (TEC-318): `display: contents` tira o `<a>` do grid, para
-   os `grid-area` dos filhos continuarem valendo -- ver o comentario em
-   `Funil.tsx`. */
-.funil-etapa-link {
-  display: contents;
-  color: inherit;
-  text-decoration: none;
+.funil-linha--link:hover {
+  background: var(--superficie-2);
 }
 
-.funil-etapa-link:hover .funil-nome {
-  text-decoration: underline;
+.funil-linha--link:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
 }
 
-.funil-nome { grid-area: nome; font-weight: 600; }
-.funil-quantidade { grid-area: quantidade; font-variant-numeric: tabular-nums; }
-.funil-conversao { grid-area: conversao; text-align: right; opacity: 0.7; }
-
-.funil-barra {
-  grid-area: barra;
-  height: 0.5rem;
-  border-radius: 0.25rem;
-  background: currentColor;
-  opacity: 0.55;
-  min-width: 2px;
+.funil-nome {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
-/* A etapa sem fonte nao ganha barra: uma barra de largura zero ainda e uma
-   barra, e leria como "quase nada" em vez de "nao sabemos". */
-.funil-barra-sem-fonte {
-  background: none;
-  min-width: 0;
+/* A cor por classe, nunca por `style` (D4). Sem classe de etapa, neutro. */
+.funil-marcador {
+  flex: none;
+  width: 0.3rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: var(--texto-fraco);
+}
+
+.funil-marcador--novo { background: var(--etapa-novo); }
+.funil-marcador--em-conversa { background: var(--etapa-em-conversa); }
+.funil-marcador--qualificado { background: var(--etapa-qualificado); }
+.funil-marcador--recomendado { background: var(--etapa-recomendado); }
+.funil-marcador--agendado { background: var(--etapa-agendado); }
+.funil-marcador--handoff { background: var(--etapa-handoff); }
+
+.funil-quantidade {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.funil-conversao {
+  font-size: 0.85rem;
+  text-align: right;
+  color: var(--texto-fraco);
 }
 
 /* A coorte incompleta (TEC-315): o destaque esta no texto, nao so na cor,
    no molde de `.fila-do-titular__aviso`. */
 .funil-conversao-aviso {
   font-weight: 600;
-  color: #92400e;
-  opacity: 1;
+  color: var(--aviso);
 }
 
 .indicadores-lista {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
   margin: 0;
 }
 
 .indicador {
-  padding: 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent);
-  border-radius: 0.375rem;
+  min-height: 5rem;
+  padding: 1rem 1.25rem;
 }
 
-.indicador dt { font-size: 0.8rem; opacity: 0.75; }
-.indicador dd { margin: 0.25rem 0 0; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+.indicador dt {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--texto-fraco);
+}
+
+.indicador dd {
+  margin: 0.4rem 0 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.indicador .estado-vazio,
+.indicador .estado-sem-fonte {
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--texto-fraco);
+}
 
 .indicadores-nota {
-  margin-top: 1.5rem;
+  margin-top: 1rem;
   font-size: 0.85rem;
-  opacity: 0.8;
+  color: var(--texto-fraco);
+}
+
+@media (max-width: 1023.98px) {
+  .filtros {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .indicadores-lista {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 639.98px) {
+  .painel {
+    padding: 1.5rem 1rem 2.5rem;
+  }
+
+  .filtros,
+  .indicadores-lista {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .funil-linha {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
 }
 
 /* O painel de custo de IA (TEC-319), no molde de `.indicadores-lista`. */
@@ -283,9 +594,29 @@ a {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  padding: 1rem;
-  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
-  border-radius: 0.375rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  background: var(--superficie);
+  border: 1px solid color-mix(in srgb, #b23c17 45%, var(--borda));
+  border-radius: var(--raio);
+}
+
+.estado-erro-acao {
+  align-self: flex-start;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border: 1px solid var(--borda);
+  border-radius: calc(var(--raio) - 2px);
+}
+
+.estado-erro-acao:hover {
+  background: var(--superficie-2);
+}
+
+.estado-erro-acao:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
 }
 
 .estado-erro-codigo code {
@@ -529,30 +860,66 @@ a {
 /* --- Menu por papel e "Sem permissao" (TEC-312) -------------------------- */
 
 .menu {
+  background: var(--fundo);
+  border-bottom: 1px solid var(--borda);
+}
+
+.menu-conteudo {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  max-width: 64rem;
+  gap: 0.75rem 1rem;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 1rem 1rem 0;
+  padding: 0.75rem 1.5rem;
 }
 
 .menu ul {
   display: flex;
-  gap: 1.5rem;
+  flex-wrap: wrap;
+  gap: 0.25rem;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.menu a {
-  font-weight: 600;
+/* O item ativo e o `aria-current` (TEC-393), e nao uma classe: o estilo
+   segue o que o leitor de tela ja anuncia. */
+.menu-link {
+  display: inline-block;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--texto-fraco);
+  border: 1px solid transparent;
+  border-radius: calc(var(--raio) - 2px);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.menu-link:hover {
+  color: var(--texto);
+  background: var(--superficie-2);
+}
+
+.menu-link[aria-current="page"] {
+  color: var(--texto);
+  background: color-mix(in srgb, var(--primaria) 14%, var(--superficie));
+  border-color: color-mix(in srgb, var(--primaria) 35%, var(--borda));
+}
+
+.menu-link:focus-visible {
+  outline: 2px solid var(--primaria);
+  outline-offset: 2px;
 }
 
 .menu-papel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin: 0;
-  font-size: 0.85rem;
-  opacity: 0.75;
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 
 .estado-sem-permissao {
@@ -609,13 +976,7 @@ a {
 .menu-conta {
   display: flex;
   align-items: center;
-  gap: 1rem;
-}
-
-.menu-conta button {
-  padding: 0.3rem 0.8rem;
-  font: inherit;
-  cursor: pointer;
+  gap: 0.5rem;
 }
 
 /* --- Aviso de inatividade (TEC-311) ------------------------------------- */

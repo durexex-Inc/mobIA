@@ -1,7 +1,23 @@
 import { useId } from 'react'
 
+import { Cartao } from '@/components/ui/Cartao'
 import { coorteIncompleta, percentual, quantidadeLegivel } from '@/lib/formato'
 import type { Etapa, Filtros } from '@/lib/metricas'
+
+/**
+ * A cor de cada etapa, por classe e nunca por `style` (TEC-393, D4): a CSP de
+ * producao bloqueia atributo `style` vindo do HTML. Os nomes espelham
+ * `EtapaDoFunil` em `domain/metricas/vocabulario.py`; etapa fora da lista fica
+ * com o marcador neutro.
+ */
+const CLASSE_DA_ETAPA: Record<string, string> = {
+  Novo: 'funil-marcador--novo',
+  'Em conversa': 'funil-marcador--em-conversa',
+  Qualificado: 'funil-marcador--qualificado',
+  Recomendado: 'funil-marcador--recomendado',
+  Agendado: 'funil-marcador--agendado',
+  'Handoff aceito': 'funil-marcador--handoff',
+}
 
 /**
  * A conversao independe do que o backend mandou em `conversaoDaAnterior`
@@ -58,69 +74,59 @@ function urlDaEtapa(filtros: Filtros, etapa: string): string {
 /**
  * As seis etapas da RN-17.2, com a conversao entre consecutivas.
  *
- * A largura da barra sai da MAIOR etapa disponivel, e nao da primeira: a
- * primeira pode ser a que nao tem fonte, e dividir por ela daria NaN. O piso
- * de 1 cobre o periodo em que tudo e zero.
+ * Sem barra de proporcao desde a TEC-393 (D3): a quantidade esta escrita em
+ * cada linha, e a largura vinha de um `style` que a CSP de producao bloqueia.
  */
 export function Funil({ etapas, filtros }: { etapas: Etapa[]; filtros: Filtros }) {
-  const maior = Math.max(
-    1,
-    ...etapas.filter((e) => e.disponivel && e.quantidade !== null).map((e) => e.quantidade ?? 0),
-  )
-
   return (
-    <ol aria-label="Funil de leads" className="funil">
-      {etapas.map((etapa, indice) => {
-        const conversao = conversaoConfiavel(etapa, etapas[indice - 1])
-        const conteudo = (
-          <>
-            <span className="funil-nome">{etapa.nome}</span>
-            <span className="funil-quantidade">{quantidadeLegivel(etapa)}</span>
-            <span className="funil-conversao">
-              {/* O aviso fica FORA do `aria-label`: um `aria-label` fixa a
-                  nome acessivel do elemento e apagaria "Coorte incompleta"
-                  para quem usa leitor de tela -- exatamente o cenario que a
-                  card pede para anunciar. */}
-              <span aria-label={`conversão da etapa anterior para ${etapa.nome}`}>
-                {percentual(conversao)}
+    <Cartao className="funil-cartao">
+      <ol aria-label="Funil de leads" className="funil">
+        {etapas.map((etapa, indice) => {
+          const conversao = conversaoConfiavel(etapa, etapas[indice - 1])
+          const conteudo = (
+            <>
+              <span className="funil-nome">
+                <span
+                  className={`funil-marcador ${CLASSE_DA_ETAPA[etapa.nome] ?? ''}`.trim()}
+                  aria-hidden="true"
+                />
+                {etapa.nome}
               </span>
-              {coorteIncompleta(conversao) && <AvisoDeCoorteIncompleta />}
-            </span>
-            <div
-              role="presentation"
-              data-testid={`barra-${etapa.nome}`}
-              className={etapa.disponivel ? 'funil-barra' : 'funil-barra funil-barra-sem-fonte'}
-              style={{
-                width:
-                  etapa.disponivel && etapa.quantidade !== null
-                    ? `${(etapa.quantidade / maior) * 100}%`
-                    : '0%',
-              }}
-            />
-          </>
-        )
-        return (
-          <li key={etapa.nome} data-testid={`etapa-${etapa.nome}`} className="funil-etapa">
-            {etapa.disponivel ? (
-              // `display: contents` no CSS (`.funil-etapa-link`): sem ele, o
-              // `<a>` viraria o unico item do grid de `.funil-etapa` e os
-              // `grid-area` dos filhos parariam de valer (TEC-318, D4).
-              <a href={urlDaEtapa(filtros, etapa.nome)} className="funil-etapa-link">
-                {/* Sem `aria-label` no link, pela mesma razao do `span` de
-                    conversao acima: apagaria "Coorte incompleta" para quem
-                    usa leitor de tela. O contexto entra como texto oculto. */}
-                <span className="visually-hidden">Ver leads da etapa {etapa.nome}. </span>
-                {conteudo}
-              </a>
-            ) : (
-              // Etapa sem fonte nao e navegavel (Gherkin, cenario 2) -- hoje
-              // inatingivel em producao, ja que `montar_funil` sempre marca
-              // `disponivel: true` desde a TEC-376.
-              conteudo
-            )}
-          </li>
-        )
-      })}
-    </ol>
+              <span className="funil-quantidade">{quantidadeLegivel(etapa)}</span>
+              <span className="funil-conversao">
+                {/* O aviso fica FORA do `aria-label`: um `aria-label` fixa a
+                    nome acessivel do elemento e apagaria "Coorte incompleta"
+                    para quem usa leitor de tela -- exatamente o cenario que a
+                    card pede para anunciar. */}
+                <span aria-label={`conversão da etapa anterior para ${etapa.nome}`}>
+                  {percentual(conversao)}
+                </span>
+                {coorteIncompleta(conversao) && <AvisoDeCoorteIncompleta />}
+              </span>
+            </>
+          )
+          return (
+            <li key={etapa.nome} data-testid={`etapa-${etapa.nome}`} className="funil-etapa">
+              {etapa.disponivel ? (
+                // O `<a>` e a propria linha em grid (TEC-393, D5): com o
+                // `display: contents` de antes, o anel de foco nao desenhava.
+                <a href={urlDaEtapa(filtros, etapa.nome)} className="funil-linha funil-linha--link">
+                  {/* Sem `aria-label` no link, pela mesma razao do `span` de
+                      conversao acima: apagaria "Coorte incompleta" para quem
+                      usa leitor de tela. O contexto entra como texto oculto. */}
+                  <span className="visually-hidden">Ver leads da etapa {etapa.nome}. </span>
+                  {conteudo}
+                </a>
+              ) : (
+                // Etapa sem fonte nao e navegavel (Gherkin, cenario 2) -- hoje
+                // inatingivel em producao, ja que `montar_funil` sempre marca
+                // `disponivel: true` desde a TEC-376.
+                <div className="funil-linha">{conteudo}</div>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    </Cartao>
   )
 }

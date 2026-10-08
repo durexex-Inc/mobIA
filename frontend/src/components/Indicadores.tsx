@@ -1,5 +1,6 @@
 import { AindaNaoMedido } from '@/components/estado/AindaNaoMedido'
 import { Vazio } from '@/components/estado/Vazio'
+import { Cartao } from '@/components/ui/Cartao'
 import { estadoDe } from '@/lib/estados'
 import { percentual } from '@/lib/formato'
 import type { Indicadores as IndicadoresTipo } from '@/lib/metricas'
@@ -112,10 +113,10 @@ export function Indicadores({
     <section aria-label="Indicadores do período" className="indicadores">
       <dl className="indicadores-lista">
         {Object.entries(indicadores).map(([chave, valor]) => (
-          <div key={chave} data-testid={`indicador-${chave}`} className="indicador">
+          <Cartao key={chave} data-testid={`indicador-${chave}`} className="indicador">
             <dt>{ROTULOS[chave] ?? chave}</dt>
             <dd>{conteudoDe(chave, valor, semFonte.has(chave))}</dd>
-          </div>
+          </Cartao>
         ))}
       </dl>
       {indisponiveis.length > 0 && (

@@ -57,10 +57,24 @@ describe('Funil', () => {
     expect(screen.getAllByText('—')).toHaveLength(4)
   })
 
-  it('a barra da etapa sem fonte tem largura zero, e nao NaN', () => {
-    render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
-    const barra = screen.getByTestId('barra-Agendado')
-    expect(barra.getAttribute('style')).not.toContain('NaN')
+  it('nenhuma linha carrega atributo `style`, que a CSP de producao bloqueia (TEC-393)', () => {
+    const { container } = render(<Funil etapas={ETAPAS} filtros={FILTROS} />)
+    expect(container.querySelector('[style]')).toBeNull()
+  })
+
+  it('cada etapa conhecida tem o marcador da sua cor, e a desconhecida o neutro', () => {
+    const { container } = render(
+      <Funil
+        etapas={[
+          { nome: 'Novo', quantidade: 1, disponivel: true, conversaoDaAnterior: null },
+          { nome: 'Etapa futura', quantidade: 1, disponivel: true, conversaoDaAnterior: 100 },
+        ]}
+        filtros={FILTROS}
+      />,
+    )
+    const marcadores = container.querySelectorAll('.funil-marcador')
+    expect(marcadores[0]).toHaveClass('funil-marcador--novo')
+    expect(marcadores[1]).toHaveAttribute('class', 'funil-marcador')
   })
 })
 

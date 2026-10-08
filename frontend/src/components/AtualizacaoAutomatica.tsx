@@ -63,6 +63,7 @@ export function AtualizacaoAutomatica({ atualizadoEm }: { atualizadoEm: string }
 
   return (
     <p className="funil-atualizacao" aria-live="polite">
+      <span className="ponto-de-status" aria-hidden="true" />
       Atualizado há {segundos} s
     </p>
   )
