@@ -4,18 +4,21 @@ import { type ChangeEvent, type DragEvent, useId, useRef, useState } from 'react
 
 import {
   FOTO_LIMITE_POR_IMOVEL,
+  FOTO_TETO_DE_BYTES,
   mensagemDeErroDoEnvio,
   recusaDoArquivo,
   remover,
   reordenar,
 } from '@/lib/fotos'
 
+import { Botao } from '@/components/ui/Botao'
+
 /**
  * Miniaturas, upload, reordenacao e remocao das fotos de um imovel. TEC-335,
  * D5/D6/D7.
  *
  * **So aparece na edicao** (o `imovel_id` e obrigatorio para o upload) -- quem
- * decide isso e o chamador (`FormularioDeImovel`), nao este componente.
+ * decide isso e o chamador (`EdicaoDeImovel`, TEC-400), nao este componente.
  *
  * **A miniatura e um `<img>` de mesma origem** (`/bff/api/v1/.../fotos/{id}`,
  * D7): o cookie de sessao acompanha, sem tratamento especial.
@@ -168,7 +171,13 @@ export function FotosDoImovel({
 
   return (
     <div className="fotos-do-imovel">
-      <h3>Fotos</h3>
+      <div className="fotos-do-imovel__cabecalho">
+        <h2>Galeria de fotos</h2>
+        <p>
+          {fotos.length} de {FOTO_LIMITE_POR_IMOVEL} fotos. Arraste uma miniatura, ou use as setas, para mudar a
+          ordem.
+        </p>
+      </div>
 
       {erro && (
         <p className="fotos-do-imovel__aviso" role="alert">
@@ -189,31 +198,37 @@ export function FotosDoImovel({
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={`/bff${url}`} alt={`Foto ${indice + 1} do imóvel`} />
+              <span className="fotos-do-imovel__numero" aria-hidden="true">
+                Foto {indice + 1}
+              </span>
               <div className="fotos-do-imovel__acoes">
-                <button
-                  type="button"
+                <Botao
+                  variante="fantasma"
+                  tamanho="pequeno"
                   onClick={() => mover(indice, -1)}
                   disabled={enviando || indice === 0}
                   aria-label={`Mover foto ${indice + 1} para cima`}
                 >
-                  Mover para cima
-                </button>
-                <button
-                  type="button"
+                  <span aria-hidden="true">←</span>
+                </Botao>
+                <Botao
+                  variante="fantasma"
+                  tamanho="pequeno"
                   onClick={() => mover(indice, 1)}
                   disabled={enviando || indice === fotos.length - 1}
                   aria-label={`Mover foto ${indice + 1} para baixo`}
                 >
-                  Mover para baixo
-                </button>
-                <button
-                  type="button"
+                  <span aria-hidden="true">→</span>
+                </Botao>
+                <Botao
+                  variante="fantasma"
+                  tamanho="pequeno"
                   onClick={() => removerFoto(indice)}
                   disabled={enviando}
                   aria-label={`Remover foto ${indice + 1}`}
                 >
                   Remover
-                </button>
+                </Botao>
               </div>
             </li>
           ))}
@@ -225,8 +240,10 @@ export function FotosDoImovel({
           O imóvel já tem o limite de {FOTO_LIMITE_POR_IMOVEL} fotos.
         </p>
       ) : (
+        // A area de soltar e o proprio `<input type="file">`, esticado por cima
+        // da caixa tracejada: o navegador ja aceita arquivo solto sobre ele, e
+        // o clique abre o seletor -- sem logica de arraste nova (TEC-400).
         <div className="fotos-do-imovel__campo">
-          <label htmlFor={inputId}>Adicionar foto</label>
           <input
             id={inputId}
             ref={inputRef}
@@ -234,7 +251,12 @@ export function FotosDoImovel({
             accept="image/jpeg,image/png,image/webp"
             onChange={selecionar}
             disabled={enviando}
+            aria-describedby={`${inputId}-ajuda`}
           />
+          <label htmlFor={inputId}>Adicionar foto</label>
+          <span id={`${inputId}-ajuda`} className="fotos-do-imovel__ajuda">
+            Solte o arquivo aqui ou clique para escolher. JPG, PNG ou WEBP, até {FOTO_TETO_DE_BYTES / (1024 * 1024)} MB.
+          </span>
         </div>
       )}
     </div>

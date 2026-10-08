@@ -1,5 +1,7 @@
 import { type Imovel, STATUS_DO_IMOVEL, TIPOS_DE_IMOVEL } from '@/lib/imoveis'
-import { FormularioDeImovel, IrParaCadastroDeImovel } from '@/components/FormularioDeImovel'
+import Link from 'next/link'
+
+import { IrParaCadastroDeImovel } from '@/components/FormularioDeImovel'
 import { RetirarImovel } from '@/components/RetirarImovel'
 import { Cartao } from '@/components/ui/Cartao'
 import { Selo } from '@/components/ui/Selo'
@@ -9,8 +11,8 @@ import { Selo } from '@/components/ui/Selo'
  * estado vazio dentro do cartao (TEC-398).
  *
  * **O status e TEXTO**, nunca so cor -- mesmo padrao do rotulo de "Inativo"
- * em `ListaDeCorretores.tsx`. Editar abre `FormularioDeImovel` num
- * `<dialog>`; retirar so aparece em linha que nao esta `INATIVO`, porque nao
+ * em `ListaDeCorretores.tsx`. Editar leva a pagina do imovel
+ * (`admin/imoveis/[id]`, TEC-400); retirar so aparece em linha que nao esta `INATIVO`, porque nao
  * ha reativar por botao dedicado (D4) -- reativar e editar o Status.
  */
 export function ListaDeImoveis({ imoveis }: { imoveis: Imovel[] }) {
@@ -74,7 +76,12 @@ export function ListaDeImoveis({ imoveis }: { imoveis: Imovel[] }) {
                     </td>
                     <td>
                       <span className="lista-de-corretores__acoes">
-                        <FormularioDeImovel imovel={imovel} />
+                        <Link
+                          href={`/admin/imoveis/${encodeURIComponent(imovel.id)}`}
+                          className="botao botao--contorno botao--pequeno"
+                        >
+                          Editar
+                        </Link>
                         {imovel.status !== 'INATIVO' && <RetirarImovel imovel={imovel} />}
                       </span>
                     </td>

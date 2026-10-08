@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 import type { Imovel } from '@/lib/imoveis'
-import { haAlteracaoNaoSalva } from '@/lib/inatividade'
 import { FormularioDeImovel } from './FormularioDeImovel'
 
 const refresh = vi.fn()
@@ -75,19 +74,12 @@ describe('FormularioDeImovel', () => {
     api = vi.fn(async () => responde({ ...IMOVEL, id: 'i-novo' }, 201))
     vi.stubGlobal('fetch', api)
     refresh.mockClear()
-    // jsdom nao implementa o modal; a edicao abre num `<dialog>` (D2 da TEC-398).
-    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
-      this.setAttribute('open', '')
-    }
-    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
-      this.removeAttribute('open')
-    }
   })
   afterEach(() => vi.unstubAllGlobals())
 
   describe('cenario: cadastrar imovel valido, com todos os obrigatorios (D1)', () => {
     it('manda o POST completo pelo proxy e volta o formulario vazio', async () => {
-      render(<FormularioDeImovel imovel={null} />)
+      render(<FormularioDeImovel />)
 
       await preencherCadastroValido()
       await clicar('Cadastrar')
@@ -107,6 +99,7 @@ describe('FormularioDeImovel', () => {
         precoVenda: 50_000_000,
         precoAluguel: null,
         condominio: null,
+        iptuMensal: null,
         bairro: 'Bela Vista',
         cidade: 'Porto Alegre',
         uf: 'RS',
@@ -126,7 +119,7 @@ describe('FormularioDeImovel', () => {
 
   describe('cenario: campo obrigatorio vazio (D1, D2)', () => {
     it('sem titulo, a tela recusa antes do fetch', async () => {
-      render(<FormularioDeImovel imovel={null} />)
+      render(<FormularioDeImovel />)
 
       await preencherCadastroValido()
       digitar('Título', '')
@@ -139,7 +132,7 @@ describe('FormularioDeImovel', () => {
 
   describe('cenario: operacao decide o campo de preco (D1)', () => {
     it('Aluguel mostra so o preco de aluguel', async () => {
-      render(<FormularioDeImovel imovel={null} />)
+      render(<FormularioDeImovel />)
           digitar('Operação', 'ALUGUEL')
 
       expect(screen.queryByLabelText('Preço de venda (R$)')).toBeNull()
@@ -147,7 +140,7 @@ describe('FormularioDeImovel', () => {
     })
 
     it('Ambos mostra os dois precos', async () => {
-      render(<FormularioDeImovel imovel={null} />)
+      render(<FormularioDeImovel />)
           digitar('Operação', 'AMBOS')
 
       expect(screen.getByLabelText('Preço de venda (R$)')).toBeInTheDocument()
@@ -155,119 +148,9 @@ describe('FormularioDeImovel', () => {
     })
   })
 
-  describe('cenario: codigo desabilitado na edicao (D5)', () => {
-    it('o campo codigo esta desabilitado quando ha imovel', async () => {
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-      await clicar('Editar')
-
-      expect(screen.getByLabelText('Código')).toBeDisabled()
-    })
-  })
-
-  describe('cenario: alterar so o preco nao reindexa (D3, cenario 1 do Gherkin)', () => {
-    it('mostra a mensagem de "nao reindexa" apos o PATCH', async () => {
-      api.mockResolvedValueOnce(responde({ ...IMOVEL, precoVenda: 40_000_000, reindexa: false }))
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-
-      await clicar('Editar')
-      digitar('Preço de venda (R$)', '400000')
-      await clicar('Salvar')
-
-      expect(api).toHaveBeenCalledExactlyOnceWith(
-        '/bff/api/v1/imoveis/i-1',
-        expect.objectContaining({ method: 'PATCH', body: '{"precoVenda":40000000}' }),
-      )
-      expect(screen.getByRole('status')).toHaveTextContent('não é necessário reindexar')
-      expect(refresh).toHaveBeenCalledOnce()
-    })
-  })
-
-  describe('cenario: alterar o diferencial reindexa (D3, cenario 2 do Gherkin)', () => {
-    it('mostra a mensagem de "reindexa" apos o PATCH', async () => {
-      api.mockResolvedValueOnce(
-        responde({ ...IMOVEL, caracteristicas: ['Vista para o mar'], reindexa: true }),
-      )
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-
-      await clicar('Editar')
-      await clicar('Remover Vista para o parque')
-      digitar('Diferenciais', 'Vista para o mar')
-      await clicar('Adicionar diferencial')
-      await clicar('Salvar')
-
-      const corpo = JSON.parse((api.mock.calls[0][1] as RequestInit).body as string)
-      expect(corpo).toEqual({ caracteristicas: ['Vista para o mar'] })
-      expect(screen.getByRole('status')).toHaveTextContent('será reindexado')
-    })
-  })
-
-  describe('cenario: sem mudanca, fecha sem chamar a API', () => {
-    it('editar e salvar sem alterar nada nao chama o fetch', async () => {
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-
-      await clicar('Editar')
-      await clicar('Salvar')
-
-      expect(api).not.toHaveBeenCalled()
-      expect(screen.getByRole('button', { name: 'Editar' })).toBeInTheDocument()
-    })
-  })
-
-  describe('cenario: erro do backend e uma string unica, mostrada inteira (D2)', () => {
-    it('422 com "titulo ausente; bairro ausente" aparece como um aviso geral so', async () => {
-      api.mockResolvedValueOnce(responde({ detail: 'titulo ausente; bairro ausente' }, 422))
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-
-      await clicar('Editar')
-      digitar('Preço de venda (R$)', '400000')
-      await clicar('Salvar')
-
-      expect(screen.getByRole('alert')).toHaveTextContent('titulo ausente; bairro ausente')
-      expect(refresh).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('pre-visualizar card (TEC-336, D2)', () => {
-    it('nao existe no cadastro -- so ha imovel salvo na edicao', async () => {
-      render(<FormularioDeImovel imovel={null} />)
-    
-      expect(screen.queryByRole('button', { name: 'Pré-visualizar card' })).toBeNull()
-    })
-
-    it('comeca habilitado na edicao de um imovel ja valido', async () => {
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-      await clicar('Editar')
-
-      expect(screen.getByRole('button', { name: 'Pré-visualizar card' })).toBeEnabled()
-    })
-
-    it('desabilita quando um campo obrigatorio fica vazio', async () => {
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-      await clicar('Editar')
-
-      digitar('Título', '')
-
-      expect(screen.getByRole('button', { name: 'Pré-visualizar card' })).toBeDisabled()
-    })
-  })
-
-  describe('alteracao nao salva (TEC-311)', () => {
-    it('sujo registra; cancelar desfaz', async () => {
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-      await clicar('Editar')
-      expect(haAlteracaoNaoSalva()).toBe(false)
-
-      await act(async () => digitar('Título', 'Outro título'))
-      expect(haAlteracaoNaoSalva()).toBe(true)
-
-      await clicar('Cancelar')
-      expect(haAlteracaoNaoSalva()).toBe(false)
-    })
-  })
-
-  describe('o cadastro sempre aberto e a edicao em modal (TEC-398, D1/D2)', () => {
+  describe('o cadastro sempre aberto (TEC-398, D1)', () => {
     it('o cadastro aparece sem clique, no cartao "Cadastrar novo imóvel"', () => {
-      render(<FormularioDeImovel imovel={null} />)
+      render(<FormularioDeImovel />)
 
       expect(screen.getByRole('region', { name: 'Cadastrar novo imóvel' })).toBeInTheDocument()
       expect(screen.getByRole('textbox', { name: 'Código' })).toHaveAttribute('aria-required', 'true')
@@ -275,21 +158,13 @@ describe('FormularioDeImovel', () => {
     })
 
     it('"Cancelar" no cadastro limpa o que foi digitado, sem chamar a API', async () => {
-      render(<FormularioDeImovel imovel={null} />)
+      render(<FormularioDeImovel />)
 
       digitar('Título', 'Casa no bairro Bela Vista')
       await clicar('Cancelar')
 
       expect(screen.getByLabelText('Título')).toHaveValue('')
       expect(api).not.toHaveBeenCalled()
-    })
-
-    it('"Editar" abre o modal "Editar imóvel"', async () => {
-      render(<FormularioDeImovel imovel={IMOVEL} />)
-
-      await clicar('Editar')
-
-      expect(screen.getByRole('dialog', { name: 'Editar imóvel' })).toHaveAttribute('open')
     })
   })
 })

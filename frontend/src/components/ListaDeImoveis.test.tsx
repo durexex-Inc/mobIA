@@ -99,7 +99,11 @@ describe('ListaDeImoveis (D6 do desenho)', () => {
   it('cada linha oferece editar, mesmo a retirada -- reativar e editar o Status', () => {
     render(<ListaDeImoveis imoveis={[imovel({ status: 'INATIVO', titulo: 'Retirado' })]} />)
 
-    expect(within(linhaDe('Retirado')).getByRole('button', { name: 'Editar' })).toBeInTheDocument()
+    // Desde a TEC-400, "Editar" e um link para a pagina do imovel, nao um modal.
+    expect(within(linhaDe('Retirado')).getByRole('link', { name: 'Editar' })).toHaveAttribute(
+      'href',
+      '/admin/imoveis/i-1',
+    )
   })
 
   it('lista vazia mostra o estado vazio, e o botao leva o foco ao "Codigo" do cadastro (TEC-398, D5)', () => {

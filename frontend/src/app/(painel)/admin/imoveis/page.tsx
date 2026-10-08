@@ -89,7 +89,7 @@ export default async function PaginaDeImoveis() {
       <p className="painel__descricao">
         O catálogo que o agente busca e recomenda: cadastro de unidades e importação em lote por CSV.
       </p>
-      <FormularioDeImovel imovel={null} />
+      <FormularioDeImovel />
       <ImportarImoveis importacaoInicial={importacaoRecente} />
       {erro ? (
         <ErroDeCarga
