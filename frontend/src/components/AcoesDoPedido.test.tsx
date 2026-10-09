@@ -72,6 +72,42 @@ describe('AcoesDoPedido', () => {
     expect(screen.getByRole('button', { name: 'Atribuir' })).toBeEnabled()
   })
 
+  it('sem corretor, o seletor comeca em "Escolha…" e Atribuir so habilita ao escolher', () => {
+    render(
+      <AcoesDoPedido
+        atendimento={{ ...PENDENTE_DA_ANA, corretor: null, semCorretor: true }}
+        corretorId={null}
+        podeAtribuir
+        corretores={CORRETORES}
+      />,
+    )
+
+    const seletor = screen.getByRole('combobox', { name: 'Corretor' }) as HTMLSelectElement
+    expect(seletor).toHaveValue('')
+    expect(seletor.selectedOptions[0].text).toBe('Escolha…')
+    expect(screen.getByRole('button', { name: 'Atribuir' })).toBeDisabled()
+
+    fireEvent.change(seletor, { target: { value: 'c-b' } })
+
+    expect(screen.getByRole('button', { name: 'Atribuir' })).toBeEnabled()
+  })
+
+  it('o dono atual fora da lista de ativos aparece selecionado, e Atribuir fica desabilitado', () => {
+    render(
+      <AcoesDoPedido
+        atendimento={{ ...PENDENTE_DA_ANA, corretor: { id: 'c-x', nome: 'Xavier' } }}
+        corretorId={null}
+        podeAtribuir
+        corretores={CORRETORES}
+      />,
+    )
+
+    const seletor = screen.getByRole('combobox', { name: 'Corretor' }) as HTMLSelectElement
+    expect(seletor).toHaveValue('c-x')
+    expect(seletor.selectedOptions[0].text).toBe('Xavier')
+    expect(screen.getByRole('button', { name: 'Atribuir' })).toBeDisabled()
+  })
+
   it('sem podeAtribuir nao ha seletor', () => {
     render(<AcoesDoPedido atendimento={PENDENTE_DA_ANA} corretorId="c-a" podeAtribuir={false} corretores={CORRETORES} />)
     expect(screen.queryByRole('combobox')).toBeNull()

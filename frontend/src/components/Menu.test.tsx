@@ -32,11 +32,14 @@ describe('Menu', () => {
     expect(formulario).toHaveAttribute('action', '/sair')
   })
 
-  it('CORRETOR ve so a lista de leads (TEC-321)', () => {
+  it('CORRETOR ve leads e pedidos de interesse, e nem funil nem administracao (TEC-321, TEC-404)', () => {
     render(<Menu quem={quem('CORRETOR', ['VER_LEADS', 'ATENDER_LEAD'])} />)
 
+    // Os dois vem de VER_LEADS (D9 da TEC-404); o funil e a administracao
+    // continuam fora, porque o CORRETOR nao tem as permissoes deles.
     expect(screen.getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
       '/leads',
+      '/interesses',
     ])
     expect(screen.getByText('Corretor')).toBeInTheDocument()
   })
