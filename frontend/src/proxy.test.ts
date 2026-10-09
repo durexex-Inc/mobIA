@@ -7,6 +7,8 @@ import { COOKIE_DA_SESSAO as COOKIE_DA_SESSAO_DE_VERDADE } from '@/lib/servidor/
 import { config, COOKIE_DA_SESSAO, politicaDeSeguranca, proxy } from './proxy'
 
 const PAINEL = 'https://painel.exemplo.com'
+const IMOVEL = '375dbdc1-0267-4d12-bc6f-b01eb04e57e6'
+const FOTO = 'c8c48620-4bc8-4fe8-998c-d3b1c1b09e9b'
 
 /**
  * Por padrao, a requisicao leva o cookie da sessao: os testes da CSP sao
@@ -227,6 +229,21 @@ describe('proxy sem sessao (TEC-309, D5)', () => {
       )
     },
   )
+
+  it('a foto do portal abre sem sessao (TEC-403): sem isso o `<img>` do visitante levava 307', async () => {
+    expect(await destinoDe(`/portal/imoveis/${IMOVEL}/fotos/${FOTO}`)).toBeNull()
+  })
+
+  it.each([
+    `/portal/imoveis/${IMOVEL}`,
+    `/portal/imoveis/${IMOVEL}/fotos`,
+    `/portal/imoveis/${IMOVEL}/fotos/${FOTO}/extra`,
+    `/portal/imoveis//fotos/${FOTO}`,
+    '/portal/outra-coisa',
+    '/portalx/imoveis/i/fotos/f',
+  ])('%s continua exigindo sessao: so a forma exata da foto e publica', async (caminho) => {
+    expect(await destinoDe(caminho)).toMatch(/\/login/)
+  })
 
   it.each(['/', '/leads', '/embedx'])(
     '%s continua negando iframe: afrouxar a rota errada e o que este teste pega',
