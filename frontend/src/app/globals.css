@@ -1079,6 +1079,50 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Pedidos de interesse (TEC-404) ---------------------------------------- */
+
+/* Pendentes/Todos, como links: o ativo leva `aria-current`. */
+.pedidos-filtro {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.pedidos-filtro a[aria-current='page'] {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* Sem corretor ninguem foi avisado (D9): a linha fica na cor de aviso do
+   painel, `--aviso`, a mesma de `.funil-conversao-aviso`. O texto "Sem
+   corretor" diz o mesmo para quem nao ve a cor. */
+.leads-tabela tbody tr.pedido--sem-corretor {
+  background: color-mix(in srgb, var(--aviso) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--aviso);
+}
+
+.pedido--sem-corretor .pedido__situacao {
+  font-weight: 600;
+  color: var(--aviso);
+}
+
+.acoes-do-pedido,
+.acoes-do-pedido__atribuir {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.acoes-do-pedido__aviso {
+  white-space: normal;
+  color: var(--aviso);
+}
+
+.pedidos-proxima {
+  margin-top: 1rem;
+}
+
 /* --- Detalhe do lead (TEC-323) --------------------------------------------- */
 
 .detalhe-cabecalho {
