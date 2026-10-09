@@ -111,9 +111,10 @@ class Entidade(StrEnum):
 # e `detalhe` e `transcricao` sao das leituras da TEC-193.
 CAMPO_RESUMO = "resumo"
 CAMPO_TELEFONE = "telefone"
-# Sem fonte: nenhuma tabela deste sistema guarda e-mail de lead (TEC-195, D7).
-# A rota o aceita e devolve nulo, para que a tela nao precise mudar quando a
-# coluna nascer.
+# Desde a TEC-404 a fonte e `solicitacoes_de_interesse.email_cifrado`, lida por
+# `POST /api/v1/interesses/{id}/revelar`. Lead de conversa continua sem e-mail:
+# a rota de leads aceita o campo e devolve nulo (TEC-195, D7), para que a tela
+# nao precise mudar se a coluna um dia nascer la.
 CAMPO_EMAIL = "email"
 # TEC-193, D3. Nao se REVELAM -- se leem, e o GET que os le e o que registra.
 # `detalhe` cobre a tela inteira (resumo e qualificacao inclusos), e
