@@ -6,7 +6,9 @@ usado para enviar; o que mudou e que ele passa a ficar gravado, porque a lista
 de leads precisa responder "de quem e este lead". Foi o unico escritor ate a
 TEC-404, que trouxe o segundo: a atribuicao do admin
 (`domain/handoff/atribuicao.py::atribuir`, emenda E-07), que sobrescreve e
-depois enfileira este job para avisar o novo dono.
+depois enfileira este job para avisar o novo dono. Por isso a primeira leitura
+do handoff aqui e `FOR UPDATE`: um job antigo em voo nao pode gravar o dono e o
+prazo dele por cima de uma atribuicao que commitou no meio.
 """
 
 import uuid
@@ -117,8 +119,15 @@ async def notificar(
     agora = datetime.now(UTC)
 
     async with session_factory() as session:
+        # FOR UPDATE, segurado so ate o commit abaixo -- nenhuma chamada de
+        # rede acontece dentro desta sessao. Serializa com o FOR UPDATE de
+        # `atribuir` (TEC-404): sem ele, um job que lesse `corretor_id` nulo
+        # e commitasse DEPOIS da atribuicao gravaria o plantonista e o prazo
+        # dele por cima do dono que o admin acabou de escolher, e o novo dono
+        # nunca seria avisado. Com ele, ou este job termina antes (e a
+        # atribuicao zera o que ele gravou), ou le a linha ja atribuida.
         handoff = (
-            await session.execute(select(Handoff).where(Handoff.id == handoff_id))
+            await session.execute(select(Handoff).where(Handoff.id == handoff_id).with_for_update())
         ).scalar_one_or_none()
         if handoff is None:
             # Sumiu entre o agendamento e a execucao (um TRUNCATE de teste, uma
@@ -253,6 +262,15 @@ async def notificar(
         else:
             algum_canal_aceitou = True
 
+    # **Escrita cega, declarada e nao corrigida (TEC-404).** O UPDATE abaixo e
+    # so por id. Se uma atribuicao commitar enquanto os canais acima enviam,
+    # este desfecho -- do aviso ao dono ANTERIOR -- cai sobre a linha ja
+    # zerada pela atribuicao: `notificado_em` preenchido (ou
+    # `aviso_manual_pendente` verdadeiro) sem que o novo dono tenha sido
+    # avisado. O caso comum se corrige sozinho, porque o job da atribuicao
+    # roda depois e regrava as duas colunas. O que sobra: se o job novo se
+    # perder no enfileiramento, qualquer uma das duas colunas gravada aqui
+    # tira a linha da selecao de `recuperar_sem_prazo`, e ninguem a reenfileira.
     async with session_factory() as session:
         if algum_canal_aceitou:
             # `aviso_manual_pendente=False` junto: as duas colunas dizem o

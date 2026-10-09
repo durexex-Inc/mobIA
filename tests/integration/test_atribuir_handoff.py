@@ -1,15 +1,27 @@
-"""TEC-404, D1, D6 e D7: o admin troca o corretor, e o prazo recomeca."""
+"""TEC-404, D1, D6 e D7: o admin troca o corretor, e o prazo recomeca.
 
+Tambem as corridas da atribuicao com quem disputa a mesma linha -- o aceite do
+dono anterior, a escalada e um `notificar` antigo em voo --, cada uma forcada
+na ordem ruim em vez de esperada ao acaso.
+"""
+
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, text, update
 
+from mobia.api.routes import handoffs as rota_de_handoffs
+from mobia.domain.auditoria.vocabulario import Ator, AtorTipo
+from mobia.domain.handoff.atribuicao import atribuir
+from mobia.domain.handoff.escalada import escalar_vencidos
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import Status
 from mobia.domain.notificacao.envio import notificar
 from tests.conftest import cabecalho_de
+
+_ADMIN = Ator(AtorTipo.USUARIO, id=str(uuid.uuid4()))
 
 
 async def _handoff(semear_handoff_com_resumo) -> uuid.UUID:
@@ -134,7 +146,11 @@ async def test_mesmo_corretor_em_pendente_nao_faz_nada(
     )
 
     assert resposta.status_code == 200, resposta.text
-    assert resposta.json()["aceitoDesfeito"] is False
+    assert resposta.json() == {
+        "status": Status.PENDENTE.value,
+        "corretorId": str(a.id),
+        "aceitoDesfeito": False,
+    }
     assert await _jobs(redis_pool) == antes
     assert await _eventos_de_atribuicao(session) == 0
 
@@ -313,3 +329,168 @@ async def test_a_notificacao_seguinte_conta_o_prazo_pela_jornada_do_novo(
     assert linha.sla_limite_em is not None
     limite = linha.sla_limite_em.astimezone(fuso)
     assert fora[0] <= limite.hour <= fora[1]
+
+
+async def _atribuir_e_commitar(session_factory, *, handoff_id: uuid.UUID, corretor_id: uuid.UUID):
+    async with session_factory() as outra:
+        await atribuir(
+            outra, handoff_id=handoff_id, corretor_id=corretor_id, ator=_ADMIN, origem=None
+        )
+        await outra.commit()
+
+
+async def _acessos_negados(session: Any) -> int:
+    return (
+        await session.execute(
+            text("SELECT count(*) FROM eventos_auditoria WHERE acao = 'ACESSO_NEGADO'")
+        )
+    ).scalar_one()
+
+
+async def test_dono_anterior_nao_aceita_depois_da_atribuicao(
+    client, session, semear_corretor, semear_handoff_com_resumo
+) -> None:
+    a = await semear_corretor(email="a@ex.com")
+    b = await semear_corretor(email="b@ex.com")
+    handoff_id = await _handoff(semear_handoff_com_resumo)
+    await session.execute(update(Handoff).where(Handoff.id == handoff_id).values(corretor_id=a.id))
+    await session.commit()
+    atribuicao = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/atribuir",
+        json={"corretorId": str(b.id)},
+        headers=cabecalho_de("ADMIN"),
+    )
+    assert atribuicao.status_code == 200, atribuicao.text
+
+    resposta = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar",
+        headers=cabecalho_de("CORRETOR", corretor_id=a.id),
+    )
+
+    assert resposta.status_code == 403
+    assert resposta.json()["detail"] == "forbidden"
+    linha = await _linha(session, handoff_id)
+    assert (linha.corretor_id, linha.status, linha.aceito_em) == (b.id, Status.PENDENTE, None)
+
+
+async def test_atribuicao_entre_a_checagem_de_dono_e_o_aceite_vira_403(
+    client, session, session_factory, semear_corretor, semear_handoff_com_resumo, monkeypatch
+) -> None:
+    """A corrida, na ordem ruim: `_exigir_dono_do` aprova A, a atribuicao a B
+    commita, e SO DEPOIS o UPDATE do aceite roda. E o WHERE dele que tem de
+    recusar -- a checagem anterior ja passou."""
+    a = await semear_corretor(email="a@ex.com")
+    b = await semear_corretor(email="b@ex.com")
+    handoff_id = await _handoff(semear_handoff_com_resumo)
+    await session.execute(update(Handoff).where(Handoff.id == handoff_id).values(corretor_id=a.id))
+    await session.commit()
+
+    original = rota_de_handoffs._exigir_dono_do
+
+    async def _checa_e_entao_atribui(*args: Any, **kwargs: Any) -> None:
+        await original(*args, **kwargs)
+        await _atribuir_e_commitar(session_factory, handoff_id=handoff_id, corretor_id=b.id)
+
+    monkeypatch.setattr(rota_de_handoffs, "_exigir_dono_do", _checa_e_entao_atribui)
+
+    resposta = await client.post(
+        f"/api/v1/handoffs/{handoff_id}/aceitar",
+        headers=cabecalho_de("CORRETOR", corretor_id=a.id),
+    )
+
+    assert resposta.status_code == 403
+    assert resposta.json()["detail"] == "forbidden"
+    linha = await _linha(session, handoff_id)
+    assert (linha.corretor_id, linha.status, linha.aceito_em) == (b.id, Status.PENDENTE, None)
+    assert await _acessos_negados(session) == 1
+
+
+class _SessaoComGancho:
+    """Repassa tudo a sessao real, mas roda `gancho` antes do SEGUNDO `execute`."""
+
+    def __init__(self, sessao: Any, gancho: Any) -> None:
+        self._sessao = sessao
+        self._gancho = gancho
+        self._chamadas = 0
+
+    async def __aenter__(self) -> "_SessaoComGancho":
+        await self._sessao.__aenter__()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self._sessao.__aexit__(*exc)
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        self._chamadas += 1
+        if self._chamadas == 2:
+            await self._gancho()
+        return await self._sessao.execute(*args, **kwargs)
+
+    def __getattr__(self, nome: str) -> Any:
+        return getattr(self._sessao, nome)
+
+
+async def test_escalada_que_ja_tinha_selecionado_nao_escala_o_recem_atribuido(
+    session, session_factory, semear_corretor, semear_handoff_com_resumo
+) -> None:
+    """`escalar_vencidos` seleciona o handoff vencido de A; a atribuicao a B
+    commita antes do UPDATE dela. O UPDATE tem de ver o prazo zerado e nao
+    escalar."""
+    a = await semear_corretor(email="a@ex.com")
+    b = await semear_corretor(email="b@ex.com")
+    handoff_id = await _handoff(semear_handoff_com_resumo)
+    await session.execute(
+        update(Handoff)
+        .where(Handoff.id == handoff_id)
+        .values(corretor_id=a.id, sla_limite_em=datetime.now(UTC) - timedelta(minutes=5))
+    )
+    await session.commit()
+
+    disparou = False
+
+    async def _atribui_uma_vez() -> None:
+        nonlocal disparou
+        if not disparou:
+            disparou = True
+            await _atribuir_e_commitar(session_factory, handoff_id=handoff_id, corretor_id=b.id)
+
+    fabrica: Any = lambda: _SessaoComGancho(session_factory(), _atribui_uma_vez)  # noqa: E731
+
+    total = await escalar_vencidos(fabrica, canais=())
+
+    assert disparou
+    assert total == 0
+    linha = await _linha(session, handoff_id)
+    assert (linha.corretor_id, linha.status) == (b.id, Status.PENDENTE)
+
+
+async def test_notificar_antigo_em_voo_nao_grava_por_cima_da_atribuicao(
+    session, session_factory, semear_corretor, semear_handoff_com_resumo
+) -> None:
+    """O caso do portal: handoff sem dono, o `notificar` do nascimento escolheria
+    o plantonista. A atribuicao a B segura a linha; o job tem de esperar e ler
+    B, e nao gravar o plantonista e o prazo dele por cima."""
+    await semear_corretor(email="plantao@ex.com", plantao=True)
+    b = await semear_corretor(email="b@ex.com")
+    handoff_id = await _handoff(semear_handoff_com_resumo)
+
+    atribuindo = session_factory()
+    await atribuir(atribuindo, handoff_id=handoff_id, corretor_id=b.id, ator=_ADMIN, origem=None)
+    email = _CanalEspiao("email")
+    job = asyncio.create_task(
+        notificar(
+            session_factory, canais=(email,), outbound=_OutboundFalso(), handoff_id=handoff_id
+        )
+    )
+    try:
+        await asyncio.sleep(1)
+        assert not job.done(), "notificar devia esperar o lock da atribuicao"
+        await atribuindo.commit()
+    finally:
+        await atribuindo.close()
+    await job
+
+    linha = await _linha(session, handoff_id)
+    assert linha.corretor_id == b.id
+    assert email.recebidas == [b.email]
+    assert linha.sla_limite_em is not None

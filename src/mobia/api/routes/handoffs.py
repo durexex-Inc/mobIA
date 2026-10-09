@@ -219,19 +219,25 @@ async def aceitar(
     # `corretor_id`. Quem o grava e a notificacao (Emenda E-06 da RN-16.2), so
     # quando nulo, e desde a TEC-404 a atribuicao do admin
     # (`domain/handoff/atribuicao.py::atribuir`, Emenda E-07), que o
-    # sobrescreve. Esta sim pode mudar a resposta entre esta leitura e o UPDATE:
-    # o UPDATE nao repete a condicao de dono, entao o aceite do dono anterior
-    # que chegar nesse intervalo grava sobre o handoff ja atribuido a outro.
+    # sobrescreve -- e esta sim pode mudar a resposta entre esta leitura e o
+    # UPDATE. Por isso, para o CORRETOR, o UPDATE repete a condicao de dono
+    # (abaixo): sem ela, o aceite do dono anterior que chegasse nesse intervalo
+    # seria reavaliado pelo Postgres contra a linha ja atribuida (PENDENTE,
+    # outro dono), passaria, e gravaria ACEITO no handoff de outro.
     await _exigir_dono_do(handoff_id, request, identidade)
 
     session_factory = get_sessionmaker()
     agora = datetime.now(UTC)
 
+    condicao = [Handoff.id == handoff_id, Handoff.status.in_(_ACEITAVEIS)]
+    if identidade.e_corretor:
+        condicao.append(Handoff.corretor_id == identidade.corretor_id)
+
     async with session_factory() as session:
         linha = (
             await session.execute(
                 update(Handoff)
-                .where(Handoff.id == handoff_id, Handoff.status.in_(_ACEITAVEIS))
+                .where(*condicao)
                 .values(status=Status.ACEITO.value, aceito_em=agora, atualizado_em=agora)
                 .returning(Handoff.sla_limite_em)
             )
@@ -253,11 +259,21 @@ async def aceitar(
             }
 
         existe = (
-            await session.execute(select(Handoff.id).where(Handoff.id == handoff_id))
-        ).scalar_one_or_none()
+            await session.execute(
+                select(Handoff.id, Handoff.corretor_id).where(Handoff.id == handoff_id)
+            )
+        ).first()
 
     if existe is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="handoff nao existe")
+    # RETURNING vazio para um CORRETOR pode ser "ja aceito" OU "deixou de ser
+    # seu" (a atribuicao da TEC-404 trocou o dono depois de `_exigir_dono_do`).
+    # O segundo caso e negado pelo mesmo caminho da checagem inicial -- 403,
+    # com ACESSO_NEGADO na trilha --, e nao vira um 409 que esconderia a troca.
+    # Fora da sessao acima: `exigir_dono` grava a negativa numa sessao propria.
+    await exigir_dono(
+        request, identidade, permissao=Permissao.ATENDER_LEAD, corretor_id=existe.corretor_id
+    )
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="handoff ja aceito")
 
 
@@ -318,7 +334,9 @@ async def atribuir_handoff(
         )
 
     return {
-        "status": Status.PENDENTE.value if resultado.mudou else None,
+        # PENDENTE nos dois ramos: o no-op da D7 so acontece com o handoff ja
+        # PENDENTE, e a atribuicao efetiva o deixa PENDENTE.
+        "status": Status.PENDENTE.value,
         "corretorId": str(pedido.corretorId),
         "aceitoDesfeito": resultado.aceito_desfeito,
     }

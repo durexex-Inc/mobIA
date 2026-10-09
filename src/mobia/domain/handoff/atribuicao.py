@@ -77,12 +77,16 @@ async def atribuir(
 
     # FOR UPDATE: a leitura do status e a escrita abaixo precisam ver a mesma
     # versao da linha. Um `aceitar` que commitar antes faz este SELECT esperar
-    # e ler ACEITO -- e o aceite e desfeito e registrado como tal. O que o lock
-    # NAO impede: `aceitar` e `escalar_vencidos` sao UPDATEs condicionados so a
-    # `status`, e os que estiverem esperando por esta linha reavaliam a
-    # condicao depois do nosso commit, ja contra PENDENTE. Um aceite do dono
-    # anterior ou uma escalada de um prazo que JA tinha vencido podem, assim,
-    # cair logo em seguida sobre o handoff recem-atribuido.
+    # e ler ACEITO -- e o aceite e desfeito e registrado como tal. Quem esperar
+    # por esta linha reavalia a propria condicao depois do nosso commit, contra
+    # a linha ja atribuida, e cada um a repete por isso:
+    # - `aceitar` exige, para o CORRETOR, `corretor_id` igual ao dele no WHERE
+    #   -- o dono anterior recebe 403, nao grava ACEITO no handoff de outro;
+    # - `escalar_vencidos` exige o prazo vencido no WHERE, e aqui ele vira nulo;
+    # - `notificar` le com o mesmo FOR UPDATE, e um job antigo em voo le a
+    #   linha ja atribuida em vez de gravar o plantonista por cima.
+    # O que sobra e a escrita final de `notificar`, por id, depois dos envios
+    # -- ver o comentario la.
     handoff = (
         await session.execute(select(Handoff).where(Handoff.id == handoff_id).with_for_update())
     ).scalar_one_or_none()

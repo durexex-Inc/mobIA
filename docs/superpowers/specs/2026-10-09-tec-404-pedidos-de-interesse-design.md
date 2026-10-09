@@ -26,7 +26,7 @@ Hoje o pedido é gravado (`solicitacoes_de_interesse` e um handoff `INTERESSE_PO
 - grava `atualizado_em`;
 - registra na trilha o corretor anterior e o novo (D6).
 
-Depois do commit, a rota enfileira `notificar_corretor` com **job id novo**, `notificar:{handoff_id}:atribuicao:{uuid4}`. O id `notificar:{handoff_id}` da primeira notificação pode estar retido no Redis como resultado, e o arq descartaria um job com o mesmo id.
+Depois do commit, a rota enfileira `notificar_corretor` com **job id novo**, `notificar:{handoff_id}:atribuicao:{uuid4}`. O arq descarta em silêncio um enqueue cujo id já tem chave de job ou de resultado no Redis. A de resultado não é o problema: `notificar_corretor` roda com `keep_result=0`. A de job, sim: o `notificar:{handoff_id}` da primeira notificação existe enquanto aquele job está na fila, rodando ou entre retentativas, e uma atribuição logo depois do nascimento do handoff cai nesse intervalo.
 
 A partir daí, `notificacao/envio.py::notificar` faz o que já faz:
 
