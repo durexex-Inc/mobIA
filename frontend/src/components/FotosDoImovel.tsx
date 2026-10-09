@@ -47,6 +47,8 @@ export function FotosDoImovel({
   const [enviando, setEnviando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [arrastando, setArrastando] = useState<number | null>(null)
+  const [sobreACaixa, setSobreACaixa] = useState(false)
+  const [progresso, setProgresso] = useState<{ atual: number; total: number } | null>(null)
 
   async function aplicarPatch(novaLista: string[]): Promise<boolean> {
     setEnviando(true)
@@ -93,15 +95,12 @@ export function FotosDoImovel({
     await aplicarPatch(remover(fotos, indice))
   }
 
-  async function enviarArquivo(arquivo: File) {
+  /** Envia um arquivo; devolve a mensagem de recusa, ou `null` se entrou. */
+  async function enviarArquivo(arquivo: File): Promise<string | null> {
     const recusa = recusaDoArquivo(arquivo)
     if (recusa) {
-      setErro(recusa)
-      return
+      return recusa
     }
-
-    setEnviando(true)
-    setErro(null)
 
     const corpo = new FormData()
     corpo.append('arquivo', arquivo)
@@ -113,12 +112,9 @@ export function FotosDoImovel({
         body: corpo,
       })
     } catch {
-      setEnviando(false)
-      setErro('Não foi possível falar com o servidor. Tente de novo.')
-      return
+      return 'Não foi possível falar com o servidor. Tente de novo.'
     }
 
-    setEnviando(false)
     if (!resposta.ok) {
       let detail: unknown
       try {
@@ -126,22 +122,85 @@ export function FotosDoImovel({
       } catch {
         detail = undefined
       }
-      setErro(mensagemDeErroDoEnvio(resposta.status, detail))
-      return
+      return mensagemDeErroDoEnvio(resposta.status, detail)
     }
 
     const dados = (await resposta.json()) as { fotos: string[] }
     onFotosMudaram(dados.fotos)
+    return null
+  }
+
+  /**
+   * Envia varios arquivos, UM POST POR VEZ: o endpoint recebe um arquivo so,
+   * e em sequencia cada resposta traz a lista inteira ja com a foto anterior
+   * -- em paralelo, a ultima resposta a chegar ganharia e esconderia fotos
+   * que o servidor guardou. Um arquivo recusado nao interrompe os outros.
+   *
+   * O que passa das vagas restantes nem e enviado: o backend recusaria do
+   * mesmo jeito, so que depois de subir os bytes.
+   */
+  async function enviarArquivos(arquivos: File[]) {
+    if (enviando || arquivos.length === 0) {
+      return
+    }
+    const vagas = Math.max(FOTO_LIMITE_POR_IMOVEL - fotos.length, 0)
+    const aceitos = arquivos.slice(0, vagas)
+    const recusas: string[] = []
+    if (arquivos.length > vagas) {
+      const fora = arquivos.length - vagas
+      recusas.push(
+        `Só cabem mais ${vagas} foto(s) neste imóvel; ${fora} arquivo(s) ficaram de fora.`,
+      )
+    }
+
+    setEnviando(true)
+    setErro(null)
+    for (const [indice, arquivo] of aceitos.entries()) {
+      setProgresso({ atual: indice + 1, total: aceitos.length })
+      const recusa = await enviarArquivo(arquivo)
+      if (recusa) {
+        recusas.push(arquivos.length > 1 ? `${arquivo.name}: ${recusa}` : recusa)
+      }
+    }
+    setProgresso(null)
+    setEnviando(false)
+    if (recusas.length > 0) {
+      setErro(recusas.join(' '))
+    }
     if (inputRef.current) {
       inputRef.current.value = ''
     }
   }
 
   async function selecionar(evento: ChangeEvent<HTMLInputElement>) {
-    const arquivo = evento.target.files?.[0]
-    if (arquivo) {
-      await enviarArquivo(arquivo)
+    await enviarArquivos(Array.from(evento.target.files ?? []))
+  }
+
+  // So arraste que traz arquivo acende a caixa: arrastar uma miniatura por
+  // cima dela nao e upload.
+  function arquivoSobre(evento: DragEvent<HTMLDivElement>) {
+    if (!evento.dataTransfer.types.includes('Files')) {
+      return
     }
+    evento.preventDefault()
+    evento.dataTransfer.dropEffect = enviando ? 'none' : 'copy'
+    setSobreACaixa(true)
+  }
+
+  function arquivoSaiu(evento: DragEvent<HTMLDivElement>) {
+    // `dragleave` dispara tambem ao passar para um filho; so apaga ao sair
+    // da caixa de verdade.
+    if (!evento.currentTarget.contains(evento.relatedTarget as Node | null)) {
+      setSobreACaixa(false)
+    }
+  }
+
+  // O `preventDefault` aqui cancela o soltar nativo no `<input>`, que so
+  // aceitaria o que o navegador decidisse; o caminho e um so, este.
+  async function soltarArquivos(evento: DragEvent<HTMLDivElement>) {
+    evento.preventDefault()
+    setSobreACaixa(false)
+    await enviarArquivos(Array.from(evento.dataTransfer.files))
   }
 
   function arrastarInicio(indice: number) {
@@ -240,22 +299,31 @@ export function FotosDoImovel({
           O imóvel já tem o limite de {FOTO_LIMITE_POR_IMOVEL} fotos.
         </p>
       ) : (
-        // A area de soltar e o proprio `<input type="file">`, esticado por cima
-        // da caixa tracejada: o navegador ja aceita arquivo solto sobre ele, e
-        // o clique abre o seletor -- sem logica de arraste nova (TEC-400).
-        <div className="fotos-do-imovel__campo">
+        // O `<input type="file">` fica esticado por cima da caixa tracejada,
+        // invisivel, para o clique em qualquer ponto abrir o seletor (TEC-400).
+        // O soltar, porem, e tratado na caixa (`soltarArquivos`), nao no input.
+        <div
+          className={`fotos-do-imovel__campo${sobreACaixa ? ' fotos-do-imovel__campo--sobre' : ''}`}
+          onDragEnter={arquivoSobre}
+          onDragOver={arquivoSobre}
+          onDragLeave={arquivoSaiu}
+          onDrop={soltarArquivos}
+        >
           <input
             id={inputId}
             ref={inputRef}
             type="file"
+            multiple
             accept="image/jpeg,image/png,image/webp"
             onChange={selecionar}
             disabled={enviando}
             aria-describedby={`${inputId}-ajuda`}
           />
-          <label htmlFor={inputId}>Adicionar foto</label>
-          <span id={`${inputId}-ajuda`} className="fotos-do-imovel__ajuda">
-            Solte o arquivo aqui ou clique para escolher. JPG, PNG ou WEBP, até {FOTO_TETO_DE_BYTES / (1024 * 1024)} MB.
+          <label htmlFor={inputId}>Adicionar fotos</label>
+          <span id={`${inputId}-ajuda`} className="fotos-do-imovel__ajuda" aria-live="polite">
+            {progresso
+              ? `Enviando ${progresso.atual} de ${progresso.total}…`
+              : `Solte uma ou mais fotos aqui, ou clique para escolher. JPG, PNG ou WEBP, até ${FOTO_TETO_DE_BYTES / (1024 * 1024)} MB cada.`}
           </span>
         </div>
       )}

@@ -3237,12 +3237,17 @@ a {
 }
 
 .fotos-do-imovel__campo:hover,
-.fotos-do-imovel__campo:focus-within {
+.fotos-do-imovel__campo:focus-within,
+.fotos-do-imovel__campo--sobre {
   border-color: var(--primaria);
 }
 
-/* O `<input type="file">` cobre a caixa inteira, invisivel: clicar ou soltar
-   em qualquer ponto dela cai nele. */
+.fotos-do-imovel__campo--sobre {
+  background: color-mix(in srgb, var(--primaria) 8%, transparent);
+}
+
+/* O `<input type="file">` cobre a caixa inteira, invisivel: clicar em
+   qualquer ponto dela cai nele. O soltar e tratado pela caixa, no componente. */
 .fotos-do-imovel__campo input[type="file"] {
   position: absolute;
   inset: 0;
