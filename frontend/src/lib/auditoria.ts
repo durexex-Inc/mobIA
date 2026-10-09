@@ -43,6 +43,7 @@ export const ACOES: Record<string, string> = {
   DADOS_EXPORTADOS: 'Dados exportados',
   LEAD_ANONIMIZADO: 'Lead anonimizado',
   TITULAR_RECUSADO: 'Titular recusado',
+  HANDOFF_ATRIBUIDO: 'Handoff atribuído',
 }
 
 /** As entidades (`Entidade` de `domain/auditoria/vocabulario.py`). */
@@ -70,6 +71,8 @@ const ACOES_DE_ALTERACAO = new Set([
   'CONFIGURACAO_ALTERADA',
   'PROMPT_PUBLICADO',
   'PROMPT_REVERTIDO',
+  // TEC-404: o admin troca o dono de um handoff -- e alteracao feita por pessoa.
+  'HANDOFF_ATRIBUIDO',
 ])
 
 /**

@@ -145,6 +145,32 @@ describe('PaginaDePedidos', () => {
     expect(linha).toHaveTextContent('Sem corretor')
   })
 
+  it('com corretor e aviso nao entregue, destaca a linha mas nao diz "Sem corretor"', async () => {
+    responde({
+      itens: [
+        pedido({
+          atendimento: {
+            id: 'h-1',
+            status: 'ACEITO',
+            corretor: { id: 'c-a', nome: 'Ana' },
+            notificadoEm: null,
+            semCorretor: true,
+          },
+        }),
+      ],
+      proximoCursor: null,
+    })
+
+    await abrir()
+
+    const linha = screen.getByTestId('pedido')
+    expect(linha).toHaveClass('pedido--sem-corretor')
+    expect(linha).not.toHaveTextContent('Sem corretor')
+    expect(linha).toHaveTextContent('Assumido')
+    expect(linha).toHaveTextContent('Ana')
+    expect(linha).toHaveTextContent('aviso não entregue')
+  })
+
   it('sem nome, diz que nao foi informado', async () => {
     responde({ itens: [pedido({ nome: null })], proximoCursor: null })
 

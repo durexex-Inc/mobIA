@@ -23,6 +23,11 @@ describe('filtrosDaUrl / urlDaLista', () => {
     expect(urlDaLista({})).toBe('/admin/auditoria')
   })
 
+  it('aceita o tipo HANDOFF_ATRIBUIDO (TEC-404) e o classifica como alteracao', () => {
+    expect(filtrosDaUrl({ acao: 'HANDOFF_ATRIBUIDO' }).acao).toBe('HANDOFF_ATRIBUIDO')
+    expect(categoriaDaAcao('HANDOFF_ATRIBUIDO')).toBe('alteracao')
+  })
+
   it('tipo desconhecido cai em "sem filtro"', () => {
     expect(filtrosDaUrl({ acao: 'APAGOU_TUDO' })).toEqual({
       ator: undefined,

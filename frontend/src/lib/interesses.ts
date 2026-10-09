@@ -57,12 +57,18 @@ const ROTULOS: Record<AtendimentoDoPedido['status'], string> = {
   CONCLUIDO: 'Concluído',
 }
 
-/** `semCorretor` vence o status: sem dono, o status nao diz a quem cobrar. */
+/**
+ * "Sem corretor" so quando NAO ha corretor: sem dono, o status nao diz a quem
+ * cobrar. `semCorretor` sozinho nao basta -- e `aviso_manual_pendente`, que o
+ * backend tambem marca quando um corretor FOI escolhido e todo canal falhou
+ * (e o aceite nao limpa). Esse caso mostra o status normal; a tabela soma o
+ * nome do corretor e "aviso não entregue".
+ */
 export function rotuloDoAtendimento(atendimento: AtendimentoDoPedido | null): string {
   if (atendimento === null) {
     return 'Sem atendimento'
   }
-  if (atendimento.semCorretor) {
+  if (atendimento.semCorretor && atendimento.corretor === null) {
     return 'Sem corretor'
   }
   return ROTULOS[atendimento.status]

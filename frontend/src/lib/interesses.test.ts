@@ -38,6 +38,11 @@ describe('rotuloDoAtendimento', () => {
     ).toBe('Sem corretor')
   })
 
+  it('com corretor, semCorretor nao vira "Sem corretor": o status continua valendo', () => {
+    expect(rotuloDoAtendimento(atendimento({ semCorretor: true, status: 'ACEITO' }))).toBe('Assumido')
+    expect(rotuloDoAtendimento(atendimento({ semCorretor: true }))).toBe('Pendente')
+  })
+
   it('cada status tem rotulo com acento', () => {
     expect(rotuloDoAtendimento(atendimento())).toBe('Pendente')
     expect(rotuloDoAtendimento(atendimento({ status: 'ACEITO' }))).toBe('Assumido')

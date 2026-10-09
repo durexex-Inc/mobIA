@@ -17,9 +17,12 @@ import type { QuemSou } from '@/lib/servidor/quemSou'
  * pedido, e o corretor revela so o que e dele. `podeRevelarPedido` decide so
  * se o botao aparece; quem recusa o resto e o backend.
  *
- * **A linha sem corretor leva `pedido--sem-corretor`** (D9): ninguem foi
- * avisado, e e a linha que o admin precisa ver primeiro. O rotulo da situacao
- * diz o mesmo em texto, para quem nao ve a cor.
+ * **A linha com `semCorretor` leva `pedido--sem-corretor`** (D9): ninguem foi
+ * avisado, e e a linha que o admin precisa ver primeiro. O texto diz o mesmo
+ * para quem nao ve a cor: "Sem corretor" quando nao ha corretor, e, quando ha
+ * um mas todo canal falhou, o status normal com o nome dele e "aviso não
+ * entregue" -- a flag tambem sobrevive ao aceite, entao nao pode afirmar
+ * ausencia de dono.
  *
  * Reusa as classes de `leads-tabela`, com `data-rotulo` em cada celula: o
  * mesmo CSS vira cartoes no celular.
@@ -54,7 +57,8 @@ export function TabelaDePedidos({
           {itens.map((pedido) => {
             const podeRevelar = podeRevelarPedido(pedido.atendimento, quem)
             const urlDeRevelar = `/bff/api/v1/interesses/${encodeURIComponent(pedido.id)}/revelar`
-            const corretor = pedido.atendimento?.semCorretor ? null : pedido.atendimento?.corretor
+            const corretor = pedido.atendimento?.corretor
+            const avisoNaoEntregue = Boolean(corretor && pedido.atendimento?.semCorretor)
             return (
               <tr
                 key={pedido.id}
@@ -97,6 +101,7 @@ export function TabelaDePedidos({
                 <td data-rotulo="Situação" className="leads-celula-destaque">
                   <span className="pedido__situacao">{rotuloDoAtendimento(pedido.atendimento)}</span>
                   {corretor && <> · {corretor.nome}</>}
+                  {avisoNaoEntregue && <> · aviso não entregue</>}
                 </td>
                 <td data-rotulo="Ações">
                   {pedido.atendimento && (

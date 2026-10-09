@@ -124,8 +124,9 @@ CAMPO_EMAIL = "email"
 CAMPO_DETALHE = "detalhe"
 CAMPO_TRANSCRICAO = "transcricao"
 
-# Os campos que `POST /leads/{lead_id}/revelar` aceita. Fora daqui e 422, e
-# nao 500: o campo vem de quem chamou.
+# Os campos que `POST /leads/{lead_id}/revelar` e, desde a TEC-404,
+# `POST /interesses/{id}/revelar` (`api/routes/interesses.py::revelar`)
+# aceitam. Fora daqui e 422, e nao 500: o campo vem de quem chamou.
 CAMPOS_REVELAVEIS = frozenset({CAMPO_TELEFONE, CAMPO_EMAIL})
 
 # Os tres motivos que `api/autorizacao.py` produz. Um quarto, sem entrar aqui,

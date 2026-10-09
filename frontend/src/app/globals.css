@@ -1094,8 +1094,8 @@ a {
 }
 
 /* Sem corretor ninguem foi avisado (D9): a linha fica na cor de aviso do
-   painel, `--aviso`, a mesma de `.funil-conversao-aviso`. O texto "Sem
-   corretor" diz o mesmo para quem nao ve a cor. */
+   painel, `--aviso`, a mesma de `.funil-conversao-aviso`. O texto da celula
+   ("Sem corretor" ou "aviso não entregue") diz o mesmo para quem nao ve a cor. */
 .leads-tabela tbody tr.pedido--sem-corretor {
   background: color-mix(in srgb, var(--aviso) 10%, transparent);
   box-shadow: inset 3px 0 0 var(--aviso);
