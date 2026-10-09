@@ -6,8 +6,9 @@ pe.
 
 **A mascara e o que TODO chamador recebe, e nao o que alguns recebem** (D4 do
 desenho). A resposta da lista nunca contem dado pessoal, para papel nenhum --
-o unico lugar do sistema que devolve o valor cheio e
-`POST /leads/{leadId}/revelar`, que registra na trilha antes de responder.
+os unicos lugares do sistema que devolvem o valor cheio sao
+`POST /leads/{leadId}/revelar` e, desde a TEC-404, `POST /interesses/{id}/revelar`
+(pedidos do portal), que registram na trilha antes de responder.
 
 **A regra so erra para o lado de esconder.** Entrada que nao cabe na forma
 canonica sai `None`, e entrada curta demais para a regra de e-mail e mascarada

@@ -107,7 +107,8 @@ class Entidade(StrEnum):
 # lido, nunca o que ele dizia.
 #
 # `CAMPO_RESUMO` era o unico com chamador ate a TEC-195; `telefone` e `email`
-# sao da revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar`,
+# sao da revelacao de dado pessoal em `POST /api/v1/leads/{lead_id}/revelar` e,
+# desde a TEC-404, em `POST /api/v1/interesses/{id}/revelar`,
 # e `detalhe` e `transcricao` sao das leituras da TEC-193.
 CAMPO_RESUMO = "resumo"
 CAMPO_TELEFONE = "telefone"

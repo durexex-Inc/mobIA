@@ -4,6 +4,9 @@ Molde do `sweep_followups`: um job `cron` que consulta trabalho vencido e
 age. A diferenca esta na corrida com a rota de aceite (TEC-178, Task 6, que
 tira o handoff de PENDENTE), e desde a TEC-179 tambem `assumir`
 (`routes/conversas.py`) -- ver o comentario do UPDATE em `escalar_vencidos`.
+Desde a TEC-404 ha mais um concorrente: a atribuicao do admin
+(`atribuicao.py::atribuir`), que reinicia o prazo de um handoff que esta sendo
+escalado.
 """
 
 from collections.abc import Sequence
