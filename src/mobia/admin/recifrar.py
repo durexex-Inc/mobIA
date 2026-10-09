@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from mobia.domain.context.models import aad_do_resumo
 from mobia.domain.handoff.models import aad_do_resumo_de_handoff
 from mobia.domain.identidade.models import aad_da_identidade, aad_do_vinculo
+from mobia.domain.portal.interesse import aad_do_email_de_interesse
 from mobia.domain.usuarios.models import aad_do_totp
 from mobia.infra.crypto import aad_de, decrypt_bytes, encrypt_bytes, id_da_chave, id_da_chave_ativa
 
@@ -46,6 +47,7 @@ COLUNAS_CIFRADAS = (
     ColunaCifrada(
         "vinculos_de_sessao", ("channel", "conversation_key"), "telefone_cifrado", aad_do_vinculo
     ),
+    ColunaCifrada("solicitacoes_de_interesse", ("id",), "email_cifrado", aad_do_email_de_interesse),
 )
 
 

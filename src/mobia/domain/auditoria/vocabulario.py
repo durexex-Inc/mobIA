@@ -9,15 +9,18 @@ copias juntas e `tests/unit/test_auditoria_vocabulario.py`.
 0056 acrescentou `lead` a `Entidade` e teve de RECRIAR o CHECK, porque o
 Postgres nao estende CHECK; a 0057 (TEC-204) recriou os de `Acao` e
 `Entidade` para `INJECAO_DETECTADA` e `mensagem`; a 0058 (TEC-198) e a 0059
-(TEC-199) recriaram so o de `Acao`. Entao o vocabulario em vigor
+(TEC-199) recriaram so o de `Acao`; a 0071 (TEC-404) o recria de novo, para
+`HANDOFF_ATRIBUIDO`. Entao o vocabulario em vigor
 e o da migration mais recente que escreve cada um, e e assim que aquele teste
 procura.
 
 **`detalhes` so e montado pelas funcoes deste modulo** (D5): cada valor sai de
-um vocabulario fechado, e texto digitado por uma pessoa nunca entra. Texto
-livre pode carregar dado pessoal, e nenhum teste garante que nao carrega.
+um vocabulario fechado -- ou, nas chaves de corretor (TEC-404, D6), e um UUID --,
+e texto digitado por uma pessoa nunca entra. Texto livre pode carregar dado
+pessoal, e nenhum teste garante que nao carrega.
 """
 
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -71,6 +74,10 @@ class Acao(StrEnum):
     LEAD_ANONIMIZADO = "LEAD_ANONIMIZADO"
     # TEC-207, D6. `POST /titular/solicitacoes/{id}/recusa`.
     TITULAR_RECUSADO = "TITULAR_RECUSADO"
+    # TEC-404, D6. O admin troca o corretor de um handoff pela tela de pedidos
+    # de interesse. Entidade HANDOFF; `detalhes` diz de quem para quem, e se um
+    # aceite foi desfeito (decisao 4 da card).
+    HANDOFF_ATRIBUIDO = "HANDOFF_ATRIBUIDO"
 
 
 class Entidade(StrEnum):
@@ -126,7 +133,24 @@ MOTIVOS_DE_NEGATIVA = frozenset({"sem_permissao", "sem_sessao", "corretor_nao_e_
 _METODOS_HTTP = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 
 # O que `detalhes` pode ter como chave. `validar_detalhes` recusa o resto.
-CHAVES_DE_DETALHES = frozenset({"gatilho", "permissao", "motivo", "papel", "metodo"})
+CHAVES_DE_DETALHES = frozenset(
+    {
+        "gatilho",
+        "permissao",
+        "motivo",
+        "papel",
+        "metodo",
+        "corretor_anterior",
+        "corretor_novo",
+        "aceito_desfeito",
+    }
+)
+
+# TEC-404, D6. Id de corretor nao e vocabulario fechado, mas tambem nao e texto
+# livre: a regra e "UUID", e um texto qualquer continua sendo ValueError. O
+# booleano diz se a chave aceita nulo (so `corretor_anterior`: o handoff pode
+# nunca ter tido corretor).
+_CHAVES_DE_UUID: Mapping[str, bool] = {"corretor_anterior": True, "corretor_novo": False}
 
 # O papel vem do JWT, assinado com o nosso segredo -- mas um valor fora de
 # PAPEIS e anomalia, e anomalia nao vira texto na trilha.
@@ -134,14 +158,17 @@ PAPEL_DESCONHECIDO = "DESCONHECIDO"
 METODO_DESCONHECIDO = "OUTRO"
 
 # O que cada chave de `detalhes` pode valer: exatamente o que
-# `detalhes_da_negativa` e `detalhes_do_handoff` produzem. So `permissao` e
-# nula -- a negativa por falta de sessao nao tem permissao em jogo.
+# `detalhes_da_negativa`, `detalhes_do_handoff` e `detalhes_da_atribuicao`
+# produzem, fora as chaves de `_CHAVES_DE_UUID`, que tem regra e nao conjunto.
+# So `permissao` e nula aqui -- a negativa por falta de sessao nao tem
+# permissao em jogo.
 _VALORES_DE_DETALHES: Mapping[str, frozenset[str | None]] = {
     "gatilho": frozenset(g.value for g in Gatilho),
     "motivo": frozenset(MOTIVOS_DE_NEGATIVA),
     "permissao": frozenset({None, *(p.value for p in Permissao)}),
     "papel": frozenset({*PAPEIS, PAPEL_DESCONHECIDO}),
     "metodo": frozenset({*_METODOS_HTTP, METODO_DESCONHECIDO}),
+    "aceito_desfeito": frozenset({"sim", "nao"}),
 }
 
 
@@ -174,13 +201,27 @@ def validar_detalhes(detalhes: Mapping[str, str | None]) -> dict[str, str | None
     produzem -- `gatilho` um `Gatilho`, `motivo` um de `MOTIVOS_DE_NEGATIVA`,
     `permissao` uma `Permissao` ou nulo, `papel` um de `PAPEIS` ou
     `PAPEL_DESCONHECIDO`, `metodo` um de `_METODOS_HTTP` ou
-    `METODO_DESCONHECIDO`. Um dict escrito a mao passa so se tiver exatamente
-    esses valores: texto livre, em qualquer chave, e `ValueError`.
+    `METODO_DESCONHECIDO`, `aceito_desfeito` "sim" ou "nao". As duas chaves de
+    corretor (TEC-404) nao tem conjunto: o valor e um UUID, e
+    `corretor_anterior` aceita nulo. Um dict escrito a mao passa so se tiver
+    exatamente esses valores: texto livre, em qualquer chave, e `ValueError`.
     """
     fora = sorted(set(detalhes) - CHAVES_DE_DETALHES)
     if fora:
         raise ValueError(f"detalhes com chave fora do vocabulario: {', '.join(fora)}")
     for chave, valor in detalhes.items():
+        if chave in _CHAVES_DE_UUID:
+            if valor is None:
+                if _CHAVES_DE_UUID[chave]:
+                    continue
+                raise ValueError(f"detalhes.{chave} nao pode ser nulo")
+            # TypeError/AttributeError: `test_valor_que_nao_e_texto_e_recusado`
+            # manda int e afins, e `uuid.UUID(123)` nao levanta ValueError.
+            try:
+                uuid.UUID(valor)
+            except (ValueError, TypeError, AttributeError) as erro:
+                raise ValueError(f"detalhes.{chave} nao e UUID: {valor!r}") from erro
+            continue
         if valor not in _VALORES_DE_DETALHES[chave]:
             raise ValueError(f"detalhes.{chave} fora do vocabulario: {valor!r}")
     return dict(detalhes)
@@ -205,3 +246,14 @@ def detalhes_da_negativa(
 def detalhes_do_handoff(gatilho: Gatilho) -> dict[str, str | None]:
     """O `detalhes` de um HANDOFF_CRIADO: o gatilho que o criou, e nada mais."""
     return {"gatilho": gatilho.value}
+
+
+def detalhes_da_atribuicao(
+    *, anterior: uuid.UUID | None, novo: uuid.UUID, aceito_desfeito: bool
+) -> dict[str, str | None]:
+    """O `detalhes` de um HANDOFF_ATRIBUIDO (TEC-404, D6)."""
+    return {
+        "corretor_anterior": str(anterior) if anterior is not None else None,
+        "corretor_novo": str(novo),
+        "aceito_desfeito": "sim" if aceito_desfeito else "nao",
+    }

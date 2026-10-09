@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, DateTime, ForeignKey, Index, String
+from sqlalchemy import CursorResult, DateTime, ForeignKey, Index, LargeBinary, String
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.messages.models import Base
+from mobia.infra.crypto import aad_de
+
+
+def aad_do_email_de_interesse(solicitacao_id: uuid.UUID) -> str:
+    """Amarra o e-mail cifrado a linha do pedido (TEC-404, D3). Molde de
+    `handoff/models.py::aad_do_resumo_de_handoff`: a identidade da linha e um
+    UUID, e `aad_de` basta."""
+    return aad_de(solicitacao_id, "email_interesse")
 
 
 class SolicitacaoDeInteresse(Base):
@@ -35,6 +43,10 @@ class SolicitacaoDeInteresse(Base):
     conversation_key: Mapped[str] = mapped_column(String(64), nullable=False)
 
     nome: Mapped[str | None] = mapped_column(String(160), nullable=True)
+
+    # TEC-404, D3. Cifrado; nulo nos pedidos anteriores a 0071 (sem backfill) e
+    # em quem nao informou. Zerado pela anonimizacao junto com `nome`.
+    email_cifrado: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     criado_em: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
