@@ -1,15 +1,17 @@
-"""A regeneracao do resumo sob demanda e o aceite pelo corretor.
+"""A regeneracao do resumo sob demanda, o aceite pelo corretor e a atribuicao pelo admin.
 
 TEC-175, RN-15.2 e D8 do desenho para a regeneracao. TEC-178 e a secao 6.5
-do SRS para o aceite.
+do SRS para o aceite. TEC-404, D1 e D7, para a atribuicao.
 
 O Gherkin diz "pelo dashboard", e o dashboard (E8) esta fora do escopo das
-duas cards. Estas rotas sao o mecanismo que ele vai chamar; ate la, e por
-elas que os criterios de aceite correspondentes sao exercitados.
+duas primeiras cards. Estas rotas sao o mecanismo que ele vai chamar; ate la,
+e por elas que os criterios de aceite correspondentes sao exercitados.
 
-Guardadas por `ATENDER_LEAD` (TEC-202), que ADMIN, GERENTE e CORRETOR tem e
-LEITURA nao: o resumo carrega dado pessoal do lead e o aceite move o estado do
-handoff, e rota aberta nao e opcao em nenhum dos dois casos.
+A regeneracao e o aceite sao guardados por `ATENDER_LEAD` (TEC-202), que
+ADMIN, GERENTE e CORRETOR tem e LEITURA nao: o resumo carrega dado pessoal do
+lead e o aceite move o estado do handoff, e rota aberta nao e opcao em nenhum
+dos dois casos. A atribuicao e do ADMIN so: `GERIR_CORRETORES`, porque trocar o
+dono de um handoff e decidir sobre a equipe, nao atender o lead.
 
 **E o papel CORRETOR so alcanca os PROPRIOS handoffs** -- `_exigir_dono_do`
 abaixo, segundo cenario do Gherkin da TEC-202. E aqui que a regra "o corretor
@@ -28,16 +30,23 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy import select, update
 
 from mobia.api.autorizacao import Exige, IdentidadeDaRequisicao, exigir_dono
 from mobia.api.middleware import origem_da_requisicao
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import CAMPO_RESUMO, Acao, Entidade
+from mobia.domain.handoff.atribuicao import (
+    AtribuicaoRecusada,
+    atribuir,
+    id_do_job_de_atribuicao,
+)
 from mobia.domain.handoff.geracao import gerar_resumo
 from mobia.domain.handoff.models import Handoff, aad_do_resumo_de_handoff
 from mobia.domain.handoff.resumo import RedatorAnthropic, link_da_transcricao
 from mobia.domain.handoff.vocabulario import ACEITAVEIS, Status
+from mobia.domain.notificacao.envio import NOTIFICAR_JOB
 from mobia.domain.usuarios.permissoes import Permissao
 from mobia.infra.crypto import decrypt
 from mobia.infra.db import get_sessionmaker
@@ -206,8 +215,13 @@ async def aceitar(
     # A leitura de `_exigir_dono_do` NAO decide nada sobre o aceite -- quem
     # decide continua sendo o RETURNING do UPDATE abaixo, pela corrida descrita
     # no docstring. Ela responde outra pergunta ("este handoff e seu?"), cuja
-    # resposta nao muda com a escalada concorrente: `corretor_id` e gravado no
-    # nascimento do handoff e `escalar_vencidos` nao o toca.
+    # resposta nao muda com a escalada concorrente: `escalar_vencidos` nao toca
+    # `corretor_id`. Quem o grava e a notificacao (Emenda E-06 da RN-16.2), so
+    # quando nulo, e desde a TEC-404 a atribuicao do admin
+    # (`domain/handoff/atribuicao.py::atribuir`, Emenda E-07), que o
+    # sobrescreve. Esta sim pode mudar a resposta entre esta leitura e o UPDATE:
+    # o UPDATE nao repete a condicao de dono, entao o aceite do dono anterior
+    # que chegar nesse intervalo grava sobre o handoff ja atribuido a outro.
     await _exigir_dono_do(handoff_id, request, identidade)
 
     session_factory = get_sessionmaker()
@@ -245,3 +259,66 @@ async def aceitar(
     if existe is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="handoff nao existe")
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="handoff ja aceito")
+
+
+class PedidoDeAtribuicao(BaseModel):
+    corretorId: uuid.UUID  # noqa: N815
+
+
+_STATUS_DA_RECUSA = {
+    "corretor_invalido": (status.HTTP_422_UNPROCESSABLE_CONTENT, "corretor inexistente ou inativo"),
+    "nao_existe": (status.HTTP_404_NOT_FOUND, "handoff nao existe"),
+    "concluido": (status.HTTP_409_CONFLICT, "handoff concluido"),
+}
+
+
+@router.post("/{handoff_id}/atribuir")
+async def atribuir_handoff(
+    handoff_id: uuid.UUID,
+    pedido: PedidoDeAtribuicao,
+    request: Request,
+    identidade: IdentidadeDaRequisicao = Depends(Exige(Permissao.GERIR_CORRETORES)),
+) -> dict[str, object]:
+    """O admin troca o corretor do handoff -- TEC-404, D1 e D7.
+
+    `GERIR_CORRETORES`, que so o ADMIN tem: e a mesma permissao de
+    `GET /api/v1/corretores`, que preenche o seletor da tela. A notificacao e
+    enfileirada DEPOIS do commit: um job que rodasse antes leria o handoff
+    ainda com o corretor antigo.
+    """
+    async with get_sessionmaker()() as session:
+        try:
+            resultado = await atribuir(
+                session,
+                handoff_id=handoff_id,
+                corretor_id=pedido.corretorId,
+                ator=identidade.como_ator(),
+                origem=origem_da_requisicao(request),
+            )
+        except AtribuicaoRecusada as recusa:
+            codigo, detalhe = _STATUS_DA_RECUSA[recusa.motivo]
+            raise HTTPException(status_code=codigo, detail=detalhe) from recusa
+        await session.commit()
+
+    if resultado.mudou:
+        # A atribuicao ja esta commitada. Se o enfileiramento falhar daqui em
+        # diante (Redis fora, pool ausente), a resposta e erro, mas o handoff
+        # nao fica perdido: ele esta PENDENTE, sem prazo, sem `notificado_em` e
+        # sem `aviso_manual_pendente` -- exatamente o que
+        # `recuperar_sem_prazo` (`domain/handoff/recuperacao.py`) seleciona e
+        # reenfileira. Por isso nao se tenta desfazer nada aqui.
+        pool = getattr(request.app.state, "redis_pool", None)
+        if pool is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="sem pool do Redis no app: a notificacao nao foi enfileirada",
+            )
+        await pool.enqueue_job(
+            NOTIFICAR_JOB, str(handoff_id), _job_id=id_do_job_de_atribuicao(handoff_id)
+        )
+
+    return {
+        "status": Status.PENDENTE.value if resultado.mudou else None,
+        "corretorId": str(pedido.corretorId),
+        "aceitoDesfeito": resultado.aceito_desfeito,
+    }

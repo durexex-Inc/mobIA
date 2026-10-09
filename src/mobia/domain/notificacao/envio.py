@@ -1,9 +1,12 @@
 """A notificacao do handoff, de ponta a ponta. TEC-177, RN-16.2.
 
-**E o unico escritor de `handoffs.corretor_id` desde a TEC-192** (emenda E-06
-desta regra). Nao e funcao nova: o destinatario ja era escolhido aqui e usado
-para enviar; o que mudou e que ele passa a ficar gravado, porque a lista de
-leads precisa responder "de quem e este lead".
+**Escreve `handoffs.corretor_id` desde a TEC-192** (emenda E-06 desta regra),
+e so quando nulo. Nao e funcao nova: o destinatario ja era escolhido aqui e
+usado para enviar; o que mudou e que ele passa a ficar gravado, porque a lista
+de leads precisa responder "de quem e este lead". Foi o unico escritor ate a
+TEC-404, que trouxe o segundo: a atribuicao do admin
+(`domain/handoff/atribuicao.py::atribuir`, emenda E-07), que sobrescreve e
+depois enfileira este job para avisar o novo dono.
 """
 
 import uuid

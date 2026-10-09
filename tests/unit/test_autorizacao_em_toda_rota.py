@@ -158,6 +158,7 @@ PERMISSAO_ESPERADA = {
     ("PATCH", "/api/v1/corretores/{corretor_id}"): "GERIR_CORRETORES",
     ("POST", "/api/v1/handoffs/{handoff_id}/resumo"): "ATENDER_LEAD",
     ("POST", "/api/v1/handoffs/{handoff_id}/aceitar"): "ATENDER_LEAD",
+    ("POST", "/api/v1/handoffs/{handoff_id}/atribuir"): "GERIR_CORRETORES",
     ("POST", "/api/v1/conversas/assumir"): "ATENDER_LEAD",
     ("POST", "/api/v1/conversas/devolver"): "ATENDER_LEAD",
     ("GET", "/api/v1/metricas/funil"): "VER_FUNIL",
