@@ -181,6 +181,9 @@ PERMISSAO_ESPERADA = {
     ("POST", "/api/v1/leads/{lead_id}/mensagens"): "ATENDER_LEAD",
     ("PATCH", "/api/v1/leads/{lead_id}/qualificacao"): "ATENDER_LEAD",
     ("POST", "/api/v1/leads/{lead_id}/score/recalcular"): "ATENDER_LEAD",
+    # TEC-404. A lista de pedidos do portal, mascarada como a de leads; o
+    # recorte do CORRETOR mora no dominio (`portal/pedidos.py::listar_pedidos`).
+    ("GET", "/api/v1/interesses"): "VER_LEADS",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
     # TEC-198, RN-19.5. As tres, e nao so a escrita: o historico diz quem mexeu
     # no agente, e a vigente e o que o agente esta fazendo agora.

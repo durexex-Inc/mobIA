@@ -51,15 +51,11 @@ def mascarar_telefone(bruto: str) -> str | None:
 def mascarar_email(bruto: str) -> str | None:
     """`marina@exemplo.com` vira `m****a@e*****o.com`. Sem `@` vira `None`.
 
-    **Esta funcao NAO TEM CHAMADOR, e isso e deliberado** (D7 do desenho):
-    nenhuma tabela deste sistema guarda e-mail de lead -- `corretores.email` e
-    `usuarios.email` sao de gente da operacao. A card pede telefone E e-mail, e
-    a metade que nao tem fonte entra como regra escrita e verificada em vez de
-    entrar como nada.
-
-    E o mesmo estado em que `agendamento/ciclo.py::marcar_realizado` esperou a
-    TEC-374: quando a coluna nascer, o mascaramento ja esta decidido e testado,
-    em vez de ser improvisado por quem estiver criando a coluna.
+    **Nasceu sem chamador** (D7 do desenho da TEC-195): naquela epoca nenhuma
+    tabela guardava e-mail de lead, e a regra entrou escrita e verificada antes
+    da coluna. **Desde a TEC-404 o chamador e `domain/portal/pedidos.py`**, com
+    o e-mail que o lead deixa no pedido de interesse do portal
+    (`solicitacoes_de_interesse.email_cifrado`).
 
     Primeiro e ultimo caractere do local, primeiro e ultimo do dominio antes do
     TLD, TLD inteiro. O que e curto demais para isso e mascarado por inteiro

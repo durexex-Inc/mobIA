@@ -129,6 +129,8 @@ def create_app() -> FastAPI:
     # `titular` (TEC-207) e a fila de solicitacoes e o `GET`/`DELETE` de
     # `dados-pessoais` em cima do prefixo de `leads`; quem a protege e
     # `ATENDER_TITULAR`, so do ADMIN, como `auditoria`.
+    # `interesses` (TEC-404) e a lista de pedidos do portal; nao e
+    # administrativa: quem a protege e `VER_LEADS`, com o recorte do CORRETOR.
     from mobia.api.routes.agendamentos import router as agendamentos_router
     from mobia.api.routes.auditoria import router as auditoria_router
     from mobia.api.routes.configuracao import router as configuracao_router
@@ -136,6 +138,7 @@ def create_app() -> FastAPI:
     from mobia.api.routes.corretores import router as corretores_router
     from mobia.api.routes.handoffs import router as handoffs_router
     from mobia.api.routes.imoveis import router as imoveis_router
+    from mobia.api.routes.interesses import router as interesses_router
     from mobia.api.routes.intervencao import router as intervencao_router
     from mobia.api.routes.leads import router as leads_router
     from mobia.api.routes.mensagens import router as mensagens_router
@@ -149,6 +152,7 @@ def create_app() -> FastAPI:
     app.include_router(conversas_router)
     app.include_router(metricas_router)
     app.include_router(leads_router)
+    app.include_router(interesses_router)
     app.include_router(intervencao_router)
     app.include_router(auditoria_router)
     app.include_router(agendamentos_router)

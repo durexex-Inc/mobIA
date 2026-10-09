@@ -17,9 +17,11 @@ Os quatro cenarios do Gherkin da card, e o que aconteceu com cada um:
   `eventos_auditoria_imutavel` da migration 0053 recusa todo UPDATE.
   Reescreve-lo aqui seria um segundo teste afirmando a mesma coisa.
 
-O e-mail nao aparece em cenario nenhum porque nenhuma tabela deste sistema o
-guarda (D7). A regra de mascaramento dele esta em
-`tests/unit/test_mascara_de_dado_pessoal.py`, escrita e sem chamador.
+O e-mail nao aparece em cenario nenhum porque, na TEC-195, nenhuma tabela deste
+sistema o guardava (D7). A regra de mascaramento dele esta em
+`tests/unit/test_mascara_de_dado_pessoal.py`; o primeiro chamador veio com a
+TEC-404 -- o e-mail do pedido de interesse do portal, exercitado em
+`tests/integration/test_lista_de_pedidos_de_interesse.py`.
 """
 
 import base64
