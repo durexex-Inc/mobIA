@@ -18,11 +18,13 @@ from enum import StrEnum
 from sqlalchemy import Row, Select, and_, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from mobia.domain.auditoria.vocabulario import CAMPO_EMAIL
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.corretores.models import Corretor
 from mobia.domain.handoff.models import Handoff
 from mobia.domain.handoff.vocabulario import ACEITAVEIS
-from mobia.domain.identidade.indice import telefones_de
+from mobia.domain.identidade.indice import IdentidadeAusente, telefones_de
+from mobia.domain.identidade.indice import revelar as revelar_identidade
 from mobia.domain.leads.consulta import RecorteDoPapel
 from mobia.domain.leads.mascara import mascarar_email, mascarar_telefone
 from mobia.domain.leads.repositorio import referencias_para
@@ -291,3 +293,24 @@ async def atendimento_do_pedido(
     pedido, handoff_id = linha[0], linha[3]
     handoff = await session.get(Handoff, handoff_id) if handoff_id is not None else None
     return pedido, handoff
+
+
+async def valor_do_pedido(
+    session: AsyncSession, solicitacao: SolicitacaoDeInteresse, campo: str
+) -> str | None:
+    """O valor em claro. So chamada DEPOIS de a trilha ter sido comitada (D5).
+
+    Telefone vem do indice de identidade, com o `+` na frente como em
+    `leads/repositorio.py::valor_revelado`; e-mail vem da coluna cifrada do
+    pedido. Os dois podem ser nulos: o e-mail e opcional no formulario, e a
+    identidade pode ter sido apagada.
+    """
+    if campo == CAMPO_EMAIL:
+        return decrypt(solicitacao.email_cifrado, aad_do_email_de_interesse(solicitacao.id))
+    try:
+        telefone = await revelar_identidade(
+            session, solicitacao.channel, solicitacao.conversation_key
+        )
+    except IdentidadeAusente:
+        return None
+    return f"+{telefone}"

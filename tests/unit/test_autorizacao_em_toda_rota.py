@@ -184,6 +184,9 @@ PERMISSAO_ESPERADA = {
     # TEC-404. A lista de pedidos do portal, mascarada como a de leads; o
     # recorte do CORRETOR mora no dominio (`portal/pedidos.py::listar_pedidos`).
     ("GET", "/api/v1/interesses"): "VER_LEADS",
+    # A revelacao tambem e guardada por VER_LEADS: a regra da D5 (quem tem
+    # VER_DADOS_COMPLETOS ou e o dono) e mais fina que uma permissao e mora no corpo.
+    ("POST", "/api/v1/interesses/{solicitacao_id}/revelar"): "VER_LEADS",
     ("GET", "/api/v1/auditoria"): "VER_AUDITORIA",
     # TEC-198, RN-19.5. As tres, e nao so a escrita: o historico diz quem mexeu
     # no agente, e a vigente e o que o agente esta fazendo agora.
