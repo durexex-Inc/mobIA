@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
-import { ORIGEM_DO_MAPA } from '@/lib/mapa'
+import { ORIGEM_DO_MAPA, ORIGEM_DOS_TILES } from '@/lib/mapa'
 import { origemDoChat } from '@/lib/servidor/enderecoDoChat'
 import { dominiosDoEmbed } from '@/lib/servidor/dominiosDoEmbed'
 
@@ -74,7 +74,9 @@ export function politicaDeSeguranca(
     ...(embed?.conectarA ? [`connect-src 'self' ${embed.conectarA}`] : []),
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
     `style-src 'self' ${isDev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
-    "img-src 'self' blob: data:",
+    // O portal tambem carrega os tiles do mapa da vitrine (D8 do desenho do
+    // visual do portal); o painel e o embed seguem so com a propria origem.
+    `img-src 'self' blob: data:${portal ? ` ${ORIGEM_DOS_TILES}` : ''}`,
     "font-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",

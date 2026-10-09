@@ -60,10 +60,16 @@ html {
   height: 100%;
 }
 
+/* `clip`, e nao `hidden`: os dois cortam o vazamento horizontal, mas `hidden`
+   no `body` (com o `html` tambem fora de `visible`) faz do `body` um
+   conteiner de rolagem que nunca rola -- e todo `position: sticky` da pagina
+   passa a grudar nele, ou seja, em lugar nenhum. Foi assim que o topo, o
+   cartao lateral do detalhe e o mapa da vitrine do portal nasceram sem
+   fixar (visual do portal). */
 html,
 body {
   max-width: 100vw;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
@@ -5099,5 +5105,697 @@ a {
 
   .portal-barra {
     display: none;
+  }
+}
+
+/* --- Portal publico: vitrine (/busca) --------------------------------------
+   Barra de filtros, lista paginada de cards e o mapa com o preco de cada
+   imovel da pagina (D7 e D8 do desenho do visual do portal). Mesmos tokens do
+   detalhe, logo acima. No celular o mapa sai: a lista ja e a tela inteira, e
+   um mapa arrastavel no meio da rolagem prende o dedo. */
+
+.portal--vitrine {
+  padding-bottom: 3rem;
+}
+
+.portal-topo__marca {
+  font-family: var(--fonte-do-portal), Georgia, serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.portal-barra-de-filtros {
+  background: var(--portal-cartao);
+  border-bottom: 1px solid var(--portal-borda);
+}
+
+.portal-barra-de-filtros__conteudo {
+  max-width: var(--portal-largura);
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.portal-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+}
+
+.portal-filtros fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.portal-filtro {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.portal-filtro__rotulo {
+  padding: 0;
+  color: var(--portal-fraco);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.portal-filtro select,
+.portal-filtro input,
+.portal-filtro__campo {
+  height: 2.75rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 0.625rem;
+  background: var(--portal-fundo);
+  color: var(--portal-texto);
+  font: inherit;
+}
+
+.portal-filtro__campo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--portal-fraco);
+}
+
+.portal-filtro__campo input {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--portal-texto);
+}
+
+.portal-filtro--largo {
+  flex: 1 1 12rem;
+}
+
+.portal-filtro--preco {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.portal-filtro--preco label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.portal-filtro--preco input {
+  width: 7rem;
+}
+
+.portal-filtro select:focus-visible,
+.portal-filtro input:focus-visible,
+.portal-filtro__campo:focus-within {
+  outline: 2px solid var(--portal-verde);
+  outline-offset: 1px;
+}
+
+.portal-filtro__campo input:focus-visible {
+  outline: none;
+}
+
+/* Alternancia Comprar/Alugar e botoes de minimo: radios de verdade, com o
+   circulo escondido e o rotulo desenhado como botao. O radio continua
+   focavel, e o foco aparece no desenho dele. */
+
+.portal-alternancia,
+.portal-botoes-de-minimo > div {
+  display: inline-flex;
+  padding: 0.25rem;
+  border-radius: 0.75rem;
+  background: var(--portal-fundo);
+}
+
+.portal-alternancia label,
+.portal-botoes-de-minimo label {
+  position: relative;
+}
+
+.portal-alternancia input,
+.portal-botoes-de-minimo input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.portal-alternancia span,
+.portal-botoes-de-minimo span {
+  display: grid;
+  place-items: center;
+  height: 2.25rem;
+  padding: 0 1rem;
+  border-radius: 0.5rem;
+  color: var(--portal-fraco);
+  font-weight: 600;
+}
+
+.portal-botoes-de-minimo span {
+  min-width: 2.25rem;
+  padding: 0 0.625rem;
+}
+
+.portal-alternancia input:checked + span,
+.portal-botoes-de-minimo input:checked + span {
+  background: var(--portal-verde);
+  color: #ffffff;
+}
+
+.portal-alternancia input:focus-visible + span,
+.portal-botoes-de-minimo input:focus-visible + span {
+  outline: 2px solid var(--portal-verde);
+  outline-offset: 2px;
+}
+
+.portal-filtros__buscar {
+  height: 2.75rem;
+  padding: 0 1.5rem;
+}
+
+/* Comprar/Alugar ocupa a primeira linha sozinho, como na referencia; os
+   campos e o Buscar ficam juntos na de baixo. `flex-basis: 100%` estica o
+   fieldset, entao o fundo da alternancia passa para os rotulos. */
+.portal-filtros .portal-alternancia {
+  flex-basis: 100%;
+  padding: 0;
+  background: none;
+}
+
+.portal-alternancia label {
+  padding: 0.25rem 0;
+  background: var(--portal-fundo);
+}
+
+.portal-alternancia label:first-of-type {
+  padding-left: 0.25rem;
+  border-radius: 0.75rem 0 0 0.75rem;
+}
+
+.portal-alternancia label:last-of-type {
+  padding-right: 0.25rem;
+  border-radius: 0 0.75rem 0.75rem 0;
+}
+
+/* Cabecalho da lista: titulo, total e ordenacao. */
+
+.portal-vitrine__cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.portal-vitrine__cabecalho .portal-nota {
+  margin: 0.375rem 0 0;
+}
+
+.portal-ordenacao label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--portal-fraco);
+  font-size: 0.875rem;
+}
+
+.portal-ordenacao select {
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 0.625rem;
+  background: var(--portal-cartao);
+  color: var(--portal-texto);
+  font: inherit;
+  font-weight: 600;
+}
+
+.portal-aplicados {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  color: var(--portal-fraco);
+  font-size: 0.8125rem;
+}
+
+.portal-aplicados ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-aplicados ul a {
+  display: inline-block;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  background: var(--portal-verde-claro);
+  color: var(--portal-verde-texto);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.portal-aplicados ul a:hover {
+  text-decoration: line-through;
+}
+
+.portal-aplicados .portal-link {
+  margin: 0;
+}
+
+.portal-vitrine__corpo {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.portal-vitrine__lista {
+  display: grid;
+  align-content: start;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+.portal-vitrine__vazio p {
+  margin: 0;
+}
+
+.portal-vitrine__mapa {
+  display: none;
+}
+
+/* Card da vitrine. */
+
+.portal-card {
+  position: relative;
+  overflow: hidden;
+  /* O mapa rola o card escolhido ate a vista; sem isto ele para atras do
+     topo fixo. */
+  scroll-margin-top: 4.5rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: var(--portal-raio);
+  background: var(--portal-cartao);
+}
+
+.portal-card--ativo,
+.portal-card:has(.portal-card__link:focus-visible) {
+  outline: 3px solid var(--portal-verde);
+  outline-offset: 2px;
+}
+
+.portal-card__foto {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--portal-verde-claro);
+}
+
+.portal-card__foto img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.portal-card__sem-foto {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--portal-fraco);
+  font-weight: 600;
+}
+
+.portal-card__selo {
+  position: absolute;
+  top: 0.875rem;
+  left: 0.875rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.94);
+  color: #17231d;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.portal-card__preco {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  margin: 0;
+  padding: 3rem 1.125rem 0.875rem;
+  background: linear-gradient(to bottom, transparent, rgb(0 0 0 / 0.7));
+  color: #ffffff;
+}
+
+.portal-card__preco span {
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0.9;
+}
+
+.portal-card__preco strong {
+  font-size: 1.625rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.portal-card__corpo {
+  display: grid;
+  gap: 0.875rem;
+  padding: 1.125rem 1.25rem 1.25rem;
+}
+
+.portal-card__cabecalho {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.portal-card__cabecalho .portal-selo {
+  flex: none;
+}
+
+.portal-card__titulo {
+  margin: 0;
+  font-family: var(--fonte-do-portal), Georgia, serif;
+  font-size: 1.3125rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.portal-card__link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.portal-card__link:focus-visible {
+  outline: none;
+}
+
+/* A area de clique do titulo cobre o card inteiro (ver `CardDaVitrine`). */
+.portal-card__link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.portal-card:hover .portal-card__titulo {
+  color: var(--portal-verde-texto);
+}
+
+.portal-card .portal-endereco {
+  margin: -0.375rem 0 0;
+  font-size: 0.875rem;
+}
+
+.portal-card__numeros {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-card__numeros li {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 0.125rem;
+  padding: 0.625rem 0.25rem;
+  border-radius: 0.75rem;
+  background: var(--portal-fundo);
+  text-align: center;
+}
+
+.portal-card__numeros .portal-icone {
+  margin-bottom: 0.125rem;
+  color: var(--portal-verde-texto);
+}
+
+.portal-card__numeros strong {
+  font-size: 0.875rem;
+  line-height: 1.25;
+}
+
+.portal-card__numeros span {
+  color: var(--portal-fraco);
+  font-size: 0.75rem;
+}
+
+.portal-card__etiquetas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-card__etiquetas li {
+  padding: 0.1875rem 0.625rem;
+  border-radius: 999px;
+  background: var(--portal-verde-claro);
+  color: var(--portal-verde-texto);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.portal-card__etiquetas li::first-letter {
+  text-transform: uppercase;
+}
+
+.portal-card__rodape {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--portal-borda);
+}
+
+.portal-card__encargos {
+  display: flex;
+  gap: 1.25rem;
+  margin: 0;
+}
+
+.portal-card__encargos dt {
+  color: var(--portal-fraco);
+  font-size: 0.75rem;
+}
+
+.portal-card__encargos dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.portal-card__ver {
+  padding: 0.625rem 1.125rem;
+}
+
+/* Paginacao. */
+
+.portal-paginacao {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: var(--portal-raio);
+  background: var(--portal-cartao);
+}
+
+.portal-paginacao p {
+  margin: 0;
+  color: var(--portal-fraco);
+  font-size: 0.875rem;
+}
+
+.portal-paginacao ol {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--portal-fraco);
+}
+
+.portal-paginacao a {
+  display: grid;
+  place-items: center;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  padding: 0 0.5rem;
+  border-radius: 0.5rem;
+  color: var(--portal-texto);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.portal-paginacao a:hover {
+  background: var(--portal-verde-claro);
+}
+
+.portal-paginacao a[aria-current="page"] {
+  background: var(--portal-verde);
+  color: #ffffff;
+}
+
+/* Mapa da vitrine (Leaflet). */
+
+.portal-mapa-vitrine {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  height: 100%;
+}
+
+.portal-mapa-vitrine__mapa {
+  min-height: 24rem;
+  overflow: hidden;
+  border: 1px solid var(--portal-borda);
+  border-radius: var(--portal-raio);
+  background: var(--portal-verde-claro);
+  font: inherit;
+}
+
+.portal-mapa-vitrine--vazio {
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  border: 1px dashed var(--portal-borda);
+  border-radius: var(--portal-raio);
+  color: var(--portal-fraco);
+  text-align: center;
+}
+
+.portal-mapa-vitrine__nota {
+  margin: 0;
+}
+
+.portal-mapa-vitrine__resumo {
+  position: absolute;
+  right: 1rem;
+  bottom: 2.75rem;
+  left: 1rem;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.875rem 2.75rem 0.875rem 1rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 0.875rem;
+  background: var(--portal-cartao);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+}
+
+.portal-mapa-vitrine__resumo > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.portal-mapa-vitrine__resumo span {
+  overflow: hidden;
+  font-size: 0.875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portal-mapa-vitrine__bairro {
+  color: var(--portal-fraco);
+}
+
+.portal-mapa-vitrine__resumo .portal-botao {
+  flex: none;
+  padding: 0.625rem 1rem;
+}
+
+.portal-mapa-vitrine__fechar {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--portal-fraco);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.portal-mapa-vitrine__fechar:hover {
+  background: var(--portal-fundo);
+}
+
+/* O pino: `divIcon` sem tamanho, entao o canto do elemento cai no ponto, e o
+   rotulo se centraliza sobre ele. O `!important` do ativo vence o `z-index`
+   que o Leaflet poe inline em cada marcador -- sem ele, o pino escolhido
+   podia ficar por baixo dos vizinhos. */
+.portal-pino {
+  border: 0;
+  background: none;
+}
+
+.portal-pino__rotulo {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 999px;
+  background: var(--portal-cartao);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+  color: var(--portal-texto);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+
+.portal-pino:hover .portal-pino__rotulo,
+.portal-pino:focus-visible .portal-pino__rotulo,
+.portal-pino--ativo .portal-pino__rotulo {
+  border-color: var(--portal-verde);
+  background: var(--portal-verde);
+  color: #ffffff;
+}
+
+.portal-pino--ativo {
+  z-index: 1000 !important;
+}
+
+@media (min-width: 960px) {
+  .portal-barra-de-filtros__conteudo {
+    padding: 1rem 2rem;
+  }
+
+  .portal-vitrine__corpo {
+    grid-template-columns: minmax(0, 1fr) minmax(22rem, 42%);
+    align-items: start;
+  }
+
+  /* Abaixo do topo fixo (`.portal-topo`, ~3.5rem), e nao colado na borda. */
+  .portal-vitrine__mapa {
+    position: sticky;
+    top: 4.5rem;
+    display: block;
+    height: calc(100vh - 5.5rem);
   }
 }

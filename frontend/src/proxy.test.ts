@@ -140,6 +140,13 @@ describe('politicaDeSeguranca', () => {
     )
     expect(politicaDeSeguranca('abc', false)).not.toContain('frame-src')
   })
+
+  it('so o portal carrega os tiles do mapa da vitrine', () => {
+    expect(politicaDeSeguranca('abc', false, { portal: true })).toContain(
+      "img-src 'self' blob: data: https://tile.openstreetmap.org",
+    )
+    expect(politicaDeSeguranca('abc', false)).toContain("img-src 'self' blob: data:;")
+  })
 })
 
 describe('proxy no portal', () => {

@@ -208,67 +208,9 @@ async def buscar(
     """
     teto_de_candidatos = max(1, min(limite, MAX_CANDIDATOS))
 
-    # Dobra o que recebeu: o chamador pode passar "Zona Sul" ou "zona sul" e o
-    # resultado e o mesmo, porque `dobrar` e idempotente. O lead chega pela
-    # `normalizar_regiao`, que ja dobrou -- dobrar de novo nao custa nada e
-    # tira do chamador HTTP a obrigacao de saber disso.
-    regioes = tuple(dobrar(regiao) for regiao in filtro.regioes if regiao.strip())
-    zonas = zonas_de(regioes)
-
     vetor = vetor if vetor is not None else await vetor_da_consulta(consulta_texto, embedador)
 
-    preco = getattr(Imovel, COLUNA_DE_PRECO[filtro.operacao])
-
-    condicoes: list[ColumnElement[Any]] = [
-        # Literal, e nao parametro: ver D3.
-        Imovel.status == StatusImovel.DISPONIVEL.value,
-        # `in_` e nao `==`: igualdade crua excluiria todo imovel anunciado
-        # para venda E locacao, que e caso comum de catalogo real e sairia da
-        # busca em silencio.
-        Imovel.operacao.in_([filtro.operacao.value, Operacao.AMBOS.value]),
-        # O CHECK da tabela so garante que UM dos dois precos existe.
-        preco.is_not(None),
-    ]
-
-    # TEC-160, D2 e D3. O `WHERE` cede quando este e o passe relaxado; a
-    # ANCORA de `_aderencia`, mais abaixo, NAO -- ela continua recebendo
-    # `filtro.preco_max_centavos` cru. Os dois fatos estao nesta funcao de
-    # proposito: separa-los faria a promessa da emenda E-01 da RN-09.6 ("10%
-    # acima do teto sai com 0,9") depender de dois campos coincidirem.
-    if filtro.preco_max_centavos is not None:
-        teto = filtro.preco_max_centavos
-        condicoes.append(preco <= (_com_folga(teto, +1) if filtro.relaxado else teto))
-    if filtro.preco_min_centavos is not None:
-        piso = filtro.preco_min_centavos
-        condicoes.append(preco >= (_com_folga(piso, -1) if filtro.relaxado else piso))
-    if filtro.tipo is not None:
-        condicoes.append(Imovel.tipo.in_([tipo.value for tipo in _inclusoes_de(filtro.tipo)]))
-    if filtro.quartos_min is not None:
-        # `>=`, porque a card diz "nenhum resultado tem menos de 2 quartos" e
-        # o contrato do SRS chama o campo de `quartosMin`.
-        condicoes.append(Imovel.quartos >= filtro.quartos_min)
-    if filtro.vagas_min is not None:
-        condicoes.append(Imovel.vagas >= filtro.vagas_min)
-    if regioes:
-        # O OR da D4. `IN ()` e erro de sintaxe no Postgres -- o SQLAlchemy
-        # nunca o emite. Para `zonas` vazia, `in_([])` compila para
-        # `zona IN (NULL) AND (1 != 1)`: a estrategia de empty-IN do proprio
-        # SQLAlchemy. A clausula fica falsa porque `AND` tem precedencia sobre
-        # `OR`, entao o WHERE le como `bairro_busca IN (...) OR (zona IN
-        # (NULL) AND (1 != 1))` -- o lado da zona nunca contribui, mesmo para
-        # `zona` NULL, e nao envenena o OR.
-        condicoes.append(
-            or_(
-                Imovel.bairro_busca.in_(regioes),
-                Imovel.zona.in_([zona.value for zona in zonas]),
-            )
-        )
-    if filtro.bairros_excluidos:
-        # TEC-163, D12. Excluido e excluido, relaxado ou nao. Necessario mesmo
-        # sem relaxamento: se o lead pediu "zona sul" e o Campeche foi
-        # excluido, o filtro de zona o casa pelo outro lado do OR de regiao --
-        # so esta condicao, em AND, o segura.
-        condicoes.append(Imovel.bairro_busca.not_in(filtro.bairros_excluidos))
+    preco, condicoes = condicoes_do_filtro(filtro)
 
     # `round` do Postgres com duas casas exige `numeric`: sobre `double
     # precision` ele so aceita um argumento. As tres casas vem do
@@ -340,6 +282,83 @@ async def buscar(
         total_candidatos=linhas[0].total_candidatos if linhas else 0,
         consulta_vetorizada=vetor is not None,
     )
+
+
+def condicoes_do_filtro(
+    filtro: FiltroDeBusca,
+) -> tuple[Any, list[ColumnElement[Any]]]:
+    """A coluna de preco da operacao e o `WHERE` que o filtro pede.
+
+    Extraida de `buscar` para que a vitrine paginada do portal
+    (`vitrine.py::listar_vitrine`) aplique EXATAMENTE as mesmas regras -- a
+    operacao que casa `AMBOS`, a cobertura dentro de apartamento (TEC-262), o
+    OR de bairro e zona (D4), a folga do passe relaxado. Duas copias destas
+    regras divergiriam na primeira emenda, e o lead veria no chat um imovel
+    que o portal diz nao existir com os mesmos filtros.
+    """
+    # Dobra o que recebeu: o chamador pode passar "Zona Sul" ou "zona sul" e o
+    # resultado e o mesmo, porque `dobrar` e idempotente. O lead chega pela
+    # `normalizar_regiao`, que ja dobrou -- dobrar de novo nao custa nada e
+    # tira do chamador HTTP a obrigacao de saber disso.
+    regioes = tuple(dobrar(regiao) for regiao in filtro.regioes if regiao.strip())
+    zonas = zonas_de(regioes)
+
+    preco = getattr(Imovel, COLUNA_DE_PRECO[filtro.operacao])
+
+    condicoes: list[ColumnElement[Any]] = [
+        # Literal, e nao parametro: ver D3.
+        Imovel.status == StatusImovel.DISPONIVEL.value,
+        # `in_` e nao `==`: igualdade crua excluiria todo imovel anunciado
+        # para venda E locacao, que e caso comum de catalogo real e sairia da
+        # busca em silencio.
+        Imovel.operacao.in_([filtro.operacao.value, Operacao.AMBOS.value]),
+        # O CHECK da tabela so garante que UM dos dois precos existe.
+        preco.is_not(None),
+    ]
+
+    # TEC-160, D2 e D3. O `WHERE` cede quando este e o passe relaxado; a
+    # ANCORA de `_aderencia`, em `buscar`, NAO -- ela continua recebendo
+    # `filtro.preco_max_centavos` cru. Os dois fatos moravam na mesma funcao
+    # ate esta extracao (visual do portal); o que ainda os prende e lerem o
+    # MESMO campo do mesmo `filtro`. A promessa da emenda E-01 da RN-09.6 ("10%
+    # acima do teto sai com 0,9") depende disso -- nao troque o campo de um
+    # lado so.
+    if filtro.preco_max_centavos is not None:
+        teto = filtro.preco_max_centavos
+        condicoes.append(preco <= (_com_folga(teto, +1) if filtro.relaxado else teto))
+    if filtro.preco_min_centavos is not None:
+        piso = filtro.preco_min_centavos
+        condicoes.append(preco >= (_com_folga(piso, -1) if filtro.relaxado else piso))
+    if filtro.tipo is not None:
+        condicoes.append(Imovel.tipo.in_([tipo.value for tipo in _inclusoes_de(filtro.tipo)]))
+    if filtro.quartos_min is not None:
+        # `>=`, porque a card diz "nenhum resultado tem menos de 2 quartos" e
+        # o contrato do SRS chama o campo de `quartosMin`.
+        condicoes.append(Imovel.quartos >= filtro.quartos_min)
+    if filtro.vagas_min is not None:
+        condicoes.append(Imovel.vagas >= filtro.vagas_min)
+    if regioes:
+        # O OR da D4. `IN ()` e erro de sintaxe no Postgres -- o SQLAlchemy
+        # nunca o emite. Para `zonas` vazia, `in_([])` compila para
+        # `zona IN (NULL) AND (1 != 1)`: a estrategia de empty-IN do proprio
+        # SQLAlchemy. A clausula fica falsa porque `AND` tem precedencia sobre
+        # `OR`, entao o WHERE le como `bairro_busca IN (...) OR (zona IN
+        # (NULL) AND (1 != 1))` -- o lado da zona nunca contribui, mesmo para
+        # `zona` NULL, e nao envenena o OR.
+        condicoes.append(
+            or_(
+                Imovel.bairro_busca.in_(regioes),
+                Imovel.zona.in_([zona.value for zona in zonas]),
+            )
+        )
+    if filtro.bairros_excluidos:
+        # TEC-163, D12. Excluido e excluido, relaxado ou nao. Necessario mesmo
+        # sem relaxamento: se o lead pediu "zona sul" e o Campeche foi
+        # excluido, o filtro de zona o casa pelo outro lado do OR de regiao --
+        # so esta condicao, em AND, o segura.
+        condicoes.append(Imovel.bairro_busca.not_in(filtro.bairros_excluidos))
+
+    return preco, condicoes
 
 
 async def vetor_da_consulta(

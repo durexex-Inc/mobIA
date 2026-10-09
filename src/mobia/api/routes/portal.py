@@ -47,6 +47,7 @@ from mobia.domain.catalogo.fotos import ler_bytes
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.catalogo.relaxamento import buscar_com_relaxamento
 from mobia.domain.catalogo.schemas import COLUNA_DE_PRECO, FiltroDeBusca
+from mobia.domain.catalogo.vitrine import IMOVEIS_POR_PAGINA, OrdemDaVitrine, listar_vitrine
 from mobia.domain.handoff.repositorio import gravar_resumo, registrar_handoff
 from mobia.domain.handoff.vocabulario import Gatilho
 from mobia.domain.identidade.indice import chave_de
@@ -115,18 +116,7 @@ async def imoveis_do_portal(
     `consultaTexto` nao existe aqui -- o portal nao tem campo de busca livre
     (D3 do desenho); so os seis filtros estruturados.
     """
-    # Mesma guarda que `FiltrosDaBusca._recusar_operacao_nao_buscavel` faz na
-    # borda do endpoint interno: `AMBOS` e valor valido do enum e nao e busca
-    # valida, e sem isto o `FiltroDeBusca` abaixo levantaria `ValueError` e o
-    # FastAPI devolveria 500 para uma requisicao sintaticamente correta.
-    if operacao not in COLUNA_DE_PRECO:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                f"operacao {operacao} nao e buscavel: AMBOS e o que um imovel pode "
-                "ser, nunca o que uma busca pede"
-            ),
-        )
+    _recusar_operacao_nao_buscavel(operacao)
 
     filtro = FiltroDeBusca(
         operacao=operacao,
@@ -142,6 +132,98 @@ async def imoveis_do_portal(
         resultado = await buscar_com_relaxamento(session, filtro, consulta_texto=None)
 
     return payload_da_busca(resultado)
+
+
+def _recusar_operacao_nao_buscavel(operacao: Operacao) -> None:
+    """Mesma guarda que `FiltrosDaBusca._recusar_operacao_nao_buscavel` faz na
+    borda do endpoint interno: `AMBOS` e valor valido do enum e nao e busca
+    valida, e sem isto o `FiltroDeBusca` levantaria `ValueError` e o FastAPI
+    devolveria 500 para uma requisicao sintaticamente correta.
+    """
+    if operacao not in COLUNA_DE_PRECO:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"operacao {operacao} nao e buscavel: AMBOS e o que um imovel pode "
+                "ser, nunca o que uma busca pede"
+            ),
+        )
+
+
+# Quantas caracteristicas o card da vitrine leva. O card mostra duas ou tres
+# etiquetas; mandar a lista inteira so engordaria uma resposta de doze itens.
+_CARACTERISTICAS_NO_CARD = 3
+
+
+@router.get("/portal/vitrine")
+async def vitrine_do_portal(
+    operacao: Annotated[Operacao, Query()],
+    preco_min_centavos: Annotated[int | None, Query(alias="precoMin", ge=0)] = None,
+    preco_max_centavos: Annotated[int | None, Query(alias="precoMax", ge=0)] = None,
+    tipo: Annotated[TipoImovel | None, Query()] = None,
+    quartos_min: Annotated[int | None, Query(alias="quartosMin", ge=0)] = None,
+    vagas_min: Annotated[int | None, Query(alias="vagasMin", ge=0)] = None,
+    regioes: Annotated[list[str] | None, Query()] = None,
+    ordem: Annotated[OrdemDaVitrine, Query()] = OrdemDaVitrine.RECENTES,
+    pagina: Annotated[int, Query(ge=1, le=10_000)] = 1,
+) -> dict[str, object]:
+    """A vitrine paginada do portal (visual do portal, D7): todos os imoveis
+    disponiveis que casam com os filtros, e nao os dez mais relevantes de
+    `/portal/imoveis`. Mesmos seis filtros, mesma regra de quem casa
+    (`busca.py::condicoes_do_filtro`), mais ordem e pagina.
+    """
+    _recusar_operacao_nao_buscavel(operacao)
+    filtro = FiltroDeBusca(
+        operacao=operacao,
+        preco_min_centavos=preco_min_centavos,
+        preco_max_centavos=preco_max_centavos,
+        tipo=tipo,
+        quartos_min=quartos_min,
+        vagas_min=vagas_min,
+        regioes=tuple(regioes or []),
+    )
+
+    async with get_sessionmaker()() as session:
+        pagina_da_vitrine = await listar_vitrine(session, filtro, ordem, pagina)
+
+    return {
+        "itens": [_card_da_vitrine(imovel, operacao) for imovel in pagina_da_vitrine.imoveis],
+        "total": pagina_da_vitrine.total,
+        "pagina": pagina,
+        "porPagina": IMOVEIS_POR_PAGINA,
+    }
+
+
+def _card_da_vitrine(imovel: Imovel, operacao: Operacao) -> dict[str, object]:
+    """Um imovel da vitrine: o bastante para o card e para o pino do mapa.
+
+    `preco` e o da operacao buscada -- quem procura aluguel ve o aluguel de
+    um imovel que tambem esta a venda. A primeira foto ja vem na rota publica
+    (`_fotos_publicas`), e a coordenada, arredondada como no detalhe (D2).
+    """
+    fotos = _fotos_publicas(imovel.id, list(imovel.fotos))
+    return {
+        "id": str(imovel.id),
+        "codigo": imovel.codigo,
+        "titulo": imovel.titulo,
+        "tipo": imovel.tipo,
+        "operacao": imovel.operacao,
+        "bairro": imovel.bairro,
+        "cidade": imovel.cidade,
+        "uf": imovel.uf,
+        "areaUtilM2": imovel.area_util_m2,
+        "quartos": imovel.quartos,
+        "suites": imovel.suites,
+        "banheiros": imovel.banheiros,
+        "vagas": imovel.vagas,
+        "preco": getattr(imovel, COLUNA_DE_PRECO[operacao]),
+        "condominio": imovel.condominio,
+        "iptuMensal": imovel.iptu_mensal,
+        "caracteristicas": list(imovel.caracteristicas)[:_CARACTERISTICAS_NO_CARD],
+        "foto": fotos[0] if fotos else None,
+        "latitude": _coordenada_publica(imovel.latitude),
+        "longitude": _coordenada_publica(imovel.longitude),
+    }
 
 
 def _fotos_publicas(imovel_id: uuid.UUID, fotos: list[str]) -> list[str]:

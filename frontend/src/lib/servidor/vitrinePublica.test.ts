@@ -8,42 +8,51 @@ const ITEM = {
   id: 'i-1',
   codigo: 'AP-1',
   titulo: 'Apartamento com vista',
+  tipo: 'APARTAMENTO',
+  operacao: 'VENDA',
   bairro: 'Centro',
-  preco: 58000000,
-  quartos: 2,
-  vagas: 1,
+  cidade: 'Florianópolis',
+  uf: 'SC',
   areaUtilM2: 74,
-  scoreMatch: 0.9,
+  quartos: 2,
+  suites: 1,
+  banheiros: 2,
+  vagas: 1,
+  preco: 58000000,
+  condominio: null,
+  iptuMensal: null,
+  caracteristicas: [],
+  foto: null,
+  latitude: null,
+  longitude: null,
 }
 
-describe('buscarVitrinePublica', () => {
+const VAZIA = { itens: [], total: 0, pagina: 1, porPagina: 12 }
+
+describe('buscarVitrine', () => {
   beforeEach(() => {
     process.env.MOBIA_API_BASE = 'http://backend:8000'
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  it('chama /portal/imoveis sem Authorization -- a rota e publica', async () => {
-    const { buscarVitrinePublica } = await import('./vitrinePublica')
-    const api = vi.fn().mockResolvedValue(
-      responde({ itens: [], totalCandidatos: 0, relaxamentoAplicado: false }),
-    )
+  it('chama /portal/vitrine sem Authorization -- a rota e publica', async () => {
+    const { buscarVitrine } = await import('./vitrinePublica')
+    const api = vi.fn().mockResolvedValue(responde(VAZIA))
     vi.stubGlobal('fetch', api)
 
-    await buscarVitrinePublica({ operacao: 'VENDA' })
+    await buscarVitrine({ operacao: 'VENDA' })
 
     const [url, opcoes] = api.mock.calls[0]
-    expect(String(url)).toBe('http://backend:8000/portal/imoveis?operacao=VENDA')
+    expect(String(url)).toBe('http://backend:8000/portal/vitrine?operacao=VENDA')
     expect(opcoes.headers.Authorization).toBeUndefined()
   })
 
-  it('manda os seis filtros na query string', async () => {
-    const { buscarVitrinePublica } = await import('./vitrinePublica')
-    const api = vi.fn().mockResolvedValue(
-      responde({ itens: [], totalCandidatos: 0, relaxamentoAplicado: false }),
-    )
+  it('manda os seis filtros, a ordem e a pagina na query string', async () => {
+    const { buscarVitrine } = await import('./vitrinePublica')
+    const api = vi.fn().mockResolvedValue(responde(VAZIA))
     vi.stubGlobal('fetch', api)
 
-    await buscarVitrinePublica({
+    await buscarVitrine({
       operacao: 'ALUGUEL',
       precoMinCentavos: 1000,
       precoMaxCentavos: 2000,
@@ -51,6 +60,8 @@ describe('buscarVitrinePublica', () => {
       quartosMin: 2,
       vagasMin: 1,
       regioes: ['Centro', 'Trindade'],
+      ordem: 'menor_preco',
+      pagina: 2,
     })
 
     const url = new URL(String(api.mock.calls[0][0]))
@@ -61,43 +72,30 @@ describe('buscarVitrinePublica', () => {
     expect(url.searchParams.get('quartosMin')).toBe('2')
     expect(url.searchParams.get('vagasMin')).toBe('1')
     expect(url.searchParams.getAll('regioes')).toEqual(['Centro', 'Trindade'])
+    expect(url.searchParams.get('ordem')).toBe('menor_preco')
+    expect(url.searchParams.get('pagina')).toBe('2')
   })
 
-  it('mapeia preco para precoCentavos e descarta item invalido', async () => {
-    const { buscarVitrinePublica } = await import('./vitrinePublica')
-    const api = vi.fn().mockResolvedValue(
-      responde({
-        itens: [ITEM, { ...ITEM, id: 'i-2', titulo: '' }],
-        totalCandidatos: 2,
-        relaxamentoAplicado: false,
-      }),
+  it('descarta item invalido e devolve o total e a pagina', async () => {
+    const { buscarVitrine } = await import('./vitrinePublica')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        responde({ itens: [ITEM, { ...ITEM, id: 'i-2', titulo: '' }], total: 30, pagina: 2, porPagina: 12 }),
+      ),
     )
-    vi.stubGlobal('fetch', api)
 
-    const resultado = await buscarVitrinePublica({ operacao: 'VENDA' })
+    const resultado = await buscarVitrine({ operacao: 'VENDA', pagina: 2 })
 
-    expect(resultado.itens).toHaveLength(1)
-    expect(resultado.itens[0]).toMatchObject({
-      id: 'i-1',
-      titulo: 'Apartamento com vista',
-      bairro: 'Centro',
-      precoCentavos: 58000000,
-      quartos: 2,
-      vagas: 1,
-      areaUtilM2: 74,
-      condominioCentavos: null,
-      diferencial: null,
-      foto: null,
-      url: '/busca/i-1',
-    })
-    expect(resultado.totalCandidatos).toBe(2)
+    expect(resultado.itens).toEqual([ITEM])
+    expect(resultado).toMatchObject({ total: 30, pagina: 2, porPagina: 12 })
   })
 
   it('resposta que nao e 200 lanca', async () => {
-    const { buscarVitrinePublica } = await import('./vitrinePublica')
+    const { buscarVitrine } = await import('./vitrinePublica')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(responde({}, 422)))
 
-    await expect(buscarVitrinePublica({ operacao: 'VENDA' })).rejects.toThrow('422')
+    await expect(buscarVitrine({ operacao: 'VENDA' })).rejects.toThrow('422')
   })
 })
 

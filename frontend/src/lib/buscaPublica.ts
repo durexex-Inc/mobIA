@@ -7,6 +7,7 @@
  */
 
 import { reaisParaCentavos, type Operacao, type TipoImovel, TIPOS_DE_IMOVEL } from '@/lib/imoveis'
+import { ORDEM_PADRAO, ORDENS_DA_VITRINE, type OrdemDaVitrine } from '@/lib/vitrine'
 
 /**
  * `operacao` continua obrigatoria, igual ao endpoint interno: e ela que
@@ -22,6 +23,10 @@ export type FiltrosDoPortal = {
   quartosMin?: number
   vagasMin?: number
   regioes?: string[]
+  /** Ausente e `ORDEM_PADRAO`; a URL so a carrega quando e outra. */
+  ordem?: OrdemDaVitrine
+  /** Comeca em 1; ausente e a primeira. Mudar qualquer filtro volta para ela. */
+  pagina?: number
 }
 
 /** A operacao padrao quando a URL nao pede nenhuma -- o estado inicial do CA-01. */
@@ -58,6 +63,13 @@ export function filtrosDaUrl(parametros: ParametrosDaUrl): FiltrosDoPortal {
   const tipoPedido = um(parametros.tipo)
   const tipo = tipoPedido !== undefined && tipoPedido in TIPOS_DE_IMOVEL ? (tipoPedido as TipoImovel) : undefined
 
+  const ordemPedida = um(parametros.ordem)
+  const ordem =
+    ordemPedida !== undefined && ordemPedida in ORDENS_DA_VITRINE && ordemPedida !== ORDEM_PADRAO
+      ? (ordemPedida as OrdemDaVitrine)
+      : undefined
+  const pagina = inteiroOuUndefined(um(parametros.pagina))
+
   return {
     operacao,
     precoMinCentavos: reaisParaCentavos(um(parametros.precoMin) ?? '') ?? undefined,
@@ -69,6 +81,8 @@ export function filtrosDaUrl(parametros: ParametrosDaUrl): FiltrosDoPortal {
       .split(',')
       .map((regiao) => regiao.trim())
       .filter(Boolean),
+    ordem,
+    pagina: pagina !== undefined && pagina > 1 ? pagina : undefined,
   }
 }
 
@@ -101,6 +115,12 @@ export function urlDaBusca(filtros: FiltrosDoPortal): string {
   // URLs diferentes, com formatos proprios.
   if (filtros.regioes && filtros.regioes.length > 0) {
     parametros.set('regioes', filtros.regioes.join(','))
+  }
+  if (filtros.ordem && filtros.ordem !== ORDEM_PADRAO) {
+    parametros.set('ordem', filtros.ordem)
+  }
+  if (filtros.pagina !== undefined && filtros.pagina > 1) {
+    parametros.set('pagina', String(filtros.pagina))
   }
   return `/busca?${parametros.toString()}`
 }
