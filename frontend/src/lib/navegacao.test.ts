@@ -59,6 +59,16 @@ describe('itensDoMenu', () => {
     },
   )
 
+  it('"Pedidos de interesse" vem logo depois de Leads, para quem tem VER_LEADS (TEC-404)', () => {
+    const itens = itensDoMenu(new Set(['VER_LEADS']))
+    const i = itens.findIndex((item) => item.rotulo === 'Leads')
+
+    expect(itens[i + 1]).toEqual({ rotulo: 'Pedidos de interesse', href: '/interesses' })
+    expect(itensDoMenu(new Set(['VER_FUNIL'])).map((item) => item.rotulo)).not.toContain(
+      'Pedidos de interesse',
+    )
+  })
+
   it.each([
     ['ADMIN', true],
     ['GERENTE', true],
