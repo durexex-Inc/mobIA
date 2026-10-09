@@ -415,6 +415,7 @@ async def solicitar_interesse(
             channel=CANAL_PORTAL,
             conversation_key=conversation_key,
             nome=pedido.nome,
+            email=pedido.email,
             agora=datetime.now(UTC),
         )
         if registro.criado:

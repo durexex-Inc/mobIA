@@ -1,6 +1,7 @@
 """O pedido de interesse num imovel, feito pelo portal publico. TEC-389.
 
-Guarda so o que o handoff (TEC-174) nao guarda: QUAL imovel o cliente pediu.
+Guarda so o que o handoff (TEC-174) nao guarda: QUAL imovel o cliente pediu,
+mais o nome e o e-mail (cifrado, TEC-404) que ele deixou no formulario.
 O handoff e por (channel, conversation_key) -- um por lead aberto, nao um por
 imovel -- entao um segundo pedido, de um imovel diferente, enquanto o
 primeiro handoff ainda esta aberto nao deixaria rastro nenhum do segundo
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from mobia.domain.catalogo.models import Imovel
 from mobia.domain.messages.models import Base
-from mobia.infra.crypto import aad_de
+from mobia.infra.crypto import aad_de, encrypt
 
 
 def aad_do_email_de_interesse(solicitacao_id: uuid.UUID) -> str:
@@ -71,6 +72,7 @@ async def registrar_interesse(
     channel: str,
     conversation_key: str,
     nome: str | None,
+    email: str | None,
     agora: datetime,
 ) -> bool:
     """Grava o pedido. Nao commita -- quem chama decide a transacao.
@@ -79,17 +81,24 @@ async def registrar_interesse(
     MESMO lead ja pediu o MESMO imovel antes (CA-04) -- e nao e erro: quem
     chama devolve a mesma resposta de sucesso de um pedido novo (L3 do
     desenho -- o portal nunca revela "voce ja tinha pedido isso").
+
+    `email` vai cifrado em `email_cifrado` (TEC-404, D3). No conflito -- o mesmo
+    lead pedindo o mesmo imovel de novo -- a linha antiga fica como estava, e o
+    e-mail novo se perde: e a deduplicacao da TEC-389, nao bug.
     """
+    # O id nasce antes do insert porque a AAD do e-mail depende dele.
+    solicitacao_id = uuid.uuid4()
     resultado = cast(
         CursorResult[Any],
         await session.execute(
             pg_insert(SolicitacaoDeInteresse)
             .values(
-                id=uuid.uuid4(),
+                id=solicitacao_id,
                 imovel_id=imovel_id,
                 channel=channel,
                 conversation_key=conversation_key,
                 nome=nome,
+                email_cifrado=encrypt(email, aad_do_email_de_interesse(solicitacao_id)),
                 criado_em=agora,
             )
             .on_conflict_do_nothing(index_elements=["channel", "conversation_key", "imovel_id"])
