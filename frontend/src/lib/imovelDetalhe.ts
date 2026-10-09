@@ -9,7 +9,9 @@
  *
  * `fotos` sao caminhos RELATIVOS (`/portal/imoveis/{id}/fotos/{fotoId}`), ao
  * contrario de `ImovelCard.foto`, que exige URL absoluta `http(s)` -- aqui a
- * foto e sempre servida por este mesmo backend, nunca por terceiro.
+ * foto e sempre servida por este mesmo backend, nunca por terceiro. O
+ * navegador a pede ao Next, que tem um Route Handler no mesmo caminho para a
+ * repassar (`app/portal/imoveis/[id]/fotos/[fotoId]/route.ts`, TEC-403).
  */
 
 export type ImovelDetalhe = {

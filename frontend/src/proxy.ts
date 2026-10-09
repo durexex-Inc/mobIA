@@ -135,6 +135,30 @@ function rotaDoPortal(caminho: string): boolean {
   return caminho === '/busca' || caminho.startsWith('/busca/')
 }
 
+/**
+ * A foto publica de um imovel (TEC-403): `/portal/imoveis/{id}/fotos/{fotoId}`,
+ * o caminho relativo que o FastAPI devolve em `fotos` e `foto`
+ * (`portal.py::_fotos_publicas`) e que o Route Handler de mesmo caminho repassa.
+ *
+ * **Exatamente esta forma, segmento por segmento**, e nao `startsWith('/portal/')`:
+ * so a foto e publica; qualquer outra rota que um dia nasca sob `/portal`
+ * continua atras da sessao ate alguem decidir o contrario. Sem esta entrada o
+ * `<img>` do visitante sem cookie levava `307` para `/login` -- uma pagina HTML
+ * no lugar da imagem, que o navegador desenha como imagem quebrada.
+ */
+function rotaDaFotoDoPortal(caminho: string): boolean {
+  const segmentos = caminho.split('/')
+  return (
+    segmentos.length === 6 &&
+    segmentos[0] === '' &&
+    segmentos[1] === 'portal' &&
+    segmentos[2] === 'imoveis' &&
+    segmentos[3] !== '' &&
+    segmentos[4] === 'fotos' &&
+    segmentos[5] !== ''
+  )
+}
+
 /** A ferramenta de desenvolvimento que simula o WhatsApp. Casamento por segmento. */
 function rotaDoSimulador(caminho: string): boolean {
   return caminho === '/dev/simulador-whatsapp' || caminho.startsWith('/dev/simulador-whatsapp/')
@@ -143,7 +167,8 @@ function rotaDoSimulador(caminho: string): boolean {
 /**
  * As rotas que abrem sem sessao (TEC-309, D5): o login, o chat embutido no
  * site da imobiliaria, que e do visitante e nao do painel (TEC-344), o portal
- * publico de busca (TEC-387), o simulador de WhatsApp (ferramenta de dev), e
+ * publico de busca (TEC-387) e as fotos dele (TEC-403), o simulador de
+ * WhatsApp (ferramenta de dev), e
  * o `/sair` (TEC-310, D6) e o batimento `/sessao/atividade` (TEC-311, D3). Os
  * dois ultimos porque quem chega sem cookie tem de receber a resposta do
  * proprio handler: redirecionado daqui, levaria `307`, que repete o POST no
@@ -159,6 +184,7 @@ function rotaPublica(caminho: string): boolean {
     caminho.startsWith('/login/') ||
     rotaDoEmbed(caminho) ||
     rotaDoPortal(caminho) ||
+    rotaDaFotoDoPortal(caminho) ||
     rotaDoSimulador(caminho) ||
     caminho === '/sair' ||
     caminho === '/sessao/atividade'
