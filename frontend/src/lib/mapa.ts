@@ -13,6 +13,14 @@
  */
 export const ORIGEM_DO_MAPA = 'https://www.openstreetmap.org'
 
+/**
+ * Os tiles que o mapa da vitrine (`MapaDaVitrine`, Leaflet) carrega como
+ * `<img>` -- e o que `proxy.ts` libera em `img-src` no portal (D8). Os tiles
+ * publicos do OSM tem politica de uso justo: com trafego de producao alto, a
+ * troca por um provedor proprio e esta constante, e a CSP acompanha.
+ */
+export const ORIGEM_DOS_TILES = 'https://tile.openstreetmap.org'
+
 const MARGEM_DE_LATITUDE = 0.004
 const MARGEM_DE_LONGITUDE = 0.006
 const ZOOM_DO_MAPA_GRANDE = 16

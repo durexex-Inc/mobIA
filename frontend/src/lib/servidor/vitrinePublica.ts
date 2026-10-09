@@ -2,8 +2,8 @@ import 'server-only'
 
 import type { FiltrosDoPortal } from '@/lib/buscaPublica'
 import { detalheDe } from '@/lib/metricas'
-import { imovelDe, type ImovelCard } from '@/lib/imovel'
 import { imovelDetalheDe, type ImovelDetalhe } from '@/lib/imovelDetalhe'
+import { itemDaVitrineDe, type ImovelDaVitrine, type PaginaDaVitrine } from '@/lib/vitrine'
 
 import { chamarApi } from './api'
 
@@ -18,12 +18,6 @@ export class ErroDoPortal extends Error {
     this.status = status
     this.requestId = requestId
   }
-}
-
-export type ResultadoDoPortal = {
-  itens: ImovelCard[]
-  totalCandidatos: number
-  relaxamentoAplicado: boolean
 }
 
 function buscaDe(filtros: FiltrosDoPortal): URLSearchParams {
@@ -51,34 +45,34 @@ function buscaDe(filtros: FiltrosDoPortal): URLSearchParams {
   for (const regiao of filtros.regioes ?? []) {
     busca.append('regioes', regiao)
   }
+  if (filtros.ordem) {
+    busca.set('ordem', filtros.ordem)
+  }
+  if (filtros.pagina !== undefined) {
+    busca.set('pagina', String(filtros.pagina))
+  }
   return busca
 }
 
 /**
- * `GET /portal/imoveis`, sem `acesso`: a rota e publica (D1 do desenho da
- * TEC-387), e `chamarApi` so manda `Authorization` quando `opcoes.acesso`
- * esta presente.
+ * `GET /portal/vitrine`, sem `acesso`: a rota e publica, e `chamarApi` so
+ * manda `Authorization` quando `opcoes.acesso` esta presente.
+ *
+ * **Substitui a chamada a `GET /portal/imoveis`** (D7 do desenho do visual
+ * do portal): aquela e a busca do agente, com no maximo dez imoveis e sem
+ * paginacao; a vitrine pagina todos os que casam. O endpoint antigo continua
+ * no backend, sem uso pelo portal.
  *
  * **Com cache de 60 s** (`revalidarEmSegundos`), no mesmo espirito de
  * `buscarAparencia`: a resposta nao varia por visitante, entao cachea-la no
  * Data Cache do Next e so ganho -- sem o cuidado de exclusividade com
  * `idDeRequisicao` que `api.ts` documenta para chamada autenticada.
  *
- * **O corpo vira `ImovelCard` pelo mesmo parser da rede** (`imovelDe`):
- * `preco` da API vira `precoCentavos`, e os quatro campos que a busca nao tem
- * (`condominioCentavos`, `diferencial`, `foto`) ficam `null` -- o parser ja
- * trata ausencia como nulo para esses, de proposito (D4 do desenho de
- * `imovel.ts`). Um item que falhar a validacao (campo obrigatorio ausente ou
- * com tipo errado) e DESCARTADO da lista, nunca quebra a pagina inteira.
- *
- * **`url` aponta para o detalhe interno** (`/busca/{id}`, TEC-388) -- montada
- * aqui, depois do `imovelDe`, e nao vinda da rede: `urlSegura` so aceita
- * `http(s)` absoluto (pensado para link externo de catalogo de terceiro), e
- * um caminho relativo construido por nos mesmos nao precisa dessa validacao.
- * `CardDeImovel` distingue link interno de externo pelo `/` inicial (D5).
+ * Um item que falhar a validacao (`itemDaVitrineDe`) e DESCARTADO da lista,
+ * nunca quebra a pagina inteira.
  */
-export async function buscarVitrinePublica(filtros: FiltrosDoPortal): Promise<ResultadoDoPortal> {
-  const resposta = await chamarApi('/portal/imoveis', {
+export async function buscarVitrine(filtros: FiltrosDoPortal): Promise<PaginaDaVitrine> {
+  const resposta = await chamarApi('/portal/vitrine', {
     busca: buscaDe(filtros),
     revalidarEmSegundos: 60,
   })
@@ -86,15 +80,17 @@ export async function buscarVitrinePublica(filtros: FiltrosDoPortal): Promise<Re
     throw new Error(`vitrine publica: o FastAPI respondeu ${resposta.status}`)
   }
   const corpo = (await resposta.json()) as {
-    itens: Record<string, unknown>[]
-    totalCandidatos: number
-    relaxamentoAplicado: boolean
+    itens: unknown[]
+    total: number
+    pagina: number
+    porPagina: number
   }
-  const itens = corpo.itens
-    .map((item) => imovelDe({ ...item, precoCentavos: item.preco }))
-    .filter((item): item is ImovelCard => item !== null)
-    .map((item) => ({ ...item, url: `/busca/${item.id}` }))
-  return { itens, totalCandidatos: corpo.totalCandidatos, relaxamentoAplicado: corpo.relaxamentoAplicado }
+  return {
+    itens: corpo.itens.map(itemDaVitrineDe).filter((item): item is ImovelDaVitrine => item !== null),
+    total: corpo.total,
+    pagina: corpo.pagina,
+    porPagina: corpo.porPagina,
+  }
 }
 
 /**

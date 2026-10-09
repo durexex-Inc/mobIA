@@ -21,9 +21,9 @@ describe('FormularioDeBuscaPublica', () => {
   it('enviar com os filtros preenchidos navega para a URL correspondente', () => {
     render(<FormularioDeBuscaPublica filtros={{ operacao: 'VENDA' }} />)
 
-    fireEvent.change(screen.getByLabelText('Operação'), { target: { value: 'ALUGUEL' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'Alugar' }))
     fireEvent.change(screen.getByLabelText('Preço mínimo'), { target: { value: '1000' } })
-    fireEvent.change(screen.getByLabelText('Quartos (mínimo)'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('radio', { name: '2 ou mais quartos' }))
     fireEvent.change(screen.getByLabelText('Bairro ou região'), { target: { value: 'Centro, Trindade' } })
     fireEvent.click(screen.getByRole('button', { name: 'Buscar' }))
 
@@ -32,15 +32,24 @@ describe('FormularioDeBuscaPublica', () => {
     )
   })
 
+  it('buscar mantem a ordem escolhida e volta para a primeira pagina', () => {
+    render(<FormularioDeBuscaPublica filtros={{ operacao: 'VENDA', ordem: 'menor_preco', pagina: 3 }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar' }))
+
+    expect(push).toHaveBeenCalledWith('/busca?operacao=VENDA&ordem=menor_preco')
+  })
+
   it('os valores iniciais vem dos filtros da URL', () => {
     render(
       <FormularioDeBuscaPublica
-        filtros={{ operacao: 'ALUGUEL', precoMinCentavos: 150050, quartosMin: 3 }}
+        filtros={{ operacao: 'ALUGUEL', precoMinCentavos: 150050, quartosMin: 3, vagasMin: 2 }}
       />,
     )
 
-    expect(screen.getByLabelText('Operação')).toHaveValue('ALUGUEL')
+    expect(screen.getByRole('radio', { name: 'Alugar' })).toBeChecked()
     expect(screen.getByLabelText('Preço mínimo')).toHaveValue('1500.5')
-    expect(screen.getByLabelText('Quartos (mínimo)')).toHaveValue(3)
+    expect(screen.getByRole('radio', { name: '3 ou mais quartos' })).toBeChecked()
+    expect(screen.getByLabelText('Vagas')).toHaveValue('2')
   })
 })

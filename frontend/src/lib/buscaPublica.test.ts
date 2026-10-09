@@ -51,4 +51,16 @@ describe('filtrosDaUrl / urlDaBusca', () => {
     const url = urlDaBusca({ operacao: 'VENDA' })
     expect(url).not.toContain('regioes')
   })
+
+  it('ordem e pagina vao e voltam pela URL', () => {
+    const url = urlDaBusca({ operacao: 'VENDA', ordem: 'menor_preco', pagina: 3 })
+    const filtros = filtrosDaUrl(Object.fromEntries(new URL(url, 'http://x').searchParams))
+    expect(filtros.ordem).toBe('menor_preco')
+    expect(filtros.pagina).toBe(3)
+  })
+
+  it('ordem padrao, ordem desconhecida e pagina 1 nao entram na URL', () => {
+    expect(urlDaBusca({ operacao: 'VENDA', ordem: 'recentes', pagina: 1 })).toBe('/busca?operacao=VENDA')
+    expect(filtrosDaUrl({ ordem: 'qualquer', pagina: '0' })).toMatchObject({ ordem: undefined, pagina: undefined })
+  })
 })
