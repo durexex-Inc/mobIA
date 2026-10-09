@@ -60,6 +60,11 @@ Os dois pontos de atenção da card se resolvem assim. O SLA recomeça para o no
 - `registrar_interesse` ganha o parâmetro `email` e o grava no insert. No conflito (o mesmo telefone pedindo o mesmo imóvel, D2/L3 da TEC-389) a linha antiga fica como estava, e o e-mail novo se perde.
   - É a deduplicação que a TEC-389 já decidiu. Fica declarado aqui para não parecer bug.
 
+**D3a — Uma coluna cifrada a mais tem dois compromissos fora deste módulo**, achados ao planejar:
+
+- **Rotação de chave.** A coluna entra em `admin/recifrar.py::COLUNAS_CIFRADAS`, com a AAD `aad_de(id, "email_interesse")`. A guarda `test_colunas_cifradas.py` só varre módulos chamados `models.py`, e `SolicitacaoDeInteresse` mora em `portal/interesse.py`, então ela não pegaria o esquecimento. O teste desta card afirma a entrada diretamente.
+- **Anonimização (LGPD).** `titular/anonimizacao.py` já zera `nome` desta tabela e passa a zerar `email_cifrado` no mesmo `UPDATE`.
+
 **D4 — Cada pedido aponta para o atendimento mais recente do mesmo lead criado até o momento do pedido.** A ligação é por `(channel, conversation_key)`, com `handoffs.criado_em <= solicitacoes_de_interesse.criado_em`, o maior primeiro (`LATERAL ... LIMIT 1`).
 
 - O atendimento nasce na mesma transação, logo antes do pedido. Se já havia um aberto para o mesmo telefone, porque o lead pediu outro imóvel antes, é esse que aparece. Isso cumpre a decisão 2.
@@ -81,7 +86,9 @@ Os dois pontos de atenção da card se resolvem assim. O SLA recomeça para o no
 **D6 — A trilha ganha a ação `HANDOFF_ATRIBUIDO`** em `domain/auditoria/vocabulario.py::Acao`.
 
 - Entidade `HANDOFF`, `entidade_id` = id do atendimento.
-- `detalhes = {"de": <corretor anterior ou null>, "para": <novo>, "aceito_desfeito": <bool>}`.
+- `detalhes = {"corretor_anterior": <uuid ou null>, "corretor_novo": <uuid>, "aceito_desfeito": "sim" | "nao"}`.
+- **O `CHECK` de `eventos_auditoria.acao` é recriado** na migration `0071`, como fizeram a 0057, a 0059 e a 0063, porque o Postgres não estende `CHECK`. O downgrade o recria `NOT VALID`.
+- **`detalhes` hoje só aceita vocabulário fechado** (`validar_detalhes`). Id de corretor não é vocabulário, mas também não é texto livre. As duas chaves de corretor passam a ser validadas como **UUID ou nulo**, e `aceito_desfeito` como `"sim"`/`"nao"`. Um texto qualquer nessas chaves continua sendo `ValueError`.
 - O aceite (`handoffs.py::aceitar`) continua sem trilha, como hoje: mudar isso é outra card.
 
 **D7 — Permissões**
