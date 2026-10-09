@@ -25,7 +25,9 @@
  * O que a allowlist ainda decide e QUAIS rotas de lead chegam ao navegador:
  * desde a TEC-326 sao sete -- a transcricao, assumir, devolver, a revelacao,
  * a correcao da qualificacao, a resposta do corretor e a regeneracao do resumo
- * --, e o detalhe continua fora.
+ * --, e o detalhe continua fora. Os pedidos de interesse (TEC-404) somam tres
+ * rotas a parte dessas sete: aceitar, atribuir e a revelacao do pedido, esta
+ * tambem dado pessoal.
  *
  * `*` casa EXATAMENTE um segmento. A primeira rota que precisou dele foi a
  * transcricao do lead (TEC-324); ele foi escrito antes, porque sem ele a
@@ -70,6 +72,14 @@ export const ROTAS_PERMITIDAS: ReadonlyArray<{
   // ja sabe o `leadId` de antemao -- sem nada a resolver antes de repassar,
   // o proxy generico basta.
   { metodo: 'DELETE', padrao: ['api', 'v1', 'leads', '*', 'dados-pessoais'] },
+  // Pedidos de interesse (TEC-404, D9). Aceitar e a primeira vez que o
+  // navegador chama `handoffs/*/aceitar` direto -- ate aqui ele so aceitava
+  // via `assumir`. Atribuir e do ADMIN, e quem decide e o FastAPI. Revelar o
+  // pedido grava na trilha, como a revelacao do lead. A lista (`GET
+  // interesses`) fica de fora: o Server Component a le com `chamarApi`.
+  { metodo: 'POST', padrao: ['api', 'v1', 'handoffs', '*', 'aceitar'] },
+  { metodo: 'POST', padrao: ['api', 'v1', 'handoffs', '*', 'atribuir'] },
+  { metodo: 'POST', padrao: ['api', 'v1', 'interesses', '*', 'revelar'] },
   // Cadastrar, editar e desativar corretores (TEC-332, D8). A listagem
   // inicial da pagina usa `chamarApi` direto do Server Component, como a
   // fila do titular -- so as mutacoes do `'use client'` (criar, editar,

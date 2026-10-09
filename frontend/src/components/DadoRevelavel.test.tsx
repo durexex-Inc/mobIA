@@ -158,6 +158,53 @@ describe('DadoRevelavel', () => {
     })
   })
 
+  describe('pedidos de interesse (TEC-404)', () => {
+    it('com `url`, pede a revelacao nela, e nao na rota do lead', async () => {
+      render(
+        <DadoRevelavel
+          leadId="l-1"
+          campo="email"
+          mascarado="j****z@e*.com"
+          podeRevelar
+          url="/bff/api/v1/interesses/p-1/revelar"
+        />,
+      )
+
+      await clicar('Revelar e-mail')
+
+      expect(api).toHaveBeenCalledExactlyOnceWith(
+        '/bff/api/v1/interesses/p-1/revelar',
+        expect.objectContaining({ method: 'POST', body: '{"campo":"email"}' }),
+      )
+    })
+
+    it('com `url`, o 404 fala do registro, e nao do lead', async () => {
+      api.mockResolvedValueOnce(new Response('{}', { status: 404 }))
+      render(
+        <DadoRevelavel
+          leadId="l-1"
+          campo="telefone"
+          mascarado={MASCARA}
+          podeRevelar
+          url="/bff/api/v1/interesses/p-1/revelar"
+        />,
+      )
+
+      await clicar('Revelar telefone')
+
+      expect(screen.getByRole('alert')).toHaveTextContent('Este registro não existe mais.')
+    })
+
+    it('sem `url`, o 404 continua falando do lead', async () => {
+      api.mockResolvedValueOnce(new Response('{}', { status: 404 }))
+      render(<DadoRevelavel leadId="l-1" campo="telefone" mascarado={MASCARA} podeRevelar />)
+
+      await clicar('Revelar telefone')
+
+      expect(screen.getByRole('alert')).toHaveTextContent('Este lead não existe mais.')
+    })
+  })
+
   describe('na lista', () => {
     it('o texto e o link, e o botao fica fora dele', async () => {
       render(

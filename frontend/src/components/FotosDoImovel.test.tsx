@@ -33,7 +33,7 @@ describe('FotosDoImovel', () => {
       const onFotosMudaram = vi.fn()
       render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={onFotosMudaram} />)
 
-      const input = screen.getByLabelText('Adicionar foto') as HTMLInputElement
+      const input = screen.getByLabelText('Adicionar fotos') as HTMLInputElement
       await act(async () => {
         fireEvent.change(input, { target: { files: [jpeg()] } })
       })
@@ -54,7 +54,7 @@ describe('FotosDoImovel', () => {
       const grande = jpeg('grande.jpg', 5 * 1024 * 1024 + 1)
       render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={vi.fn()} />)
 
-      const input = screen.getByLabelText('Adicionar foto') as HTMLInputElement
+      const input = screen.getByLabelText('Adicionar fotos') as HTMLInputElement
       await act(async () => {
         fireEvent.change(input, { target: { files: [grande] } })
       })
@@ -71,7 +71,7 @@ describe('FotosDoImovel', () => {
       )
       render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={vi.fn()} />)
 
-      const input = screen.getByLabelText('Adicionar foto') as HTMLInputElement
+      const input = screen.getByLabelText('Adicionar fotos') as HTMLInputElement
       await act(async () => {
         // Nome/extensao de jpeg engana a checagem do cliente; so o backend recusa.
         fireEvent.change(input, { target: { files: [jpeg('disfarcado.jpg')] } })
@@ -151,8 +151,95 @@ describe('FotosDoImovel', () => {
       const quinze = Array.from({ length: 15 }, (_, i) => `foto-${i}`)
       render(<FotosDoImovel imovelId="im-1" fotos={quinze} onFotosMudaram={vi.fn()} />)
 
-      expect(screen.queryByLabelText('Adicionar foto')).toBeNull()
+      expect(screen.queryByLabelText('Adicionar fotos')).toBeNull()
       expect(screen.getByRole('status')).toHaveTextContent('15')
+    })
+  })
+
+  describe('cenario: varias fotos de uma vez, soltas ou escolhidas', () => {
+    function soltarNaCaixa(arquivos: File[]) {
+      const caixa = screen.getByLabelText('Adicionar fotos').closest('div') as HTMLElement
+      return act(async () => {
+        fireEvent.drop(caixa, { dataTransfer: { files: arquivos, types: ['Files'] } })
+      })
+    }
+
+    it('o seletor aceita mais de um arquivo', () => {
+      render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={vi.fn()} />)
+
+      expect(screen.getByLabelText('Adicionar fotos')).toHaveAttribute('multiple')
+    })
+
+    it('soltar tres arquivos faz tres POSTs, um depois do outro, e repassa cada lista', async () => {
+      let emVoo = 0
+      let picoEmVoo = 0
+      let n = 0
+      api.mockImplementation(async () => {
+        emVoo += 1
+        picoEmVoo = Math.max(picoEmVoo, emVoo)
+        await Promise.resolve()
+        emVoo -= 1
+        n += 1
+        return responde({ fotos: Array.from({ length: n }, (_, i) => `f-${i + 1}`) }, 201)
+      })
+      const onFotosMudaram = vi.fn()
+      render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={onFotosMudaram} />)
+
+      await soltarNaCaixa([jpeg('a.jpg'), jpeg('b.jpg'), jpeg('c.jpg')])
+
+      expect(api).toHaveBeenCalledTimes(3)
+      expect(picoEmVoo).toBe(1)
+      const nomes = api.mock.calls.map(
+        ([, init]) => ((init as RequestInit).body as FormData).get('arquivo') as File,
+      )
+      expect(nomes.map((f) => f.name)).toEqual(['a.jpg', 'b.jpg', 'c.jpg'])
+      expect(onFotosMudaram).toHaveBeenLastCalledWith(['f-1', 'f-2', 'f-3'])
+    })
+
+    it('escolher varios no seletor tambem envia todos', async () => {
+      api.mockResolvedValue(responde({ fotos: ['f-1'] }, 201))
+      render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={vi.fn()} />)
+
+      await act(async () => {
+        fireEvent.change(screen.getByLabelText('Adicionar fotos'), {
+          target: { files: [jpeg('a.jpg'), jpeg('b.jpg')] },
+        })
+      })
+
+      expect(api).toHaveBeenCalledTimes(2)
+    })
+
+    it('um arquivo recusado nao interrompe os outros, e o aviso nomeia o recusado', async () => {
+      api.mockImplementation(async () => responde({ fotos: ['f-1'] }, 201))
+      render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={vi.fn()} />)
+
+      await soltarNaCaixa([jpeg('a.jpg'), jpeg('grande.jpg', 5 * 1024 * 1024 + 1), jpeg('c.jpg')])
+
+      expect(api).toHaveBeenCalledTimes(2)
+      expect(screen.getByRole('alert')).toHaveTextContent('grande.jpg')
+    })
+
+    it('o que passa das vagas restantes nao e enviado, e o aviso diz quantos ficaram de fora', async () => {
+      api.mockImplementation(async () => responde({ fotos: [] }, 201))
+      const treze = Array.from({ length: 13 }, (_, i) => `foto-${i}`)
+      render(<FotosDoImovel imovelId="im-1" fotos={treze} onFotosMudaram={vi.fn()} />)
+
+      await soltarNaCaixa([jpeg('a.jpg'), jpeg('b.jpg'), jpeg('c.jpg'), jpeg('d.jpg')])
+
+      expect(api).toHaveBeenCalledTimes(2)
+      expect(screen.getByRole('alert')).toHaveTextContent('Só cabem mais 2 foto(s)')
+      expect(screen.getByRole('alert')).toHaveTextContent('2 arquivo(s) ficaram de fora')
+    })
+
+    it('arrastar arquivo por cima acende a caixa; arrastar miniatura nao', () => {
+      render(<FotosDoImovel imovelId="im-1" fotos={[]} onFotosMudaram={vi.fn()} />)
+      const caixa = screen.getByLabelText('Adicionar fotos').closest('div') as HTMLElement
+
+      fireEvent.dragOver(caixa, { dataTransfer: { types: ['text/plain'] } })
+      expect(caixa).not.toHaveClass('fotos-do-imovel__campo--sobre')
+
+      fireEvent.dragOver(caixa, { dataTransfer: { types: ['Files'] } })
+      expect(caixa).toHaveClass('fotos-do-imovel__campo--sobre')
     })
   })
 

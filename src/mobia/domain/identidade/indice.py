@@ -31,8 +31,13 @@ from mobia.domain.identidade.models import (
     aad_do_vinculo,
 )
 from mobia.domain.identidade.telefone import normalizar
-from mobia.domain.messages.canais import CANAL_WHATSAPP
+from mobia.domain.messages.canais import CANAL_PORTAL, CANAL_WHATSAPP
 from mobia.infra.crypto import decrypt, encrypt
+
+# Os canais cujo telefone mora em `IdentidadeDeLead`: o WhatsApp (o `wa_id`) e,
+# desde a TEC-404, o portal -- `portal.py::solicitar_interesse` registra o
+# telefone digitado no formulario la, e nao em `VinculoDeSessao`.
+_CANAIS_COM_IDENTIDADE = frozenset({CANAL_WHATSAPP, CANAL_PORTAL})
 
 
 def _hmac(mensagem: str) -> str:
@@ -109,33 +114,37 @@ async def telefones_de(
 ) -> dict[tuple[str, str], str | None]:
     """O telefone de cada lead, em digitos, pelas duas origens. TEC-129 e TEC-203.
 
-    No WhatsApp e o `wa_id` na forma canonica de `normalizar` -- ou, quando o
+    A primeira origem e `IdentidadeDeLead`, de WhatsApp e portal (TEC-404, D8);
+    os dois passam pelo mesmo caminho, e `normalizar` e inofensivo no portal,
+    que ja grava o telefone normalizado. No WhatsApp e o `wa_id` na forma
+    canonica de `normalizar` -- ou, quando o
     numero nao e brasileiro e `normalizar` devolve `None`, o proprio `wa_id`,
     que a Meta ja entrega em E.164 sem o `+`: lead estrangeiro continua tendo
-    telefone para CRM, e-mail e agenda. No web, o que o lead digitou no
-    widget, se digitou. `None` e "nao ha telefone", nunca a chave no lugar --
+    telefone para CRM, e-mail e agenda. Nos demais canais (web), o que o lead digitou
+    no widget, se digitou. `None` e "nao ha telefone", nunca a chave no lugar --
     inclusive para a chave do WhatsApp sem identidade, que e bug de dado mas
     nao motivo para derrubar uma listagem inteira.
     """
     resultado: dict[tuple[str, str], str | None] = {par: None for par in pares}
-    do_whatsapp = [chave for channel, chave in pares if channel == CANAL_WHATSAPP]
+    dos_com_identidade = [par for par in pares if par[0] in _CANAIS_COM_IDENTIDADE]
     # Cada consulta so roda com lista cheia: com a lista vazia ela seria uma ida
     # ao banco que nao pode achar nada.
-    if do_whatsapp:
+    if dos_com_identidade:
         linhas = await session.execute(
             select(
                 IdentidadeDeLead.channel,
                 IdentidadeDeLead.conversation_key,
                 IdentidadeDeLead.valor_cifrado,
             ).where(
-                IdentidadeDeLead.channel == CANAL_WHATSAPP,
-                IdentidadeDeLead.conversation_key.in_(do_whatsapp),
+                tuple_(IdentidadeDeLead.channel, IdentidadeDeLead.conversation_key).in_(
+                    dos_com_identidade
+                ),
             )
         )
         for channel, chave, blob in linhas:
             valor = decrypt(bytes(blob), aad_da_identidade(channel, chave))
             resultado[(channel, chave)] = (normalizar(valor) or valor) if valor else None
-    dos_outros = [par for par in pares if par[0] != CANAL_WHATSAPP]
+    dos_outros = [par for par in pares if par[0] not in _CANAIS_COM_IDENTIDADE]
     if dos_outros:
         vinculos = await session.execute(
             select(

@@ -10,7 +10,9 @@ from httpx import AsyncClient
 from sqlalchemy import text
 
 from mobia.domain.catalogo.models import Imovel
+from mobia.domain.portal.interesse import aad_do_email_de_interesse
 from mobia.domain.texto import dobrar
+from mobia.infra.crypto import decrypt
 
 
 async def _semear(session: Any, **sobrescritas: object) -> uuid.UUID:
@@ -215,3 +217,38 @@ async def test_sem_cabecalho_nenhum_e_201_a_rota_e_publica(
     )
 
     assert resposta.status_code == 201
+
+
+async def test_o_email_fica_cifrado_na_coluna_propria(client: AsyncClient, session: Any) -> None:
+    identificador = await _semear(session)
+
+    resposta = await client.post(
+        f"/portal/imoveis/{identificador}/interesse",
+        json={"telefone": "11988887777", "nome": "Maria", "email": "maria@ex.com"},
+    )
+    assert resposta.status_code == 201, resposta.text
+
+    linha = (
+        (await session.execute(text("SELECT id, email_cifrado FROM solicitacoes_de_interesse")))
+        .mappings()
+        .one()
+    )
+    assert linha["email_cifrado"] is not None
+    assert b"maria@ex.com" not in bytes(linha["email_cifrado"])
+    assert (
+        decrypt(bytes(linha["email_cifrado"]), aad_do_email_de_interesse(linha["id"]))
+        == "maria@ex.com"
+    )
+
+
+async def test_sem_email_a_coluna_fica_nula(client: AsyncClient, session: Any) -> None:
+    identificador = await _semear(session)
+
+    await client.post(
+        f"/portal/imoveis/{identificador}/interesse", json={"telefone": "11988887777"}
+    )
+
+    email = (
+        await session.execute(text("SELECT email_cifrado FROM solicitacoes_de_interesse"))
+    ).scalar_one()
+    assert email is None

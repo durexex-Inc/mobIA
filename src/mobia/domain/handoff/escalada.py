@@ -4,6 +4,9 @@ Molde do `sweep_followups`: um job `cron` que consulta trabalho vencido e
 age. A diferenca esta na corrida com a rota de aceite (TEC-178, Task 6, que
 tira o handoff de PENDENTE), e desde a TEC-179 tambem `assumir`
 (`routes/conversas.py`) -- ver o comentario do UPDATE em `escalar_vencidos`.
+Desde a TEC-404 ha mais um concorrente: a atribuicao do admin
+(`atribuicao.py::atribuir`), que reinicia o prazo de um handoff que esta sendo
+escalado.
 """
 
 from collections.abc import Sequence
@@ -50,8 +53,12 @@ async def escalar_vencidos(
     commitar entre
     o SELECT abaixo e o UPDATE, marcar ESCALADO cobraria o gerente por um
     lead que ja tem dono -- e o gerente e quem paga o preco de um sinal
-    errado. Por isso o UPDATE condiciona `status = 'PENDENTE'` no proprio
-    WHERE, e nao so no SELECT que trouxe os candidatos: quem arbitra a
+    errado. Por isso o UPDATE repete a condicao inteira do SELECT no proprio
+    WHERE -- `status = 'PENDENTE'` E o prazo vencido --, e nao so no SELECT
+    que trouxe os candidatos. O prazo entrou na TEC-404: a atribuicao do admin
+    (`handoff/atribuicao.py`) devolve o handoff a PENDENTE com
+    `sla_limite_em` nulo, e um UPDATE que olhasse so o status escalaria, logo
+    depois, o handoff que acabou de ganhar dono e prazo novos. Quem arbitra a
     corrida e o banco, no mesmo raciocinio do `ON CONFLICT` de
     `registrar_handoff` (`handoff/repositorio.py`). O `RETURNING` devolve so
     as linhas que o UPDATE de fato mudou -- um id que a rota aceitou no meio
@@ -111,7 +118,12 @@ async def escalar_vencidos(
         escalados = (
             await session.execute(
                 update(Handoff)
-                .where(Handoff.id.in_(candidatos), Handoff.status == Status.PENDENTE.value)
+                .where(
+                    Handoff.id.in_(candidatos),
+                    Handoff.status == Status.PENDENTE.value,
+                    Handoff.sla_limite_em.is_not(None),
+                    Handoff.sla_limite_em < agora,
+                )
                 .values(status=Status.ESCALADO.value, atualizado_em=agora)
                 .returning(
                     Handoff.id,

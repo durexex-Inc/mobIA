@@ -10,7 +10,8 @@ Desde a TEC-328 (D2) vale tambem para a duracao da janela de servico da Meta,
 que a tela usa para reabrir a janela quando o lead fala de novo; e desde a
 TEC-325 (D4), para as causas do recalculo, a reacao do lead ao imovel e a
 categoria do descarte; e desde a TEC-322 (D5), para os filtros da lista de
-leads, que moram em `leads.ts`.
+leads, que moram em `leads.ts`; e desde a TEC-404, para os tipos de evento do
+filtro da trilha de auditoria, que moram em `auditoria.ts`.
 
 O arquivo TypeScript e lido como texto. A forma que o teste espera e a de um
 objeto literal com chaves sem aspas, uma por linha -- maiusculas nos enums,
@@ -32,6 +33,7 @@ from mobia.domain.agente.schemas import (
     TipoImovel,
     Urgencia,
 )
+from mobia.domain.auditoria.vocabulario import Acao
 from mobia.domain.context import auditoria
 from mobia.domain.context.temperatura import Temperatura
 from mobia.domain.conversa.vocabulario import Status
@@ -85,6 +87,14 @@ def test_os_motivos_do_recalculo_sao_as_causas_do_backend() -> None:
         if nome.startswith("CAUSA_") and isinstance(valor, str)
     }
     assert _chaves_do_mapa("CAUSAS_DO_SCORE") == causas
+
+
+_AUDITORIA = _DETALHE.with_name("auditoria.ts")
+
+
+def test_os_tipos_de_evento_da_trilha_sao_as_acoes_do_backend() -> None:
+    """TEC-404: `ACOES` de `auditoria.ts` e o filtro da trilha; acao sem rotulo la some dele."""
+    assert _chaves_do_mapa("ACOES", _AUDITORIA) == {acao.value for acao in Acao}
 
 
 @pytest.mark.parametrize(

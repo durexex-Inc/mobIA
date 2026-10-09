@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from mobia.domain.auditoria.registro import registrar_evento
 from mobia.domain.auditoria.vocabulario import ATOR_SISTEMA, Acao, Entidade
+from mobia.domain.catalogo.models import Imovel
 from mobia.domain.context.models import aad_do_resumo
 from mobia.domain.handoff.models import aad_do_resumo_de_handoff
 from mobia.domain.identidade import indice
@@ -41,6 +42,7 @@ from mobia.domain.metricas.repositorio import calcular_indicadores, contar_etapa
 from mobia.domain.metricas.vocabulario import Etapa
 from mobia.domain.midia.armazem import ArmazemLocal
 from mobia.domain.midia.politica import chave_do_objeto
+from mobia.domain.portal.interesse import aad_do_email_de_interesse
 from mobia.domain.titular import eliminacao
 from mobia.domain.titular.anonimizacao import anonimizar_lead
 from mobia.domain.titular.repositorio import registrar_solicitacao
@@ -358,6 +360,71 @@ async def test_conteudo_some_e_as_linhas_ficam(
         assert await sessao.scalar(text("SELECT resumo FROM handoffs")) is None
     assert not semeado.blob.exists()
     assert not semeado.blob_pendente.exists(), "o download em voo nao deixa orfao"
+
+
+async def test_pedido_de_interesse_perde_nome_e_email_e_a_linha_fica(
+    semeado: Semeado,
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    imovel_id = uuid.uuid4()
+    solicitacao_id = uuid.uuid4()
+    session.add(
+        Imovel(
+            id=imovel_id,
+            codigo=f"AP-{uuid.uuid4().hex[:8]}",
+            titulo="Apartamento",
+            descricao="Dois quartos.",
+            tipo="APARTAMENTO",
+            operacao="VENDA",
+            preco_venda=58000000,
+            bairro="Vila Mariana",
+            bairro_busca="vila mariana",
+            cidade="Sao Paulo",
+            uf="SP",
+            zona="SUL",
+            area_util_m2=74,
+            quartos=2,
+            suites=1,
+            banheiros=2,
+            vagas=1,
+            caracteristicas=[],
+            fotos=[],
+            status="DISPONIVEL",
+        )
+    )
+    await session.commit()
+    await session.execute(
+        text(
+            "INSERT INTO solicitacoes_de_interesse"
+            " (id, imovel_id, channel, conversation_key, nome, email_cifrado, criado_em)"
+            " VALUES (:id, :im, :c, :k, 'Maria', :e, now())"
+        ),
+        {
+            "id": solicitacao_id,
+            "im": imovel_id,
+            "c": CANAL,
+            "k": semeado.chave,
+            "e": encrypt("maria@ex.com", aad_do_email_de_interesse(solicitacao_id)),
+        },
+    )
+    await session.commit()
+
+    await _anonimizar(session_factory, tmp_path, semeado.eliminacao)
+
+    async with session_factory() as sessao:
+        linha = (
+            (
+                await sessao.execute(
+                    text("SELECT nome, email_cifrado FROM solicitacoes_de_interesse")
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert linha["nome"] is None
+    assert linha["email_cifrado"] is None
 
 
 async def _metricas(sessao: AsyncSession) -> tuple[Any, ...]:

@@ -8,6 +8,7 @@ contem o telefone. A garantia no banco esta em
 
 import ast
 import pathlib
+import uuid
 
 import pytest
 
@@ -23,6 +24,7 @@ from mobia.domain.auditoria.vocabulario import (
     Ator,
     AtorTipo,
     Entidade,
+    detalhes_da_atribuicao,
     detalhes_da_negativa,
     detalhes_do_handoff,
     validar_detalhes,
@@ -127,6 +129,35 @@ class TestDetalhes:
             validar_detalhes({"gatilho": 3})
 
 
+class TestDetalhesDaAtribuicao:
+    def test_leva_os_dois_corretores_e_o_aceite(self) -> None:
+        anterior, novo = uuid.uuid4(), uuid.uuid4()
+        detalhes = detalhes_da_atribuicao(anterior=anterior, novo=novo, aceito_desfeito=True)
+        assert detalhes == {
+            "corretor_anterior": str(anterior),
+            "corretor_novo": str(novo),
+            "aceito_desfeito": "sim",
+        }
+        assert validar_detalhes(detalhes) == detalhes
+
+    def test_sem_corretor_anterior_e_nulo(self) -> None:
+        detalhes = detalhes_da_atribuicao(anterior=None, novo=uuid.uuid4(), aceito_desfeito=False)
+        assert detalhes["corretor_anterior"] is None
+        assert detalhes["aceito_desfeito"] == "nao"
+        validar_detalhes(detalhes)
+
+    def test_texto_livre_nas_chaves_de_corretor_e_recusado(self) -> None:
+        with pytest.raises(ValueError):
+            validar_detalhes({"corretor_novo": "Maria Silva"})
+
+    def test_corretor_novo_nulo_e_recusado(self) -> None:
+        with pytest.raises(ValueError):
+            validar_detalhes({"corretor_novo": None})
+
+    def test_a_acao_existe(self) -> None:
+        assert Acao.HANDOFF_ATRIBUIDO.value == "HANDOFF_ATRIBUIDO"
+
+
 class TestValidarDetalhesPorValor:
     """`validar_detalhes` confere o VALOR de cada chave, e nao so o nome.
 
@@ -160,19 +191,27 @@ class TestValidarDetalhesPorValor:
         detalhes = {"papel": PAPEL_DESCONHECIDO, "metodo": METODO_DESCONHECIDO}
         assert validar_detalhes(detalhes) == detalhes
 
-    @pytest.mark.parametrize("chave", ["gatilho", "motivo", "papel", "metodo"])
-    def test_nulo_so_vale_para_permissao(self, chave: str) -> None:
+    @pytest.mark.parametrize(
+        "chave",
+        ["gatilho", "motivo", "papel", "metodo", "corretor_novo", "aceito_desfeito"],
+    )
+    def test_nulo_so_vale_para_permissao_e_corretor_anterior(self, chave: str) -> None:
         with pytest.raises(ValueError, match=f"detalhes.{chave}"):
             validar_detalhes({chave: None})
 
     def test_permissao_nula_passa(self) -> None:
         assert validar_detalhes({"permissao": None}) == {"permissao": None}
 
-    def test_toda_chave_tem_vocabulario_de_valor(self) -> None:
-        """Chave nova em `CHAVES_DE_DETALHES` sem vocabulario viraria `KeyError`."""
-        from mobia.domain.auditoria.vocabulario import _VALORES_DE_DETALHES
+    def test_corretor_anterior_nulo_passa(self) -> None:
+        assert validar_detalhes({"corretor_anterior": None}) == {"corretor_anterior": None}
 
-        assert set(_VALORES_DE_DETALHES) == CHAVES_DE_DETALHES
+    def test_toda_chave_tem_vocabulario_ou_regra_de_valor(self) -> None:
+        """Chave nova em `CHAVES_DE_DETALHES` sem vocabulario nem regra viraria `KeyError`."""
+        from mobia.domain.auditoria.vocabulario import _CHAVES_DE_UUID, _VALORES_DE_DETALHES
+
+        assert set(_VALORES_DE_DETALHES) | set(_CHAVES_DE_UUID) == CHAVES_DE_DETALHES
+        # Uma chave com regra e com vocabulario ao mesmo tempo seria ambigua.
+        assert not set(_VALORES_DE_DETALHES) & set(_CHAVES_DE_UUID)
 
 
 VERSIONS = pathlib.Path(__file__).resolve().parents[2] / "alembic" / "versions"
@@ -225,11 +264,12 @@ def test_o_vocabulario_bate_com_o_check_da_migration(constante: str, enum: type)
 
 
 def test_a_tupla_vem_da_migration_mais_recente() -> None:
-    """A 0063 redefine acoes e entidades, e a 0053 continua respondendo por atores.
+    """A 0071 redefine acoes, a 0063 entidades, e a 0053 continua respondendo por atores.
 
     Migrations diferentes respondem, uma por tupla ou as duas -- e o caso que a
     busca por nome existe para cobrir.
     """
+    assert "HANDOFF_ATRIBUIDO" in _tupla_da_migracao("_ACOES")
     assert "PROMPT_REVERTIDO" in _tupla_da_migracao("_ACOES")
     assert "CONFIGURACAO_ALTERADA" in _tupla_da_migracao("_ACOES")
     assert "INJECAO_DETECTADA" in _tupla_da_migracao("_ACOES")

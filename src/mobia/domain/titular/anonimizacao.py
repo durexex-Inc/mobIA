@@ -188,10 +188,11 @@ def anonimizar_lead(conn: Connection, *, channel: str, conversation_key: str) ->
     )
     # TEC-389. `nome` e texto livre que o cliente digitou no formulario --
     # conteudo que identifica, como o resumo acima. Sem isto sobreviveria em
-    # claro sob o pseudonimo, a unica coluna desta tabela que o faria.
+    # claro sob o pseudonimo. TEC-404: o e-mail (cifrado) tambem identifica,
+    # e cifrar nao basta -- a chave de dados continua existindo.
     conn.execute(
         text(
-            "UPDATE solicitacoes_de_interesse SET nome = NULL"
+            "UPDATE solicitacoes_de_interesse SET nome = NULL, email_cifrado = NULL"
             " WHERE channel = :c AND conversation_key = :k"
         ),
         par,

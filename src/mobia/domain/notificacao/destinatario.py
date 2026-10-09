@@ -1,9 +1,12 @@
 """Quem recebe a notificacao do handoff. TEC-177, D3.
 
 A RN-16.2 diz "o corretor designado". A alocacao da TEC-166 escolhe
-corretor para o agendamento, nao para o handoff, e `handoffs.corretor_id`
-nunca e escrito hoje -- a chave estrangeira existe desde a TEC-196, o
-escritor nao. Dai a cascata.
+corretor para o agendamento, nao para o handoff. Quando esta cascata nasceu,
+`handoffs.corretor_id` nao tinha escritor -- a chave estrangeira existia desde
+a TEC-196, o escritor nao. Hoje ele tem dois: a propria notificacao grava o
+destinatario escolhido aqui (TEC-192), e a atribuicao do admin
+(`domain/handoff/atribuicao.py::atribuir`, TEC-404) o sobrescreve. A cascata
+continua sendo o que decide quando a coluna esta nula ou aponta um inativo.
 """
 
 import uuid
