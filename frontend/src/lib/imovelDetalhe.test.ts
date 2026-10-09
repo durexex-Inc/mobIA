@@ -4,6 +4,7 @@ import { imovelDetalheDe } from './imovelDetalhe'
 
 const BRUTO = {
   id: 'i-1',
+  codigo: 'IT-9821',
   titulo: 'Apartamento com vista',
   descricao: 'Sala ampla com varanda.',
   tipo: 'APARTAMENTO',
@@ -22,6 +23,8 @@ const BRUTO = {
   iptuMensal: null,
   caracteristicas: ['varanda', 'vista para o mar'],
   fotos: ['/portal/imoveis/i-1/fotos/f-1'],
+  latitude: -27.584,
+  longitude: -48.505,
 }
 
 describe('imovelDetalheDe', () => {
@@ -47,5 +50,22 @@ describe('imovelDetalheDe', () => {
     const detalhe = imovelDetalheDe({ ...BRUTO, caracteristicas: undefined, fotos: undefined })
     expect(detalhe?.caracteristicas).toEqual([])
     expect(detalhe?.fotos).toEqual([])
+  })
+
+  it('sem codigo o detalhe e descartado, como qualquer campo obrigatorio', () => {
+    expect(imovelDetalheDe({ ...BRUTO, codigo: '' })).toBeNull()
+  })
+
+  it('coordenada ausente, fora da faixa ou pela metade zera o par', () => {
+    for (const parcial of [
+      { latitude: null },
+      { longitude: undefined },
+      { latitude: 91 },
+      { longitude: '-48.5' },
+    ]) {
+      const detalhe = imovelDetalheDe({ ...BRUTO, ...parcial })
+      expect(detalhe?.latitude).toBeNull()
+      expect(detalhe?.longitude).toBeNull()
+    }
   })
 })

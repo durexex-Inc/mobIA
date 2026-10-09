@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
+import { ORIGEM_DO_MAPA } from '@/lib/mapa'
 import { origemDoChat } from '@/lib/servidor/enderecoDoChat'
 import { dominiosDoEmbed } from '@/lib/servidor/dominiosDoEmbed'
 
@@ -58,10 +59,14 @@ export type PoliticaDoEmbed = {
 export function politicaDeSeguranca(
   nonce: string,
   isDev: boolean,
-  { embed }: { embed?: PoliticaDoEmbed } = {},
+  { embed, portal = false }: { embed?: PoliticaDoEmbed; portal?: boolean } = {},
 ): string {
   return [
     "default-src 'self'",
+    // So o portal enquadra alguem, e so o mapa do detalhe do imovel (D3 do
+    // desenho do visual do portal). O painel e o embed nao tem iframe
+    // nenhum, e por isso continuam herdando `default-src 'self'`.
+    ...(portal ? [`frame-src ${ORIGEM_DO_MAPA}`] : []),
     // So o embed abre WebSocket, e so para a origem do proprio chat (TEC-346,
     // D2): o painel nao tem `fetch` nem socket para fora da propria origem, e
     // por isso continua sem esta diretiva. Sem origem conferida, o embed
@@ -221,7 +226,10 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     : rotaDoSimulador(caminho)
       ? { ancestrais: [], conectarA: conectarDoEmbed() }
       : undefined
-  const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', { embed })
+  const politica = politicaDeSeguranca(nonce, process.env.NODE_ENV === 'development', {
+    embed,
+    portal: rotaDoPortal(caminho),
+  })
 
   // O nonce vai no cabecalho da REQUISICAO tambem, e nao so no da resposta: e
   // assim que o render o alcanca. O Next extrai o nonce da propria CSP e o

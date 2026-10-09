@@ -14,6 +14,7 @@
 
 export type ImovelDetalhe = {
   id: string
+  codigo: string
   titulo: string
   descricao: string
   tipo: string
@@ -32,6 +33,9 @@ export type ImovelDetalhe = {
   iptuMensal: number | null
   caracteristicas: string[]
   fotos: string[]
+  /** Ja arredondadas pelo backend (`portal.py::_coordenada_publica`). */
+  latitude: number | null
+  longitude: number | null
 }
 
 type Bruto = Record<string, unknown>
@@ -48,6 +52,17 @@ function textoNaoVazio(valor: unknown): valor is string {
   return typeof valor === 'string' && valor.trim() !== ''
 }
 
+function coordenadaOuNula(valor: unknown, limite: number): number | null {
+  return typeof valor === 'number' && Number.isFinite(valor) && Math.abs(valor) <= limite ? valor : null
+}
+
+function parDeCoordenadas(
+  latitude: number | null,
+  longitude: number | null,
+): Pick<ImovelDetalhe, 'latitude' | 'longitude'> {
+  return latitude === null || longitude === null ? { latitude: null, longitude: null } : { latitude, longitude }
+}
+
 function listaDeTexto(valor: unknown): string[] {
   return Array.isArray(valor) ? valor.filter((item): item is string => typeof item === 'string') : []
 }
@@ -59,6 +74,7 @@ export function imovelDetalheDe(valor: unknown): ImovelDetalhe | null {
   const dado = valor as Bruto
   if (
     !textoNaoVazio(dado.id) ||
+    !textoNaoVazio(dado.codigo) ||
     !textoNaoVazio(dado.titulo) ||
     !textoNaoVazio(dado.descricao) ||
     !textoNaoVazio(dado.tipo) ||
@@ -76,6 +92,7 @@ export function imovelDetalheDe(valor: unknown): ImovelDetalhe | null {
   }
   return {
     id: dado.id,
+    codigo: dado.codigo,
     titulo: dado.titulo,
     descricao: dado.descricao,
     tipo: dado.tipo,
@@ -94,5 +111,7 @@ export function imovelDetalheDe(valor: unknown): ImovelDetalhe | null {
     iptuMensal: inteiroOuNulo(dado.iptuMensal),
     caracteristicas: listaDeTexto(dado.caracteristicas),
     fotos: listaDeTexto(dado.fotos),
+    // So o par inteiro vale: meia coordenada nao posiciona mapa nenhum.
+    ...parDeCoordenadas(coordenadaOuNula(dado.latitude, 90), coordenadaOuNula(dado.longitude, 180)),
   }
 }

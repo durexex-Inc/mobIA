@@ -17,33 +17,42 @@ export function FormularioDeInteresse({ imovelId }: { imovelId: string }) {
 
   if (estado.status === 'sucesso') {
     return (
-      <p role="status" className="busca-publica__interesse_sucesso">
+      <p role="status" className="portal-cartao portal-interesse__sucesso">
         Recebemos seu pedido! Um corretor vai entrar em contato em breve.
       </p>
     )
   }
 
   return (
-    <form action={enviar} className="busca-publica__interesse">
-      <h2>Tenho interesse</h2>
-      <label>
+    <form action={enviar} className="portal-cartao portal-interesse">
+      <h2 className="portal-subtitulo">Tenho interesse neste imóvel</h2>
+      <p className="portal-nota">Deixe seu telefone e um corretor entra em contato.</p>
+      <label className="portal-campo">
         Telefone
-        <input name="telefone" type="tel" inputMode="tel" required disabled={pendente} />
+        <input
+          name="telefone"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder="Com DDD"
+          required
+          disabled={pendente}
+        />
       </label>
-      <label>
+      <label className="portal-campo">
         Nome (opcional)
-        <input name="nome" type="text" disabled={pendente} />
+        <input name="nome" type="text" autoComplete="name" disabled={pendente} />
       </label>
-      <label>
+      <label className="portal-campo">
         E-mail (opcional)
-        <input name="email" type="email" disabled={pendente} />
+        <input name="email" type="email" autoComplete="email" disabled={pendente} />
       </label>
       {estado.status === 'erro' && (
-        <p role="alert" className="busca-publica__interesse_erro">
+        <p role="alert" className="portal-interesse__erro">
           {estado.mensagem}
         </p>
       )}
-      <button type="submit" disabled={pendente}>
+      <button type="submit" className="portal-botao portal-botao--primario" disabled={pendente}>
         {pendente ? 'Enviando...' : 'Quero ser contatado'}
       </button>
     </form>

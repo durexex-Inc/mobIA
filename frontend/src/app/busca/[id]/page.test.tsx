@@ -23,6 +23,7 @@ function responde(corpo: unknown, status = 200) {
 function detalhe(sobrescreve: Record<string, unknown> = {}) {
   return {
     id: 'i-1',
+    codigo: 'IT-9821',
     titulo: 'Apartamento com vista',
     descricao: 'Sala ampla com varanda e vista para o mar.',
     tipo: 'APARTAMENTO',
@@ -41,6 +42,8 @@ function detalhe(sobrescreve: Record<string, unknown> = {}) {
     iptuMensal: null,
     caracteristicas: ['varanda', 'vista para o mar'],
     fotos: ['/portal/imoveis/i-1/fotos/f-1'],
+    latitude: -27.584,
+    longitude: -48.505,
     ...sobrescreve,
   }
 }
@@ -77,6 +80,37 @@ describe('DetalheDoImovel', () => {
 
     expect(screen.getByText('Este imóvel ainda não tem foto cadastrada.')).toBeInTheDocument()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('mostra o codigo, a operacao e o tipo como selos', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(responde(detalhe({ operacao: 'AMBOS' }))))
+
+    render(await paginaCom('i-1'))
+
+    expect(screen.getByText('Cód. IT-9821')).toBeInTheDocument()
+    expect(screen.getByText('Venda e locação')).toBeInTheDocument()
+    expect(screen.getByText('Apartamento')).toBeInTheDocument()
+  })
+
+  it('com coordenada, mostra o mapa do OpenStreetMap no ponto do imovel', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(responde(detalhe())))
+
+    render(await paginaCom('i-1'))
+
+    const mapa = screen.getByTitle('Mapa de Centro, Florianópolis')
+    expect(mapa.getAttribute('src')).toContain('https://www.openstreetmap.org/export/embed.html?')
+    expect(mapa.getAttribute('src')).toContain('marker=-27.584%2C-48.505')
+  })
+
+  it('sem coordenada, a secao de localizacao nao aparece', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(responde(detalhe({ latitude: null, longitude: null }))),
+    )
+
+    render(await paginaCom('i-1'))
+
+    expect(screen.queryByRole('heading', { name: 'Localização' })).toBeNull()
   })
 
   it('CA-03: 404 vira "Imóvel não encontrado"', async () => {

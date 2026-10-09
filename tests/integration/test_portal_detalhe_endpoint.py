@@ -4,6 +4,7 @@ TEC-388. Basename distinto de tudo em `tests/unit/`.
 """
 
 import uuid
+from decimal import Decimal
 from typing import Any
 
 from httpx import AsyncClient
@@ -70,10 +71,28 @@ async def test_ca01_detalhe_traz_descricao_caracteristicas_e_precos(
     assert corpo["quartos"] == 2
     assert corpo["caracteristicas"] == ["varanda", "vista para o parque"]
     assert corpo["fotos"] == []
+    # O codigo e o que o lead cita ao corretor (D1 do desenho do visual do
+    # portal, que reverteu esta parte da D2 da TEC-388).
+    assert corpo["codigo"] == "AP-2042"
+    # Sem coordenada no cadastro, o portal nao mostra mapa.
+    assert corpo["latitude"] is None
+    assert corpo["longitude"] is None
     # D2: campos administrativos nao vazam.
-    assert "codigo" not in corpo
     assert "status" not in corpo
     assert "zona" not in corpo
+
+
+async def test_coordenada_sai_arredondada_a_tres_casas(client: AsyncClient, session: Any) -> None:
+    # D2 do desenho do visual do portal: a pagina e publica, e tres casas
+    # (~110 m) mostram a quadra sem apontar o predio.
+    identificador = await _semear(
+        session, latitude=Decimal("-27.583712"), longitude=Decimal("-48.505219")
+    )
+
+    corpo = (await client.get(f"/portal/imoveis/{identificador}")).json()
+
+    assert corpo["latitude"] == -27.584
+    assert corpo["longitude"] == -48.505
 
 
 async def test_ca02_sem_foto_a_lista_vem_vazia(client: AsyncClient, session: Any) -> None:

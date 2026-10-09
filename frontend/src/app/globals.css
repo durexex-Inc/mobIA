@@ -4165,3 +4165,551 @@ a {
     flex-wrap: wrap;
   }
 }
+
+/* --- Portal publico: detalhe do imovel ------------------------------------
+   `/busca/[id]`, no visual da referencia do desenho do visual do portal
+   (docs/superpowers/specs/2026-10-09-portal-detalhe-visual-design.md).
+
+   Tokens proprios, e nao os do painel: o portal e a vitrine da imobiliaria,
+   com verde de mata e titulos em serifa, e mexer na paleta do painel nao deve
+   mudar o que o cliente final ve. O escuro segue a mesma regra do tema
+   (TEC-393): sistema pede e ninguem escolheu claro, ou `data-tema="escuro"`.
+
+   Nenhuma regra aqui pode virar `style=` no JSX: em producao `style-src` e so
+   nonce, e atributo `style` nao carrega nonce (D4). */
+
+.portal {
+  --portal-fundo: #f2f5f2;
+  --portal-cartao: #ffffff;
+  --portal-texto: #17231d;
+  --portal-fraco: #5d6a63;
+  --portal-borda: #dde4df;
+  --portal-verde: #1e4d3a;
+  --portal-verde-texto: #1e4d3a;
+  --portal-verde-claro: #e2f0e7;
+  --portal-areia: #f5e6c6;
+  --portal-areia-texto: #6a4810;
+  --portal-raio: 1rem;
+
+  min-height: 100vh;
+  padding-bottom: 5.5rem;
+  background: var(--portal-fundo);
+  color: var(--portal-texto);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tema="claro"]) .portal {
+    --portal-fundo: #0f1412;
+    --portal-cartao: #17201c;
+    --portal-texto: #e6eee9;
+    --portal-fraco: #9aa8a1;
+    --portal-borda: #27342d;
+    --portal-verde: #2f7a57;
+    --portal-verde-texto: #7fcaa1;
+    --portal-verde-claro: #1c2e25;
+    --portal-areia: #3a301b;
+    --portal-areia-texto: #ead09a;
+  }
+}
+
+:root[data-tema="escuro"] .portal {
+  --portal-fundo: #0f1412;
+  --portal-cartao: #17201c;
+  --portal-texto: #e6eee9;
+  --portal-fraco: #9aa8a1;
+  --portal-borda: #27342d;
+  --portal-verde: #2f7a57;
+  --portal-verde-texto: #7fcaa1;
+  --portal-verde-claro: #1c2e25;
+  --portal-areia: #3a301b;
+  --portal-areia-texto: #ead09a;
+}
+
+.portal-topo {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--portal-cartao);
+  border-bottom: 1px solid var(--portal-borda);
+}
+
+.portal-topo__voltar {
+  display: inline-flex;
+  padding: 0.375rem;
+  border-radius: 999px;
+  color: var(--portal-texto);
+}
+
+.portal-topo__voltar:hover {
+  background: var(--portal-verde-claro);
+}
+
+.portal-topo__titulo {
+  font-weight: 600;
+}
+
+.portal-icone {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+}
+
+.portal-corpo {
+  display: grid;
+  gap: 1rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.portal-principal {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.portal-cartao {
+  padding: 1.25rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: var(--portal-raio);
+  background: var(--portal-cartao);
+}
+
+.portal-subtitulo {
+  margin: 0 0 0.75rem;
+  font-family: var(--fonte-do-portal), Georgia, serif;
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.portal-nota {
+  margin: -0.25rem 0 1rem;
+  color: var(--portal-fraco);
+  font-size: 0.875rem;
+}
+
+.portal-link {
+  display: inline-block;
+  margin-top: 0.75rem;
+  color: var(--portal-verde-texto);
+  font-weight: 600;
+}
+
+/* Galeria: a foto grande, com o contador e as miniaturas por cima dela. */
+
+.portal-galeria {
+  position: relative;
+  overflow: hidden;
+  margin: 0;
+  border-radius: 1.25rem;
+  background: var(--portal-verde-claro);
+}
+
+.portal-galeria__principal {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.portal-galeria--vazia {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  padding: 1rem;
+  color: var(--portal-fraco);
+  text-align: center;
+}
+
+.portal-galeria__contador {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #ffffff;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.portal-galeria__miniaturas {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  display: flex;
+  gap: 0.375rem;
+  max-width: calc(100% - 8rem);
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.portal-galeria__miniatura {
+  display: block;
+  width: 3.25rem;
+  height: 3.25rem;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid rgb(255 255 255 / 0.7);
+  border-radius: 0.625rem;
+  background: none;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.portal-galeria__miniatura[aria-current="true"] {
+  border-color: #ffffff;
+  opacity: 1;
+}
+
+.portal-galeria__miniatura:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 1px;
+}
+
+.portal-galeria__miniatura img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Apresentacao: selos, titulo e endereco, sem cartao -- e o cabecalho da pagina. */
+
+.portal-apresentacao {
+  padding: 0.25rem 0.25rem 0;
+}
+
+.portal-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-selo {
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.portal-selo--operacao {
+  background: var(--portal-areia);
+  color: var(--portal-areia-texto);
+}
+
+.portal-selo--tipo {
+  background: var(--portal-verde-claro);
+  color: var(--portal-verde-texto);
+}
+
+.portal-selo--codigo {
+  border: 1px solid var(--portal-borda);
+  color: var(--portal-fraco);
+  font-weight: 500;
+}
+
+.portal-titulo {
+  margin: 0;
+  font-family: var(--fonte-do-portal), Georgia, serif;
+  font-size: clamp(1.75rem, 1.4rem + 1.6vw, 2.5rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.portal-endereco {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0.5rem 0 0;
+  color: var(--portal-fraco);
+}
+
+/* Precos: venda e locacao lado a lado, encargos num quadro abaixo. */
+
+.portal-precos dl,
+.portal-precos dd {
+  margin: 0;
+}
+
+.portal-precos dt {
+  color: var(--portal-fraco);
+  font-size: 0.8125rem;
+}
+
+/* Grade e nao flex com quebra: num celular de 375px os dois valores nao cabem
+   lado a lado no tamanho de desktop, e a quebra jogava a locacao para baixo
+   alinhada a direita. A fonte encolhe com a tela para que caibam. */
+.portal-precos__principais {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 1rem;
+}
+
+.portal-precos__principais > div:last-child:not(:first-child) {
+  text-align: right;
+}
+
+.portal-precos__valor {
+  font-size: clamp(1.25rem, 0.9rem + 1.6vw, 1.625rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.portal-precos__periodo {
+  margin-left: 0.125rem;
+  color: var(--portal-fraco);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+/* Mais especifico que `.portal-precos dl`, que zera a margem. */
+.portal-precos .portal-precos__encargos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: var(--portal-fundo);
+}
+
+.portal-precos__encargos dd {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Numeros: os quatro ladrilhos de area, quartos, banheiros e vagas. */
+
+.portal-numeros {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-numeros li {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 0.125rem;
+  padding: 0.875rem 0.25rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 0.875rem;
+  background: var(--portal-cartao);
+  text-align: center;
+}
+
+.portal-numeros .portal-icone {
+  margin-bottom: 0.25rem;
+  color: var(--portal-verde-texto);
+}
+
+.portal-numeros strong {
+  font-size: 1.0625rem;
+}
+
+.portal-numeros span {
+  color: var(--portal-fraco);
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.portal-descricao {
+  max-width: 70ch;
+  margin: 0;
+  line-height: 1.65;
+  white-space: pre-line;
+}
+
+/* Comodidades: as caracteristicas do cadastro, uma por linha, com o visto. */
+
+.portal-comodidades {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-comodidades li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: var(--portal-verde-claro);
+}
+
+.portal-comodidades .portal-icone {
+  color: var(--portal-verde-texto);
+}
+
+/* O cadastro grava as caracteristicas em minuscula ("varanda"); a maiuscula
+   e so de apresentacao, e o texto da pagina continua o mesmo. `inline-block`
+   porque `::first-letter` nao vale em elemento inline. */
+.portal-comodidades__nome {
+  display: inline-block;
+}
+
+.portal-comodidades__nome::first-letter {
+  text-transform: uppercase;
+}
+
+.portal-mapa {
+  display: block;
+  width: 100%;
+  height: 16rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: var(--portal-verde-claro);
+}
+
+/* Formulario de interesse. */
+
+.portal-interesse {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.portal-interesse .portal-subtitulo,
+.portal-interesse .portal-nota {
+  margin: 0;
+}
+
+.portal-campo {
+  display: grid;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.portal-campo input {
+  padding: 0.75rem 0.875rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 0.75rem;
+  background: var(--portal-fundo);
+  color: var(--portal-texto);
+  font: inherit;
+  font-weight: 400;
+}
+
+.portal-campo input:focus-visible {
+  outline: 2px solid var(--portal-verde);
+  outline-offset: 1px;
+}
+
+.portal-interesse__erro {
+  margin: 0;
+  color: #b42318;
+  font-size: 0.875rem;
+}
+
+.portal-interesse__sucesso {
+  margin: 0;
+  color: var(--portal-verde-texto);
+  font-weight: 600;
+}
+
+.portal-botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.875rem 1.25rem;
+  border: 0;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.portal-botao--primario {
+  background: var(--portal-verde);
+  color: #ffffff;
+}
+
+.portal-botao--primario:hover {
+  filter: brightness(1.1);
+}
+
+.portal-botao--primario:focus-visible {
+  outline: 3px solid var(--portal-verde-texto);
+  outline-offset: 2px;
+}
+
+.portal-botao:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+/* No celular o "Tenho interesse" fica sempre a mao, como na referencia, e
+   leva ao formulario, que ali fica no fim da pagina. */
+.portal-barra {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--portal-borda);
+  background: var(--portal-cartao);
+}
+
+.portal-barra .portal-botao {
+  flex: 1;
+}
+
+@media (max-width: 379.98px) {
+  .portal-numeros {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* No desktop o formulario sobe para a coluna da direita e acompanha a
+   rolagem; a barra fixa sai, porque o formulario ja esta a vista. */
+@media (min-width: 960px) {
+  .portal {
+    padding-bottom: 0;
+  }
+
+  .portal-corpo {
+    grid-template-columns: minmax(0, 1fr) 22rem;
+    align-items: start;
+    gap: 1.5rem;
+    padding: 1.5rem;
+  }
+
+  .portal-lateral {
+    position: sticky;
+    top: 4.5rem;
+  }
+
+  /* Em 4:3 a foto ocupava a tela inteira e empurrava titulo e preco para
+     baixo da dobra. */
+  .portal-galeria__principal,
+  .portal-galeria--vazia {
+    aspect-ratio: 16 / 10;
+  }
+
+  .portal-barra {
+    display: none;
+  }
+}
