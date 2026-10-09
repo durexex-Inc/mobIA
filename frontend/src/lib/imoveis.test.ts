@@ -9,6 +9,7 @@ import {
   type Imovel,
   pedidoDeCadastro,
   pedidoDeEdicao,
+  reaisParaCentavos,
   recusaDe,
   totalMensalEstimado,
   urlDaListaDeImoveis,
@@ -73,6 +74,37 @@ describe('formularioDe', () => {
     expect(formulario.codigo).toBe('')
     expect(formulario.tipo).toBe('')
     expect(formulario.caracteristicas).toEqual([])
+  })
+})
+
+describe('reaisParaCentavos', () => {
+  it('le o formato que o exemplo do campo sugere (850.000,00)', () => {
+    // O bug: `Number('850.000,00')` e NaN, `JSON.stringify` troca NaN por
+    // null, e o backend recusava com "ao menos um preco e obrigatorio"
+    // com o preco preenchido na tela.
+    expect(reaisParaCentavos('850.000,00')).toBe(85_000_000)
+    expect(reaisParaCentavos('4.500,50')).toBe(450_050)
+    expect(reaisParaCentavos('850000,00')).toBe(85_000_000)
+    expect(reaisParaCentavos('R$ 1.250,00')).toBe(125_000)
+  })
+
+  it('ponto seguido de grupos de tres digitos e milhar', () => {
+    expect(reaisParaCentavos('850.000')).toBe(85_000_000)
+    expect(reaisParaCentavos('1.250')).toBe(125_000)
+    expect(reaisParaCentavos('1.000.000')).toBe(100_000_000)
+  })
+
+  it('continua lendo o ponto decimal que `formularioDe` produz', () => {
+    expect(reaisParaCentavos('350000')).toBe(35_000_000)
+    expect(reaisParaCentavos('320.5')).toBe(32_050)
+    expect(reaisParaCentavos('320.50')).toBe(32_050)
+  })
+
+  it('vazio e null; texto que nao e numero tambem, nunca NaN', () => {
+    expect(reaisParaCentavos('')).toBeNull()
+    expect(reaisParaCentavos('   ')).toBeNull()
+    expect(reaisParaCentavos('abc')).toBeNull()
+    expect(reaisParaCentavos('1,2,3')).toBeNull()
   })
 })
 
@@ -157,6 +189,16 @@ describe('validarFormulario / formularioValido (D2)', () => {
     expect(soAluguel.porCampo.precoVenda).toBeUndefined()
   })
 
+  it('valor em reais ilegivel recusa o proprio campo, em vez de ir como null', () => {
+    const recusa = validarFormulario({ ...valido, precoVenda: 'oitocentos mil', condominio: '1,2,3' })
+    expect(recusa.porCampo.precoVenda).toBeDefined()
+    expect(recusa.porCampo.condominio).toBeDefined()
+  })
+
+  it('preco no formato brasileiro e valido', () => {
+    expect(formularioValido({ ...valido, precoVenda: '850.000,00' })).toBe(true)
+  })
+
   it('caracteristicas vazio nao recusa -- diferencial e opcional', () => {
     expect(formularioValido({ ...valido, caracteristicas: [] })).toBe(true)
   })
@@ -207,6 +249,10 @@ describe('totalMensalEstimado (TEC-400)', () => {
 
   it('soma aluguel, condominio e IPTU, em reais', () => {
     expect(totalMensalEstimado({ ...base, precoAluguel: '4500', condominio: '850', iptuMensal: '320.5' })).toBe(5670.5)
+  })
+
+  it('le valores no formato brasileiro', () => {
+    expect(totalMensalEstimado({ ...base, precoAluguel: '4.500,00', condominio: '850,50', iptuMensal: '' })).toBe(5350.5)
   })
 
   it('sem preco de aluguel nao ha total', () => {
