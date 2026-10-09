@@ -66,6 +66,11 @@ ROTAS_PUBLICAS: dict[str, str] = {
         "a vitrine publica do catalogo; busca anonima, sem login, reaproveita "
         "a mesma busca interna de RF-09 (TEC-387)"
     ),
+    "/portal/vitrine": (
+        "a listagem paginada e publica do catalogo, todos os imoveis disponiveis "
+        "que casam com os filtros, com ordem e pagina; anonima, sem login, e "
+        "os mesmos imoveis de `/portal/imoveis`, so que em cards (visual do portal, D7)"
+    ),
     "/portal/imoveis/{imovel_id}": (
         "detalhe publico de um imovel disponivel -- descricao, caracteristicas "
         "e as duas colunas de preco (TEC-388); so o que a TEC-387 ja lista na "

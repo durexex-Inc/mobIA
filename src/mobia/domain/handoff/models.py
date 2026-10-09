@@ -67,14 +67,20 @@ class Handoff(Base):
     # `handoff/escalada.py`, quando o prazo vence, e `notificacao/envio.py`,
     # quando nao ha destinatario nenhum a quem cobrar. CONCLUIDO vem do
     # `devolver` da TEC-278 (`api/routes/conversas.py`), o unico escritor dele.
+    # E desde a TEC-404 um handoff ACEITO ou ESCALADO pode VOLTAR a PENDENTE:
+    # a atribuicao do admin (`handoff/atribuicao.py`) desfaz o aceite e
+    # reinicia o prazo.
     #
     # O enum nasceu completo na TEC-174 porque mudar valor de enum depois
     # custa migration, e o `IN` do CHECK e o unico lugar a mexer.
     status: Mapped[str] = mapped_column(String(16), nullable=False)
 
-    # FK para `corretores.id` desde a TEC-196. Continua NULAVEL, mas agora
-    # por outra razao -- nao falta mais tabela alvo, falta quem a escreva. A
-    # alocacao da TEC-166 escolhe corretor para o agendamento, nao grava aqui.
+    # FK para `corretores.id` desde a TEC-196. Continua NULAVEL: o handoff
+    # nasce sem dono, e a notificacao (`notificacao/envio.py`, TEC-192) grava o
+    # destinatario so quando ela roda -- e grava nada quando nao ha a quem
+    # mandar. Desde a TEC-404 a atribuicao do admin (`handoff/atribuicao.py`)
+    # tambem escreve aqui, sobrescrevendo. A alocacao da TEC-166 escolhe
+    # corretor para o agendamento, nao grava aqui.
     #
     # `ForeignKey(Corretor.id)` em vez da string "corretores.id": o alvo
     # precisa estar no mesmo `MetaData` para o SQLAlchemy resolver a FK, e a

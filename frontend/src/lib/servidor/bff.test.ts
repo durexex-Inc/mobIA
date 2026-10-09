@@ -70,7 +70,23 @@ describe('caminhoPermitido', () => {
         `/api/v1/handoffs/${LEAD}/resumo`,
       )
       expect(caminhoPermitido('GET', ['api', 'v1', 'handoffs', LEAD, 'resumo'])).toBeNull()
-      expect(caminhoPermitido('POST', ['api', 'v1', 'handoffs', LEAD, 'aceitar'])).toBeNull()
+      // `aceitar` passou a entrar na TEC-404: ver o describe dos pedidos de interesse.
+      expect(caminhoPermitido('GET', ['api', 'v1', 'handoffs', LEAD, 'aceitar'])).toBeNull()
+    })
+
+    it('os pedidos de interesse entram como `POST`, e a lista fica de fora (TEC-404)', () => {
+      expect(caminhoPermitido('POST', ['api', 'v1', 'handoffs', 'h-1', 'aceitar'])).toBe(
+        '/api/v1/handoffs/h-1/aceitar',
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'handoffs', 'h-1', 'atribuir'])).toBe(
+        '/api/v1/handoffs/h-1/atribuir',
+      )
+      expect(caminhoPermitido('POST', ['api', 'v1', 'interesses', 'p-1', 'revelar'])).toBe(
+        '/api/v1/interesses/p-1/revelar',
+      )
+      expect(caminhoPermitido('GET', ['api', 'v1', 'handoffs', 'h-1', 'atribuir'])).toBeNull()
+      // A lista e lida pelo Server Component, nao pelo navegador.
+      expect(caminhoPermitido('GET', ['api', 'v1', 'interesses'])).toBeNull()
     })
 
     it('a correcao da qualificacao entra so como `PATCH` (TEC-329)', () => {

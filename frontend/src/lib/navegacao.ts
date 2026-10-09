@@ -37,6 +37,8 @@ const ITENS: ReadonlyArray<ItemDoMenu & { visivel: (permissoes: ReadonlySet<stri
   [
     { rotulo: 'Funil', href: '/', visivel: (p) => p.has('VER_FUNIL') },
     { rotulo: 'Leads', href: '/leads', visivel: (p) => p.has('VER_LEADS') },
+    // Mesma permissao da rota (TEC-404): `GET /api/v1/interesses` exige `VER_LEADS`.
+    { rotulo: 'Pedidos de interesse', href: '/interesses', visivel: (p) => p.has('VER_LEADS') },
     // Mesma permissao do funil (TEC-319): a rota de custo tambem exige
     // `VER_FUNIL` (`metricas.py::custo_de_ia`).
     { rotulo: 'Custo de IA', href: '/custo-ia', visivel: (p) => p.has('VER_FUNIL') },
