@@ -17,14 +17,14 @@ export function FormularioDeInteresse({ imovelId }: { imovelId: string }) {
 
   if (estado.status === 'sucesso') {
     return (
-      <p role="status" className="portal-cartao portal-interesse__sucesso">
+      <p role="status" className="portal-interesse__sucesso">
         Recebemos seu pedido! Um corretor vai entrar em contato em breve.
       </p>
     )
   }
 
   return (
-    <form action={enviar} className="portal-cartao portal-interesse">
+    <form action={enviar} className="portal-interesse">
       <h2 className="portal-subtitulo">Tenho interesse neste imóvel</h2>
       <p className="portal-nota">Deixe seu telefone e um corretor entra em contato.</p>
       <label className="portal-campo">

@@ -87,7 +87,8 @@ describe('DetalheDoImovel', () => {
 
     render(await paginaCom('i-1'))
 
-    expect(screen.getByText('Cód. IT-9821')).toBeInTheDocument()
+    // Na trilha do topo e no selo ao lado do titulo.
+    expect(screen.getAllByText('Cód. IT-9821')).toHaveLength(2)
     expect(screen.getByText('Venda e locação')).toBeInTheDocument()
     expect(screen.getByText('Apartamento')).toBeInTheDocument()
   })
