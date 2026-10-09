@@ -32,6 +32,7 @@ desenho.
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated
 
 import structlog
@@ -76,11 +77,14 @@ def _recusar_indisponivel() -> HTTPException:
 # Os campos que o cliente ve no detalhe (D2 do desenho). Lista escrita a mao,
 # e NAO o dict `CAMPOS` de `domain/catalogo/cadastro.py`: aquele e mantido
 # pensando em quem administra o catalogo, e um campo novo acrescentado la
-# amanha vazaria ao publico sem ninguem decidir isso. Ficam de fora: `codigo`
-# (referencia interna), `status` (a RN ja garante DISPONIVEL), `zona`
-# (taxonomia de busca), `latitude`/`longitude` (a card nao pede mapa, L1),
+# amanha vazaria ao publico sem ninguem decidir isso. Ficam de fora: `status`
+# (a RN ja garante DISPONIVEL), `zona` (taxonomia de busca),
 # `created_at`/`updated_at`, `embedding*`, `documento_hash`, `bairro_busca`.
+# `codigo` entrou com o visual do portal (D1 daquele desenho, revertendo a
+# D2 da TEC-388); `latitude`/`longitude` tambem, mas arredondadas, e por isso
+# fora desta lista -- ver `_coordenada_publica`.
 _CAMPOS_DO_DETALHE = (
+    "codigo",
     "titulo",
     "descricao",
     "tipo",
@@ -154,8 +158,9 @@ def payload_do_detalhe(imovel: Imovel) -> dict[str, object]:
     """O detalhe publico de um imovel (TEC-388, D2 do desenho).
 
     So os campos de `_CAMPOS_DO_DETALHE`, mais precos/condominio/IPTU (que
-    precisam de centavos->como-estao, sem conversao) e `fotos` (que precisa
-    da reescrita de `_fotos_publicas`). Nao reaproveita `cadastro.como_api`:
+    precisam de centavos->como-estao, sem conversao), `fotos` (que precisa
+    da reescrita de `_fotos_publicas`) e a coordenada (que precisa do
+    arredondamento de `_coordenada_publica`). Nao reaproveita `cadastro.como_api`:
     aquele dict e mantido para a administracao, e um campo novo la amanha nao
     deve vazar aqui sem alguem decidir.
     """
@@ -168,7 +173,24 @@ def payload_do_detalhe(imovel: Imovel) -> dict[str, object]:
     corpo["iptuMensal"] = imovel.iptu_mensal
     corpo["caracteristicas"] = list(imovel.caracteristicas)
     corpo["fotos"] = _fotos_publicas(imovel.id, list(imovel.fotos))
+    corpo["latitude"] = _coordenada_publica(imovel.latitude)
+    corpo["longitude"] = _coordenada_publica(imovel.longitude)
     return corpo
+
+
+_CASAS_DA_COORDENADA_PUBLICA = 3
+
+
+def _coordenada_publica(valor: Decimal | None) -> float | None:
+    """A coordenada com 3 casas (~110 m), ou `None` sem coordenada.
+
+    D2 do desenho do visual do portal: a pagina abre sem login, e o pino no
+    predio exato entregaria o endereco a qualquer visitante. Tres casas
+    mostram a quadra, que e o que a secao de localizacao precisa.
+    """
+    if valor is None:
+        return None
+    return float(round(valor, _CASAS_DA_COORDENADA_PUBLICA))
 
 
 def _camel(nome_em_snake_case: str) -> str:

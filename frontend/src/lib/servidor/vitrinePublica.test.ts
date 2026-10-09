@@ -103,6 +103,7 @@ describe('buscarVitrinePublica', () => {
 
 const DETALHE = {
   id: 'i-1',
+  codigo: 'IT-9821',
   titulo: 'Apartamento com vista',
   descricao: 'Sala ampla com varanda.',
   tipo: 'APARTAMENTO',
@@ -121,6 +122,8 @@ const DETALHE = {
   iptuMensal: null,
   caracteristicas: ['varanda'],
   fotos: ['/portal/imoveis/i-1/fotos/f-1'],
+  latitude: null,
+  longitude: null,
 }
 
 describe('buscarDetalheDoImovel', () => {

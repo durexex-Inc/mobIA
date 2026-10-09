@@ -133,6 +133,21 @@ describe('politicaDeSeguranca', () => {
   it('o painel continua sem connect-src', () => {
     expect(politicaDeSeguranca('abc', false)).not.toContain('connect-src')
   })
+
+  it('so o portal enquadra o mapa do OpenStreetMap', () => {
+    expect(politicaDeSeguranca('abc', false, { portal: true })).toContain(
+      'frame-src https://www.openstreetmap.org',
+    )
+    expect(politicaDeSeguranca('abc', false)).not.toContain('frame-src')
+  })
+})
+
+describe('proxy no portal', () => {
+  it('o detalhe do imovel recebe frame-src do mapa; o painel e o embed nao', async () => {
+    expect(await cspDe('/busca/i-1')).toContain('frame-src https://www.openstreetmap.org')
+    expect(await cspDe('/admin/imoveis')).not.toContain('frame-src')
+    expect(await cspDe('/embed/chat')).not.toContain('frame-src')
+  })
 })
 
 describe('proxy', () => {

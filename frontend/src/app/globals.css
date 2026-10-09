@@ -4165,3 +4165,939 @@ a {
     flex-wrap: wrap;
   }
 }
+
+/* --- Portal publico: detalhe do imovel ------------------------------------
+   `/busca/[id]`, no visual das duas referencias do desenho do visual do
+   portal (docs/superpowers/specs/2026-10-09-portal-detalhe-visual-design.md):
+   a de celular empilha tudo numa coluna; a de desktop, a partir de 960px, poe
+   o preco ao lado do titulo, as fotos em mosaico e o formulario numa coluna
+   lateral que acompanha a rolagem.
+
+   Tokens proprios, e nao os do painel: o portal e a vitrine da imobiliaria,
+   com verde de mata e titulos em serifa, e mexer na paleta do painel nao deve
+   mudar o que o cliente final ve. O escuro segue a mesma regra do tema
+   (TEC-393): sistema pede e ninguem escolheu claro, ou `data-tema="escuro"`.
+
+   Nenhuma regra aqui pode virar `style=` no JSX: em producao `style-src` e so
+   nonce, e atributo `style` nao carrega nonce (D4). */
+
+.portal {
+  --portal-fundo: #f2f5f2;
+  --portal-cartao: #ffffff;
+  --portal-texto: #17231d;
+  --portal-fraco: #5d6a63;
+  --portal-borda: #dde4df;
+  --portal-verde: #1e4d3a;
+  --portal-verde-texto: #1e4d3a;
+  --portal-verde-claro: #e2f0e7;
+  --portal-areia: #f5e6c6;
+  --portal-areia-texto: #6a4810;
+  --portal-faixa: #e9eeea;
+  --portal-raio: 1rem;
+  --portal-largura: 80rem;
+
+  min-height: 100vh;
+  padding-bottom: 5.5rem;
+  background: var(--portal-fundo);
+  color: var(--portal-texto);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-tema="claro"]) .portal {
+    --portal-fundo: #0f1412;
+    --portal-cartao: #17201c;
+    --portal-texto: #e6eee9;
+    --portal-fraco: #9aa8a1;
+    --portal-borda: #27342d;
+    --portal-verde: #2f7a57;
+    --portal-verde-texto: #7fcaa1;
+    --portal-verde-claro: #1c2e25;
+    --portal-areia: #3a301b;
+    --portal-areia-texto: #ead09a;
+    --portal-faixa: #1a2420;
+  }
+}
+
+:root[data-tema="escuro"] .portal {
+  --portal-fundo: #0f1412;
+  --portal-cartao: #17201c;
+  --portal-texto: #e6eee9;
+  --portal-fraco: #9aa8a1;
+  --portal-borda: #27342d;
+  --portal-verde: #2f7a57;
+  --portal-verde-texto: #7fcaa1;
+  --portal-verde-claro: #1c2e25;
+  --portal-areia: #3a301b;
+  --portal-areia-texto: #ead09a;
+  --portal-faixa: #1a2420;
+}
+
+/* Topo: no celular, voltar e "Detalhes do imovel"; no desktop, a trilha. */
+
+.portal-topo {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--portal-cartao);
+  border-bottom: 1px solid var(--portal-borda);
+}
+
+.portal-topo__conteudo {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: var(--portal-largura);
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+}
+
+.portal-topo__voltar {
+  display: inline-flex;
+  padding: 0.375rem;
+  border-radius: 999px;
+  color: var(--portal-texto);
+}
+
+.portal-topo__voltar:hover {
+  background: var(--portal-verde-claro);
+}
+
+.portal-topo__titulo {
+  font-weight: 600;
+}
+
+.portal-trilha {
+  display: none;
+}
+
+.portal-trilha ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--portal-fraco);
+  font-size: 0.875rem;
+}
+
+.portal-trilha li + li::before {
+  content: "/";
+  margin: 0 0.5rem;
+  color: var(--portal-borda);
+}
+
+.portal-trilha a {
+  color: var(--portal-fraco);
+  text-decoration: none;
+}
+
+.portal-trilha a:hover {
+  color: var(--portal-verde-texto);
+  text-decoration: underline;
+}
+
+.portal-trilha [aria-current="page"] {
+  color: var(--portal-texto);
+  font-weight: 600;
+}
+
+.portal-icone {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: none;
+}
+
+.portal-pagina {
+  display: grid;
+  gap: 1rem;
+  max-width: var(--portal-largura);
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.portal-corpo {
+  display: grid;
+  gap: 1rem;
+}
+
+.portal-principal {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.portal-cartao {
+  padding: 1.25rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: var(--portal-raio);
+  background: var(--portal-cartao);
+}
+
+.portal-subtitulo {
+  margin: 0 0 0.75rem;
+  font-family: var(--fonte-do-portal), Georgia, serif;
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.portal-nota {
+  margin: -0.25rem 0 1rem;
+  color: var(--portal-fraco);
+  font-size: 0.875rem;
+}
+
+.portal-link {
+  display: inline-block;
+  margin-top: 0.75rem;
+  color: var(--portal-verde-texto);
+  font-weight: 600;
+}
+
+.portal-periodo {
+  margin-left: 0.125rem;
+  color: var(--portal-fraco);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+/* Apresentacao: selos, titulo, endereco e o preco. No celular o preco fica
+   abaixo do endereco; no desktop, a direita do titulo, como na referencia. */
+
+.portal-apresentacao {
+  display: grid;
+  gap: 1rem;
+  order: 1;
+}
+
+.portal-selos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-selo {
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.portal-selo--operacao {
+  background: var(--portal-areia);
+  color: var(--portal-areia-texto);
+}
+
+.portal-selo--tipo {
+  background: var(--portal-verde-claro);
+  color: var(--portal-verde-texto);
+}
+
+.portal-selo--codigo {
+  border: 1px solid var(--portal-borda);
+  color: var(--portal-fraco);
+  font-weight: 500;
+}
+
+.portal-titulo {
+  margin: 0;
+  font-family: var(--fonte-do-portal), Georgia, serif;
+  font-size: clamp(1.75rem, 1.4rem + 1.6vw, 2.5rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.portal-endereco {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0.5rem 0 0;
+  color: var(--portal-fraco);
+}
+
+.portal-valores,
+.portal-valores dd,
+.portal-lateral__valores,
+.portal-lateral__valores dd {
+  margin: 0;
+}
+
+.portal-valores {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: var(--portal-raio);
+  background: var(--portal-cartao);
+}
+
+.portal-valores dt,
+.portal-lateral__valores dt {
+  color: var(--portal-fraco);
+  font-size: 0.8125rem;
+}
+
+.portal-valores__principal {
+  font-size: clamp(1.25rem, 0.9rem + 1.6vw, 2rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.portal-valores__secundario {
+  font-size: clamp(1.125rem, 0.9rem + 1vw, 1.25rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Galeria do celular: a foto grande, com o contador e as miniaturas por cima. */
+
+.portal-galeria {
+  position: relative;
+  order: 0;
+  overflow: hidden;
+  margin: 0;
+  border-radius: 1.25rem;
+  background: var(--portal-verde-claro);
+}
+
+.portal-galeria__principal {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.portal-galeria--vazia {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  padding: 1rem;
+  color: var(--portal-fraco);
+  text-align: center;
+}
+
+.portal-galeria__contador {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #ffffff;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.portal-galeria__miniaturas {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  display: flex;
+  gap: 0.375rem;
+  max-width: calc(100% - 8rem);
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.portal-galeria__miniatura {
+  display: block;
+  width: 3.25rem;
+  height: 3.25rem;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid rgb(255 255 255 / 0.7);
+  border-radius: 0.625rem;
+  background: none;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.portal-galeria__miniatura[aria-current="true"] {
+  border-color: #ffffff;
+  opacity: 1;
+}
+
+.portal-galeria__miniatura:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 1px;
+}
+
+.portal-galeria__miniatura img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Mosaico do desktop: uma foto grande a esquerda e ate quatro a direita. A
+   grade muda com a quantidade, para dois ou tres ladrilhos nao deixarem
+   buracos. So aparece a partir de 960px. */
+
+.portal-mosaico {
+  display: none;
+  order: 2;
+  gap: 0.5rem;
+  height: clamp(22rem, 36vw, 32rem);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  list-style: none;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.portal-mosaico[data-quantidade="2"] {
+  grid-template-columns: 2fr 1fr;
+}
+
+.portal-mosaico[data-quantidade="3"] {
+  grid-template-columns: 2fr 1fr;
+}
+
+.portal-mosaico[data-quantidade="4"],
+.portal-mosaico[data-quantidade="5"] {
+  grid-template-columns: 2fr 1fr 1fr;
+}
+
+.portal-mosaico li:first-child,
+.portal-mosaico[data-quantidade="2"] li,
+.portal-mosaico[data-quantidade="4"] li:nth-child(2) {
+  grid-row: span 2;
+}
+
+.portal-mosaico__foto {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: var(--portal-verde-claro);
+  cursor: zoom-in;
+}
+
+.portal-mosaico__foto img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.portal-mosaico__foto:hover img {
+  filter: brightness(0.92);
+}
+
+.portal-mosaico__foto:focus-visible {
+  outline: 3px solid var(--portal-verde);
+  outline-offset: -3px;
+}
+
+.portal-mosaico__todas {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0.625rem;
+  background: rgb(255 255 255 / 0.94);
+  color: #17231d;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+/* Ampliacao: as fotos em tela cheia, aberta pelo mosaico. */
+
+.portal-ampliacao {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  place-items: center;
+  padding: 1rem;
+  background: rgb(8 12 10 / 0.94);
+  color: #ffffff;
+}
+
+.portal-ampliacao__topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  font-weight: 600;
+}
+
+.portal-ampliacao__foto {
+  max-width: min(92vw, 80rem);
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 0.5rem;
+}
+
+.portal-ampliacao__botao,
+.portal-ampliacao__seta {
+  border: 1px solid rgb(255 255 255 / 0.3);
+  background: rgb(255 255 255 / 0.12);
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.portal-ampliacao__botao {
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.portal-ampliacao__seta {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  font-size: 2rem;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.portal-ampliacao__seta--anterior {
+  left: 1rem;
+}
+
+.portal-ampliacao__seta--proxima {
+  right: 1rem;
+}
+
+.portal-ampliacao__botao:hover,
+.portal-ampliacao__seta:hover {
+  background: rgb(255 255 255 / 0.22);
+}
+
+.portal-ampliacao__botao:focus-visible,
+.portal-ampliacao__seta:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.portal-corpo {
+  order: 3;
+}
+
+/* Numeros: area, quartos, banheiros e vagas. Ladrilhos no celular, uma faixa
+   so no desktop. */
+
+.portal-numeros {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-numeros li {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 0.125rem;
+  padding: 0.875rem 0.25rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 0.875rem;
+  background: var(--portal-cartao);
+  text-align: center;
+}
+
+.portal-numeros .portal-icone {
+  margin-bottom: 0.25rem;
+  color: var(--portal-verde-texto);
+}
+
+.portal-numeros strong {
+  font-size: 0.9375rem;
+  line-height: 1.25;
+}
+
+.portal-numeros span {
+  color: var(--portal-fraco);
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+/* Encargos: condominio e IPTU numa faixa, como a "composicao de encargos"
+   da referencia. */
+
+.portal-encargos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.5rem;
+  padding: 0.875rem 1.25rem;
+  border-radius: var(--portal-raio);
+  background: var(--portal-faixa);
+}
+
+.portal-encargos__titulo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+}
+
+.portal-encargos__titulo .portal-icone {
+  color: var(--portal-verde-texto);
+}
+
+.portal-encargos dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  margin: 0;
+}
+
+.portal-encargos dl > div {
+  display: flex;
+  gap: 0.375rem;
+}
+
+.portal-encargos dt {
+  color: var(--portal-fraco);
+}
+
+.portal-encargos dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.portal-descricao {
+  max-width: 72ch;
+  margin: 0;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+
+/* Comodidades: as caracteristicas do cadastro, com o visto a esquerda. */
+
+.portal-comodidades {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-comodidades li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: var(--portal-verde-claro);
+}
+
+.portal-comodidades .portal-icone {
+  color: var(--portal-verde-texto);
+}
+
+/* O cadastro grava as caracteristicas em minuscula ("varanda"); a maiuscula
+   e so de apresentacao, e o texto da pagina continua o mesmo. `inline-block`
+   porque `::first-letter` nao vale em elemento inline. */
+.portal-comodidades__nome {
+  display: inline-block;
+}
+
+.portal-comodidades__nome::first-letter {
+  text-transform: uppercase;
+}
+
+.portal-mapa {
+  display: block;
+  width: 100%;
+  height: 16rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: var(--portal-verde-claro);
+}
+
+/* Coluna lateral: preco (so no desktop) e formulario de interesse. */
+
+.portal-lateral__valores {
+  display: none;
+}
+
+.portal-interesse {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.portal-interesse .portal-subtitulo,
+.portal-interesse .portal-nota {
+  margin: 0;
+}
+
+.portal-campo {
+  display: grid;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.portal-campo input {
+  padding: 0.75rem 0.875rem;
+  border: 1px solid var(--portal-borda);
+  border-radius: 0.75rem;
+  background: var(--portal-fundo);
+  color: var(--portal-texto);
+  font: inherit;
+  font-weight: 400;
+}
+
+.portal-campo input:focus-visible {
+  outline: 2px solid var(--portal-verde);
+  outline-offset: 1px;
+}
+
+.portal-interesse__erro {
+  margin: 0;
+  color: #b42318;
+  font-size: 0.875rem;
+}
+
+.portal-interesse__sucesso {
+  margin: 0;
+  color: var(--portal-verde-texto);
+  font-weight: 600;
+}
+
+.portal-botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.875rem 1.25rem;
+  border: 0;
+  border-radius: 0.75rem;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.portal-botao--primario {
+  background: var(--portal-verde);
+  color: #ffffff;
+}
+
+.portal-botao--primario:hover {
+  filter: brightness(1.1);
+}
+
+.portal-botao--primario:focus-visible {
+  outline: 3px solid var(--portal-verde-texto);
+  outline-offset: 2px;
+}
+
+.portal-botao:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+/* No celular o "Tenho interesse" fica sempre a mao, como na referencia, e
+   leva ao formulario, que ali fica no fim da pagina. */
+.portal-barra {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--portal-borda);
+  background: var(--portal-cartao);
+}
+
+.portal-barra .portal-botao {
+  flex: 1;
+}
+
+@media (max-width: 379.98px) {
+  .portal-numeros {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .portal {
+    padding-bottom: 3rem;
+  }
+
+  .portal-topo__conteudo {
+    padding: 0.875rem 2rem;
+  }
+
+  .portal-topo__titulo {
+    display: none;
+  }
+
+  .portal-trilha {
+    display: block;
+  }
+
+  .portal-pagina {
+    gap: 1.5rem;
+    padding: 1.75rem 2rem 0;
+  }
+
+  /* No desktop o titulo vem antes das fotos, com o preco a direita. */
+  .portal-apresentacao {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 2rem;
+    order: 0;
+  }
+
+  .portal-valores {
+    grid-auto-flow: row;
+    gap: 0.25rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    text-align: right;
+  }
+
+  .portal-valores__principal {
+    font-size: 2rem;
+  }
+
+  .portal-valores__secundario {
+    color: var(--portal-fraco);
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .portal-galeria {
+    order: 1;
+  }
+
+  .portal-galeria__principal,
+  .portal-galeria--vazia {
+    aspect-ratio: 16 / 7;
+  }
+
+  .portal-galeria--com-mosaico {
+    display: none;
+  }
+
+  .portal-mosaico {
+    display: grid;
+  }
+
+  .portal-corpo {
+    grid-template-columns: minmax(0, 1fr) 24rem;
+    align-items: start;
+    gap: 2rem;
+  }
+
+  .portal-principal {
+    gap: 1.5rem;
+  }
+
+  .portal-cartao {
+    padding: 1.75rem;
+  }
+
+  .portal-subtitulo {
+    font-size: 1.5rem;
+  }
+
+  .portal-numeros {
+    gap: 0;
+    padding: 1.25rem 0;
+    border: 1px solid var(--portal-borda);
+    border-radius: var(--portal-raio);
+    background: var(--portal-cartao);
+  }
+
+  .portal-numeros li {
+    grid-template-columns: auto 1fr;
+    justify-items: start;
+    column-gap: 0.75rem;
+    padding: 0 1.5rem;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    text-align: left;
+  }
+
+  .portal-numeros li + li {
+    border-left: 1px solid var(--portal-borda);
+  }
+
+  .portal-numeros .portal-icone {
+    grid-row: span 2;
+    width: 1.75rem;
+    height: 1.75rem;
+    margin: 0;
+  }
+
+  .portal-numeros strong {
+    font-size: 1.0625rem;
+  }
+
+  .portal-numeros span {
+    font-size: 0.8125rem;
+  }
+
+  .portal-comodidades {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .portal-comodidades li {
+    padding: 1rem 1.125rem;
+  }
+
+  .portal-mapa {
+    height: 24rem;
+  }
+
+  .portal-lateral {
+    position: sticky;
+    top: 5rem;
+    display: grid;
+    gap: 1.25rem;
+  }
+
+  .portal-lateral__valores {
+    display: grid;
+    gap: 0.5rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--portal-borda);
+  }
+
+  .portal-lateral__valores > div:first-child dd {
+    font-size: 1.625rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .portal-lateral__valores dd {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .portal-barra {
+    display: none;
+  }
+}
