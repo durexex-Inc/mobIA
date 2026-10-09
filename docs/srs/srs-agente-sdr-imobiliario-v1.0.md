@@ -93,6 +93,8 @@
 > | E-01 | RNF-23 | [TEC-381](https://eduardodurieuxlopes.atlassian.net/browse/TEC-381) | 27/09/2026 |
 > | E-02 | RN-12.4, RN-13.1 | [TEC-375](https://eduardodurieuxlopes.atlassian.net/browse/TEC-375) | 27/09/2026 |
 > | E-03 | RN-13.1 | [TEC-385](https://eduardodurieuxlopes.atlassian.net/browse/TEC-385) | 27/09/2026 |
+> | E-07 | RN-16.2 | [TEC-404](https://eduardodurieuxlopes.atlassian.net/browse/TEC-404) | 09/10/2026 |
+> | E-04 | RN-16.3 | [TEC-404](https://eduardodurieuxlopes.atlassian.net/browse/TEC-404) | 09/10/2026 |
 >
 > **Este índice está incompleto e a linha acima não o conserta.** Emendas do corpo de várias cards (TEC-139, TEC-142, TEC-161, TEC-162, TEC-174 a TEC-179, TEC-196, TEC-278) nunca foram indexadas — a TEC-275 acrescentou só a sua. Quem procura a lista completa lê o corpo do documento, não esta tabela.
 

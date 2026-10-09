@@ -6,7 +6,7 @@ ele e SOBRESCRITO de proposito -- e o admin trocando o dono. A regra "so quando
 nulo" continua valendo para a notificacao, que e o que protege o dono contra
 uma retentativa do ARQ.
 
-**Atribuir desfaz o aceite e reinicia o prazo** (decisao 4 da card; Emenda E-08
+**Atribuir desfaz o aceite e reinicia o prazo** (decisao 4 da card; Emenda E-04
 da RN-16.3). O handoff volta a PENDENTE sem `aceito_em`, sem `sla_limite_em` e
 sem `notificado_em`; a notificacao enfileirada pela rota calcula o prazo pela
 jornada do NOVO corretor, porque `notificar` so calcula prazo quando ele e

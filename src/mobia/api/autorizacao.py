@@ -69,7 +69,7 @@ ROTAS_PUBLICAS: dict[str, str] = {
     "/portal/vitrine": (
         "a listagem paginada e publica do catalogo, todos os imoveis disponiveis "
         "que casam com os filtros, com ordem e pagina; anonima, sem login, e "
-        "os mesmos dados de `/portal/imoveis` (visual do portal, D7)"
+        "os mesmos imoveis de `/portal/imoveis`, so que em cards (visual do portal, D7)"
     ),
     "/portal/imoveis/{imovel_id}": (
         "detalhe publico de um imovel disponivel -- descricao, caracteristicas "

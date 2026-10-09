@@ -50,7 +50,7 @@ Os dois pontos de atenção da card se resolvem assim. O SLA recomeça para o no
   - `handoffs.corretor_id` ganha um **segundo escritor**: a atribuição manual do admin (`domain/handoff/atribuicao.py::atribuir`). A Emenda E-06 o fazia escrito só pela notificação.
   - A atribuição **sobrescreve** de propósito, porque é o admin trocando o dono.
   - A regra "grava apenas quando a coluna está nula" continua valendo para a notificação, que é o que protege o dono contra uma retentativa do arq.
-- Abaixo de **RN-16.3**: **Emenda E-08 (TEC-404, 09/10/2026)**.
+- Abaixo de **RN-16.3**: **Emenda E-04 (TEC-404, 09/10/2026)**.
   - A atribuição manual **reinicia o SLA**. O atendimento volta a `PENDENTE`, sem aceite e sem prazo, e a notificação ao novo corretor calcula o prazo pela jornada dele.
   - Um atendimento `ESCALADO` atribuído volta a `PENDENTE` pelo mesmo caminho.
 
