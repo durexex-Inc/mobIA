@@ -18,7 +18,8 @@
  *
  * D2 do desenho: a validacao do lado do cliente e so "campo vazio" -- sem
  * faixa nem plausibilidade, porque o backend ja valida isso com mensagem
- * legivel e a resposta e uma STRING unica, nao uma lista por campo.
+ * legivel e a resposta e uma STRING unica, nao uma lista por campo. A
+ * excecao e o valor em reais que nem vira numero (`validarFormulario`).
  */
 
 /** O vocabulario de `domain/catalogo/enums.py::TipoImovel`. */
@@ -164,17 +165,44 @@ function centavosParaReais(centavos: number | null): string {
 }
 
 /**
+ * Os reais do `<input>` como numero, ou `NaN` quando o texto nao e um valor.
+ *
+ * Aceita o formato que o exemplo do campo sugere ("850.000,00"), e nao so o
+ * do `Number`: com virgula, ela e o decimal e os pontos sao milhar; sem
+ * virgula, ponto seguido so de grupos de tres digitos e milhar ("850.000"),
+ * e qualquer outro ponto e decimal. Esse ultimo caso existe porque
+ * `centavosParaReais` escreve "320.5" -- e nunca escreve tres casas depois do
+ * ponto, entao a ida e volta da edicao nao cai na leitura de milhar.
+ */
+function reaisComoNumero(reais: string): number {
+  const valor = reais.trim().replace(/^R\$\s*/, '')
+  let normalizado: string
+  if (valor.includes(',')) {
+    normalizado = valor.replace(/\./g, '').replace(',', '.')
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(valor)) {
+    normalizado = valor.replace(/\./g, '')
+  } else {
+    normalizado = valor
+  }
+  return /^\d+(\.\d+)?$/.test(normalizado) ? Number(normalizado) : NaN
+}
+
+/**
  * Reais digitados de volta para centavos, ou `null` quando o campo esta
- * vazio. Exportada para `PreviewDoCard.tsx` (TEC-336) reusar a mesma
- * conversao numerica em vez de duplica-la -- nao ha validacao aqui para
- * divergir, so aritmetica.
+ * vazio OU ilegivel. Exportada para `PreviewDoCard.tsx` (TEC-336) reusar a
+ * mesma conversao numerica em vez de duplica-la.
+ *
+ * **Nunca `NaN`**: `JSON.stringify` troca `NaN` por `null`, e foi assim que
+ * "850.000,00" chegava ao backend como preco ausente e voltava como "ao menos
+ * um preco e obrigatorio". O texto ilegivel e recusado antes, por
+ * `validarFormulario`; aqui ele so nao vira numero.
  */
 export function reaisParaCentavos(reais: string): number | null {
-  const valor = reais.trim()
-  if (!valor) {
+  if (!reais.trim()) {
     return null
   }
-  return Math.round(Number(valor) * 100)
+  const numero = reaisComoNumero(reais)
+  return Number.isFinite(numero) ? Math.round(numero * 100) : null
 }
 
 /**
@@ -235,6 +263,8 @@ const OBRIGATORIOS: ReadonlyArray<[keyof Formulario, string]> = [
   ['vagas', 'Informe o número de vagas.'],
 ]
 
+const VALORES_EM_REAIS = ['precoVenda', 'precoAluguel', 'condominio', 'iptuMensal'] as const
+
 /**
  * A validacao do lado do cliente (D2 do desenho): so "campo vazio", para os
  * obrigatorios de `parser._converter`. Nao ha faixa nem plausibilidade aqui
@@ -244,6 +274,9 @@ const OBRIGATORIOS: ReadonlyArray<[keyof Formulario, string]> = [
  * O preco segue a operacao: Venda exige `precoVenda`, Aluguel exige
  * `precoAluguel`, Ambos exige ao menos um dos dois -- o mesmo "ao menos um
  * preco" de `parser._converter`.
+ *
+ * A unica checagem alem de "campo vazio" e a de valor em reais ilegivel: nao
+ * e regra de imovel, e a condicao para o valor chegar ao backend como numero.
  */
 export function validarFormulario(formulario: Formulario): Recusa {
   const porCampo: Partial<Record<keyof Formulario, string>> = {}
@@ -277,6 +310,15 @@ export function validarFormulario(formulario: Formulario): Recusa {
     !formulario.precoAluguel.trim()
   ) {
     porCampo.precoVenda = 'Informe ao menos um dos preços.'
+  }
+
+  // Preenchido mas ilegivel: sem esta recusa o campo iria como `null` e o
+  // backend responderia sobre um preco "ausente" que a tela mostra preenchido.
+  for (const campo of VALORES_EM_REAIS) {
+    const valor = formulario[campo]
+    if (valor.trim() && reaisParaCentavos(valor) === null) {
+      porCampo[campo] = 'Valor inválido. Use, por exemplo, 850.000,00.'
+    }
   }
 
   return { porCampo, geral: null }
@@ -395,8 +437,8 @@ export function pedidoDeEdicao(inicial: Formulario, atual: Formulario): Record<s
  */
 export function totalMensalEstimado(formulario: Formulario): number | null {
   const parcela = (valor: string) => {
-    const numero = Number(valor.trim())
-    return valor.trim() && Number.isFinite(numero) ? numero : 0
+    const numero = reaisComoNumero(valor)
+    return Number.isFinite(numero) ? numero : 0
   }
   if (!formulario.precoAluguel.trim()) {
     return null
