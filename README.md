@@ -2,6 +2,8 @@
 
 Agente de IA para qualificação de leads imobiliários.
 
+https://painel.mobia.dev.br/embed/chat?tenant=mobia
+
 ## Ambiente local
 
 ```bash
