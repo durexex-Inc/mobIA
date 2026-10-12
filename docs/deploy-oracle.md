@@ -213,3 +213,24 @@ instância.
 - [ ] Seed rodado; login no painel com MFA funcionando
 - [ ] Backup diário rodando e restauração testada
 - [ ] Rollback ensaiado; webhook do WhatsApp validado na Meta
+
+## Ajustes de infraestrutura necessários
+
+Dois ajustes foram necessários para o stack subir neste ambiente e valem para qualquer re-deploy:
+
+- **`DOCKER_MIN_API_VERSION=1.24` no daemon do Docker.** O Traefik v3.3 fala a versão 1.24 da API do Docker, abaixo do mínimo que o Docker 29 aceita por padrão — sem isso o Traefik não enxerga os containers e todas as rotas voltam 404. Configurado em `/etc/systemd/system/docker.service.d/min-api.conf`:
+
+  ```ini
+  [Service]
+  Environment=DOCKER_MIN_API_VERSION=1.24
+  ```
+
+  Depois: `sudo systemctl daemon-reload && sudo systemctl restart docker`.
+
+- **Excluir os testes do build do frontend.** O `next build` type-checa os arquivos `*.test.ts(x)`, que dependem de libs de teste ausentes na imagem de produção e quebram o build. Em `frontend/tsconfig.json`, o `exclude` precisa conter os testes:
+
+  ```json
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.test.tsx", "test"]
+  ```
+
+  Enquanto esse ajuste não estiver commitado no repositório, ele precisa ser reaplicado a cada deploy.

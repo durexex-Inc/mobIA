@@ -45,6 +45,8 @@ com migração antes do app e rollback automático por healthcheck.
 - Runbook completo (provisionar, DNS, firewall, secrets, seed, backup):
   [`docs/deploy-vps.md`](docs/deploy-vps.md).
 
+**Produção (Oracle Cloud — mobia.dev.br):** o ambiente vivo roda numa instância Oracle Cloud (Ubuntu + Docker Compose) com o mesmo `docker-compose.prod.yml`; o Traefik emite HTTPS via Let's Encrypt para `api.mobia.dev.br` e `painel.mobia.dev.br`. Runbook específico do Oracle — VCN/firewall, IP público reservado, DNS no registro.br, build na própria instância e os ajustes de infraestrutura necessários (`DOCKER_MIN_API_VERSION=1.24` no daemon e exclusão dos testes do build do frontend): [`docs/deploy-oracle.md`](docs/deploy-oracle.md).
+
 ## Comandos
 
 Os três primeiros são os gates estáticos do CI, nesta ordem e neste escopo
@@ -64,6 +66,29 @@ o escopo dele é `[tool.mypy].files` no `pyproject.toml`:
 | Migrations | `python -m alembic upgrade head` |
 | API | `python -m uvicorn mobia.app.main:app --reload` |
 | Worker | `python -m arq mobia.workers.main.WorkerSettings` |
+
+## Novidades recentes (TEC-389 → TEC-404)
+
+Trabalho posterior ao último registro do journal, resumido por tema. As seções `## TEC-…` a seguir trazem o histórico detalhado de engenharia, decisão a decisão, das TECs mais antigas (até a TEC-182).
+
+### Painel administrativo "no visual" (TEC-389 → TEC-399)
+Reconstrução do painel do corretor/admin seguindo o visual de referência, com tema claro/escuro:
+- Login de admin redesenhado, sem exigência de MFA no ambiente de desenvolvimento (TEC-391).
+- Funil e lista de leads (TEC-393, TEC-394), página de prompt do agente (TEC-395) e tela de configuração do agente (TEC-396).
+- Cadastro de corretores (TEC-397), listagem de imóveis (TEC-398) e trilha de auditoria (TEC-399), todos na nova interface.
+- Simulador de WhatsApp para desenvolvimento, sem depender da Cloud API da Meta.
+
+### Imóveis e portal público (TEC-400, TEC-401, TEC-403)
+- Edição de imóvel em página própria, aceitando várias fotos de uma vez — soltas ou escolhidas (TEC-400).
+- Paginação da listagem de imóveis da administração (TEC-401).
+- Portal público do imóvel com detalhe em formato de vitrine (galeria de fotos, código e mapa) e busca paginada com cards e faixa de preços; fotos do portal em TEC-403.
+
+### Pedidos de interesse (TEC-404)
+Captura e atendimento de leads vindos do portal:
+- O portal grava nome, e-mail (cifrado) e telefone do interessado; `GET /api/v1/interesses` lista os pedidos no painel.
+- O corretor revela telefone e e-mail do pedido, com trilha de auditoria.
+- Admin atribui o atendimento a um corretor, com prazo que reinicia a cada atribuição e escalonamento/notificação quando não há aceite.
+- Migração `0071` adiciona a tabela de pedidos de interesse ao schema.
 
 ## TEC-122 — Ingestão do WhatsApp
 
