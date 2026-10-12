@@ -1,6 +1,9 @@
 # Projeto está rodando 
 
-```[https://mobia.dev.br](https://painel.mobia.dev.br/busca)```
+```https://painel.mobia.dev.br/busca```
+
+# Painel administrativo
+```https://painel.mobia.dev.br/```
 
 # Deploy em VPS (Oracle Cloud) com Docker + Traefik — mobIA
 
