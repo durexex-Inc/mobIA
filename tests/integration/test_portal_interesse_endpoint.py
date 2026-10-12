@@ -252,3 +252,41 @@ async def test_sem_email_a_coluna_fica_nula(client: AsyncClient, session: Any) -
         await session.execute(text("SELECT email_cifrado FROM solicitacoes_de_interesse"))
     ).scalar_one()
     assert email is None
+
+
+async def test_pedido_do_portal_vira_fala_e_aparece_em_leads(
+    client: AsyncClient, session: Any
+) -> None:
+    """A lista de `/leads` e o funil nascem de `messages`; sem uma fala, o lead
+    do portal nao existia para nenhum dos dois."""
+    from mobia.domain.leads.consulta import montar_filtro
+    from mobia.domain.leads.repositorio import listar_leads
+
+    identificador = await _semear(session)
+    corpo = {"telefone": "11988887777", "nome": "Maria"}
+
+    await client.post(f"/portal/imoveis/{identificador}/interesse", json=corpo)
+    # Repetir o mesmo pedido nao e interacao nova (CA-04).
+    await client.post(f"/portal/imoveis/{identificador}/interesse", json=corpo)
+
+    falas = (
+        (
+            await session.execute(
+                text("SELECT channel, role, direction, status, text_body FROM messages")
+            )
+        )
+        .mappings()
+        .all()
+    )
+    assert len(falas) == 1
+    assert (falas[0]["channel"], falas[0]["role"], falas[0]["direction"]) == (
+        "portal",
+        "LEAD",
+        "INBOUND",
+    )
+    # `status` nulo: fora do pipeline de ingestao, o sweeper nao a reivindica.
+    assert falas[0]["status"] is None
+    assert b"11988887777" not in bytes(falas[0]["text_body"])
+
+    pagina, _ = await listar_leads(session, filtro=montar_filtro())
+    assert [lead.channel for lead in pagina] == ["portal"]
