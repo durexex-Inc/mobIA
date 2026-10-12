@@ -19,8 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from mobia.domain.catalogo.models import Imovel
-from mobia.domain.messages.models import Base
+from mobia.domain.messages.enums import MessageContentType, MessageDirection, MessageRole
+from mobia.domain.messages.models import Base, Message
 from mobia.infra.crypto import aad_de, encrypt
+
+TEXTO_DA_FALA = "Pedido de interesse em imóvel, feito pelo portal."
 
 
 def aad_do_email_de_interesse(solicitacao_id: uuid.UUID) -> str:
@@ -104,4 +107,32 @@ async def registrar_interesse(
             .on_conflict_do_nothing(index_elements=["channel", "conversation_key", "imovel_id"])
         ),
     )
-    return resultado.rowcount == 1
+    if resultado.rowcount != 1:
+        return False
+
+    # **O pedido e a primeira fala do lead.** A lista de `/leads` nasce de
+    # `messages` (`leads/repositorio.py::_ultima_interacao`) e a coorte do funil
+    # tambem (`metricas/repositorio.py::_nascimento`): sem uma linha aqui o lead
+    # do portal nao existe para nenhuma das duas, mesmo com handoff aceito.
+    #
+    # `status` nulo tira a linha do pipeline de ingestao -- o sweeper nao a
+    # entrega ao `process_message` como se o lead tivesse escrito --, e o texto
+    # e fixo: telefone e e-mail ja moram cifrados na identidade e no pedido.
+    # So o pedido que INSERE grava fala; o repetido (CA-04) nao e interacao nova.
+    fala_id = uuid.uuid4()
+    session.add(
+        Message(
+            id=fala_id,
+            channel=channel,
+            conversation_key=conversation_key,
+            provider_message_id=f"interesse:{solicitacao_id}",
+            sender_external_id=conversation_key,
+            role=MessageRole.LEAD,
+            direction=MessageDirection.INBOUND,
+            content_type=MessageContentType.TEXTO,
+            text_body=encrypt(TEXTO_DA_FALA, aad_de(fala_id, "text_body")),
+            status=None,
+            created_at=agora,
+        )
+    )
+    return True
