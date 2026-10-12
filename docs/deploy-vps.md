@@ -1,4 +1,6 @@
-# Deploy em VPS (Hostinger) com Docker + Traefik — mobIA
+# Deploy em VPS (Oracle Cloud) com Docker + Traefik — mobIA
+
+Está funcionando em mobia.dev.br
 
 Uma VPS, tudo em containers atrás do **Traefik** (HTTPS automático via Let's
 Encrypt). Deploy pela pipeline (GitHub Actions → GHCR → SSH), com migração antes
